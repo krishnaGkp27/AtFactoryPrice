@@ -408,8 +408,6 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   // Ajeet ‖ John — now with finance to pay"), delivered by approvalEvents
   // the way the RET-3 credit note is. Null for every other action.
   let paymentNote = null;
-  // TRF-22 — the receipt reversal's result, for approvalEvents to re-arm the receiver.
-  let unreceive = null;
   // H6 — ERP/ledger hook failures on money paths. Inventory mutations are
   // already applied when these run, so a failure here means BOOKS ≠ STOCK.
   // Collected (not thrown) and returned so approvalEvents can warn the
@@ -1856,20 +1854,6 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       paymentNote = `✅ Payment of ${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name} approved by ${pairLabel} — now with finance to pay.`;
       customMessage = paymentNote;
     }
-  } else if (aj.action === 'transfer_unreceive') {
-    // TRF-22 — bales confirmed received that never arrived go back on the
-    // road; the transfer reopens. The service re-reads the live rows and
-    // refuses by name if any of them was sold or moved since the receipt.
-    const transferService = require('./transferService');
-    const r = await transferService.reverseReceipt(aj.transferId, aj.bales, approvedBy,
-      { reason: aj.reason, requestedBy: aj.requestedBy, ref: requestId });
-    if (!r.ok) return { ok: false, message: r.message };
-    unreceive = r;
-    // The approve reply prints the generic line plus the RET-3 tail — the one
-    // channel that reaches approver AND requester — so the reversal says what
-    // it did through it (as edit_bale does).
-    creditNote = `↩️ ${r.reversed.length} bale(s) back on the road for ${aj.transferRef || aj.transferId}: ${r.reversed.join(', ')} — `
-      + `the transfer is open again; the receiver confirms them when they arrive (${r.remaining.length} now outstanding).`;
   } else if (aj.action === 'edit_bale') {
     // EDB-1 — the bale card edited in place, applied as CRUD on the sheet.
     // The service re-reads the bale and refuses if anything moved since the
@@ -2123,7 +2107,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   }
   await auditLogRepository.append('approval_approved', auditPayload, approvedBy);
   // H6 — erpFailures non-empty means stock moved but books did not.
-  return { ok: true, bundleReport, message: customMessage, erpFailures, invoice, approver: approverLabel, creditNote, note: paymentNote, unreceive };
+  return { ok: true, bundleReport, message: customMessage, erpFailures, invoice, approver: approverLabel, creditNote, note: paymentNote };
 }
 
 /**

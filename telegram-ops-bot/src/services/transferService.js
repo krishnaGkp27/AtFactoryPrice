@@ -668,99 +668,6 @@ async function confirmReceiptInner(requestId, byUserId, opts = {}) {
   return { ok: true, aj: ajOut, mismatch, closed: !remaining.length, received: picked, remaining, delivery: receipts.length };
 }
 
-/** TRF-22 — the approval action that asks for a receipt reversal. */
-const REVERSAL_ACTION = 'transfer_unreceive';
-
-/**
- * TRF-22 (owner, 07-Oct-2026: "my manager has accepted all the bales, but
- * some of the bales did not arrive yet") — put bales that were confirmed
- * received but never arrived BACK ON THE ROAD. Runs under the two-admin
- * `transfer_unreceive` approval (risk/evaluate), never from a tap.
- *
- * Exactly the picked bales flip available → in_transit at the destination
- * (the same rows the receipt flipped, by uid), the record forgets them as
- * received (`receivedBales` / `receivedUids`) and remembers the reversal
- * (`reversals[]`), the row REOPENS as pending / in_transit so the receiver
- * confirms them when they arrive (TRF-21 tick door, ✅ Received, ⚠️ Reject
- * all work again), one Transactions correction row and one audit line are
- * written. A bale sold, moved or edited since the receipt is refused BY
- * NAME — nothing is flipped for the others either.
- *
- * @param {string} requestId the transfer
- * @param {string[]} bales printed numbers that did not arrive
- * @param {string} byUserId the deciding admin
- * @param {{reason?:string, requestedBy?:string, ref?:string}} [opts] ref = the approval request
- * @returns {Promise<{ok:boolean, aj?:object, reversed?:string[], remaining?:string[], rows?:number, message?:string}>}
- */
-async function reverseReceipt(requestId, bales, byUserId, opts = {}) {
-  return mutex.runExclusive(requestId, () => reverseReceiptInner(requestId, bales, byUserId, opts));
-}
-
-async function reverseReceiptInner(requestId, bales, byUserId, opts) {
-  const row = await findTransfer(requestId);
-  if (!row) return { ok: false, message: 'transferService: transfer not found' };
-  const aj = row.actionJSON || {};
-  const closed = row.status === 'approved';
-  if (!closed && !(row.status === 'pending' && aj.stage === STAGES.IN_TRANSIT)) {
-    return { ok: false, message: `transferService: transfer is ${row.status} — nothing was received to reverse` };
-  }
-  const state = receiptState(aj);
-  if (new Set(state.bales).size !== state.bales.length) {
-    return { ok: false, message: 'transferService: this load carries the same bale number more than once — correct it by hand' };
-  }
-  // A pre-TRF-21 row received in one go holds no receivedBales: everything
-  // logged counts as received.
-  const receivedNow = closed && !state.received.length ? state.bales : state.received;
-  const receivedUidsNow = closed && !state.receivedUids.length ? state.uids : state.receivedUids;
-  const picked = [...new Set((bales || []).map(String))].filter((b) => receivedNow.includes(b));
-  if (!picked.length) return { ok: false, message: 'transferService: none of those bales is on record as received' };
-  const hasUids = receivedUidsNow.length > 0;
-  const pickedSet = new Set(picked.map((b) => b.toLowerCase()));
-  const want = new Set(receivedUidsNow);
-  // Fresh, under the lock — a row sold a minute ago must be seen.
-  const rows = (await inventoryRepository.getAll(true)).filter((r) => pickedSet.has(String(r.packageNo || '').toLowerCase())
-    && (hasUids ? want.has(String(r.baleUid)) : norm(r.warehouse) === norm(aj.to)));
-  const stillHere = new Set(rows.filter((r) => r.status === AVAILABLE && norm(r.warehouse) === norm(aj.to))
-    .map((r) => String(r.packageNo).toLowerCase()));
-  const gone = picked.filter((b) => !stillHere.has(b.toLowerCase()));
-  if (gone.length) {
-    return { ok: false, message: `bale(s) ${gone.join(', ')} are no longer available at ${aj.to} (sold, moved or edited since the receipt) — correct those by hand; nothing was changed` };
-  }
-  const uids = rows.filter((r) => r.status === AVAILABLE).map((r) => String(r.baleUid)).filter(Boolean);
-  const on = todayInLagos();
-  const flipped = await require('./stockEngine').transition(picked, AVAILABLE, IN_TRANSIT, null,
-    Object.assign(hasUids ? { uids } : { warehouse: aj.to }, { on, fromWarehouse: aj.from, ref: requestId }),
-    { event: 'unreceive', adminId: byUserId, approvalId: opts.ref || requestId });
-  const now = new Date().toISOString();
-  const flippedUids = new Set(flipped.map((r) => String(r.baleUid)));
-  const receivedBales = receivedNow.filter((b) => !picked.includes(b));
-  const receivedUids = receivedUidsNow.filter((u) => !flippedUids.has(u));
-  const reversals = [...(Array.isArray(aj.reversals) ? aj.reversals : []), {
-    at: now, on, by: String(byUserId || ''), requestedBy: String(opts.requestedBy || ''), ref: String(opts.ref || ''),
-    bales: picked, rows: flipped.length, reason: String(opts.reason || ''),
-  }];
-  const patch = { receivedBales, receivedUids, reversals, lastReversedAt: now };
-  // The row reopens FIRST (a failure between the two leaves an open row
-  // whose record still calls the bales received — the receiver's card then
-  // offers them again; the opposite order would leave a closed row with
-  // bales in transit that nothing can receive).
-  if (closed) await approvalQueueRepository.updateStatus(requestId, 'pending', row.resolvedAt || now, row.approver || '');
-  await approvalQueueRepository.updateActionJSON(requestId, patch);
-  const ajOut = { ...aj, ...patch };
-  await mirror(requestId, 'receipt_reversed', byUserId, { bales: picked, rows: flipped.length, reason: opts.reason || '' });
-  await transactionsRepository.append({
-    user: String(byUserId || ''), action: REVERSAL_ACTION,
-    design: [...new Set(rows.map((r) => r.design).filter(Boolean))].join('+'),
-    color: [...new Set(rows.map((r) => r.shade).filter(Boolean))].join('+'),
-    qty: picked.length, before: aj.to || '', after: `in_transit → ${aj.to || ''}`, status: 'completed',
-    salesDate: aj.dispatchedOn || '',
-  });
-  await auditLogRepository.append('transfer.receipt_reversed',
-    { requestId, ref: opts.ref || '', bales: picked, rows: flipped.length, reason: opts.reason || '' }, String(byUserId || ''));
-  const after = receiptState(ajOut);
-  return { ok: true, aj: ajOut, reversed: picked, remaining: after.remaining, rows: flipped.length, reopened: closed };
-}
-
 /**
  * Decline (pre-dispatch: nothing was moved, just close) or reject
  * (post-dispatch: revert the logged bales to the source).
@@ -894,8 +801,6 @@ module.exports = {
   sendBackFromReview,
   confirmReceipt,
   receiptState,
-  reverseReceipt,
-  REVERSAL_ACTION,
   abort,
   attachDoc,
 };

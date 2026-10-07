@@ -47,7 +47,6 @@
 const sessionStore = require('../utils/sessionStore');
 const { makeRenderer, chunk, rowsFor, trackAux, disposeAux, mdEscape } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
-const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const usersRepository = require('../repositories/usersRepository');
 const designCategoriesRepository = require('../repositories/designCategoriesRepository');
 const transferService = require('../services/transferService');
@@ -446,15 +445,7 @@ function receiptLine(aj, row = null) {
   }
   if (status !== 'pending') return '';
   return `\n✅ *${st.received.length} of ${st.bales.length} received* · 🚚 ${st.remaining.length} still on the road`
-    + ` (${baleListPreview(st.remaining)})${reversalNote(aj)}`;
-}
-
-/** TRF-22 — a reopened transfer says which bales were put back on the road, and when. */
-function reversalNote(aj) {
-  const revs = Array.isArray(aj.reversals) ? aj.reversals : [];
-  if (!revs.length) return '';
-  const last = revs[revs.length - 1];
-  return `\n↩️ ${(last.bales || []).length} bale(s) put back on the road on ${fmtDate(last.on || last.at)} (not all arrived)`;
+    + ` (${baleListPreview(st.remaining)})`;
 }
 
 /**
@@ -972,9 +963,6 @@ function receiverCard(requestId, aj, statusLine = '') {
   const someRow = st.remaining.length > 1 && !repeated
     ? [[{ text: '📦 Only some arrived — tick them', callback_data: `trf:rcvp:${requestId}` }]]
     : [];
-  // TRF-22 — a delivery ticked by mistake is corrected the same way a sealed
-  // receipt is: the door opens the received list, two admins approve.
-  if (st.received.length && !repeated) someRow.push([{ text: '↩️ Not all arrived — put some back', callback_data: `trf:unrcv:${requestId}` }]);
   return {
     text: `📦 *Transfer ${shortTransferRef(requestId)} incoming*\n${status}${headOf(aj)}${departedLine(aj)}\n${dispatchedBlock(aj)}${shortNote}${receiptLine(aj)}${prompt}`,
     kb: { inline_keyboard: [[
@@ -1278,7 +1266,7 @@ async function sendTransferDoc(bot, query, requestId, kind) {
  */
 function busyWithAnotherTransfer(userId, requestId) {
   const s = sessionStore.get(String(userId));
-  const BUSY_STEPS = ['dispatch_pick', 'dispatch_search', 'dispatch_confirm', 'dispatch_date', 'await_doc', 'receive_pick', 'unrcv_pick', 'unrcv_reason', 'unrcv_confirm'];
+  const BUSY_STEPS = ['dispatch_pick', 'dispatch_search', 'dispatch_confirm', 'dispatch_date', 'await_doc', 'receive_pick'];
   return (s && s.type === SESSION_TYPE && s.requestId
     && String(s.requestId) !== String(requestId)
     && BUSY_STEPS.includes(s.step)) ? s : null;
@@ -1296,9 +1284,7 @@ async function handleBusySwitch(bot, query, verb, rest) {
       return true;
     }
     if (['dispatch_pick', 'dispatch_search'].includes(session.step)) await showBalePicker(bot, chatId, userId);
-    else if (session.step === 'receive_pick' || session.step === 'unrcv_pick') await showReceivePicker(bot, chatId, userId); // TRF-21 / TRF-22
-    else if (session.step === 'unrcv_reason') await askUnreceiveReason(bot, chatId, userId);
-    else if (session.step === 'unrcv_confirm') await showUnreceiveConfirm(bot, chatId, userId);
+    else if (session.step === 'receive_pick') await showReceivePicker(bot, chatId, userId); // TRF-21
     else if (session.step === 'dispatch_confirm') await showDispatchConfirm(bot, chatId, userId);
     else if (session.step === 'dispatch_date') await showDepartureDates(bot, chatId, userId);
     else {
@@ -1652,18 +1638,6 @@ async function handleText(bot, msg) {
     });
     return true;
   }
-  // TRF-22 — the reversal's typed reason.
-  if (session.step === 'unrcv_reason') {
-    const reason = String(msg.text || '').trim().replace(/\s+/g, ' ');
-    if (reason.length < 3 || reason.length > 120) {
-      await bot.sendMessage(chatId, '✍️ The reason must be 3 to 120 characters — reply again.').catch(() => {});
-      return true;
-    }
-    session.unrcvReason = reason;
-    sessionStore.set(userId, session);
-    await showUnreceiveConfirm(bot, chatId, userId);
-    return true;
-  }
   if (session.step !== 'dispatch_search') return false;
   const q = String(msg.text || '').trim();
   if (!q) return true;
@@ -1992,8 +1966,7 @@ async function refreshCard(bot, chatId, messageId, userId, requestId, backCb) {
 /** Render the arrival tick list (paged; chips are session-relative indexes). */
 async function showReceivePicker(bot, chatId, userId) {
   const session = sessionStore.get(userId);
-  if (!session || !['receive_pick', 'unrcv_pick'].includes(session.step)) return;
-  const un = session.step === 'unrcv_pick'; // TRF-22 — the same list, asking the opposite question
+  if (!session || session.step !== 'receive_pick') return;
   const items = session._rcv || [];
   const sel = new Set(session._rcvSel || []);
   const pages = Math.max(1, Math.ceil(items.length / RCV_CHIPS_PER_PAGE));
@@ -2013,7 +1986,7 @@ async function showReceivePicker(bot, chatId, userId) {
     ]);
   }
   if (sel.size) {
-    rows.push([{ text: un ? `↩️ ${sel.size} of ${items.length} did not arrive — next` : `✅ Confirm ${sel.size} of ${items.length} arrived`, callback_data: 'trf:rp:go' }]);
+    rows.push([{ text: `✅ Confirm ${sel.size} of ${items.length} arrived`, callback_data: 'trf:rp:go' }]);
   }
   rows.push([{ text: '↩ Not now', callback_data: `trf:rp:nn:${session.requestId}` }]);
   // The chips carry numbers only; the text says which design and shade each
@@ -2026,176 +1999,12 @@ async function showReceivePicker(bot, chatId, userId) {
   }
   const lines = [...byLine].map(([k, list]) => ` • ${k}: ${list.join(', ')}`).join('\n');
   const pageNote = pages > 1 ? `\n_Showing ${start + 1}–${start + visible.length} of ${items.length}._` : '';
-  await render(bot, chatId, userId, un
-    ? `↩️ *${shortTransferRef(session.requestId)} — which bales did NOT arrive?*\n`
-      + `*${session.from}* → *${session.to}* · ${items.length} on record as received\n${lines}\n\n`
-      + `Tick the bales that are NOT physically here — they go back on the road once two admins approve.\n`
-      + `Ticked: *${sel.size}/${items.length}*${pageNote}`
-    : `📦 *${shortTransferRef(session.requestId)} — which bales are here now?*\n`
-      + `*${session.from}* → *${session.to}* · ${items.length} still on the road\n${lines}\n\n`
-      + `Tick only the bales physically in front of you — the rest stay in transit for the next delivery.\n`
-      + `Ticked: *${sel.size}/${items.length}*${pageNote}`,
+  await render(bot, chatId, userId,
+    `📦 *${shortTransferRef(session.requestId)} — which bales are here now?*\n`
+    + `*${session.from}* → *${session.to}* · ${items.length} still on the road\n${lines}\n\n`
+    + `Tick only the bales physically in front of you — the rest stay in transit for the next delivery.\n`
+    + `Ticked: *${sel.size}/${items.length}*${pageNote}`,
     rows);
-}
-
-/* ── TRF-22: receipt reversal — bales confirmed received that never arrived ── */
-
-/** Days a receipt stays correctable (Settings TRANSFER_UNRECEIVE_DAYS; 0 = no limit). */
-async function unreceiveDays() {
-  try {
-    const v = Number((await require('../repositories/settingsRepository').getAll()).TRANSFER_UNRECEIVE_DAYS);
-    if (Number.isFinite(v) && v >= 0) return Math.floor(v);
-  } catch (_) { /* default below */ }
-  return 14;
-}
-
-/**
- * May this person raise ↩️ Not all arrived on this row now? Received (or
- * partly received) · the receiver or an admin · inside the window · no
- * reversal already waiting. Returns the bales on record as received.
- */
-async function unreceiveCheck(row, userId) {
-  const aj = row.actionJSON || {};
-  const st = transferService.receiptState(aj);
-  const closed = row.status === 'approved';
-  if (!closed && !(row.status === 'pending' && aj.stage === 'in_transit' && st.received.length)) {
-    return { ok: false, why: 'Nothing on this transfer is on record as received.' };
-  }
-  if (String(userId) !== String(aj.receiver) && !auth.isAdmin(userId)) {
-    return { ok: false, why: 'Only the receiver or an admin can raise this.' };
-  }
-  const days = await unreceiveDays();
-  const since = aj.lastReceivedAt || row.resolvedAt || '';
-  const age = since && Date.parse(since) ? (Date.now() - Date.parse(since)) / 86400000 : 0;
-  if (days > 0 && age > days) {
-    return { ok: false, why: `Received ${Math.floor(age)} days ago — past the ${days}-day window (Settings TRANSFER_UNRECEIVE_DAYS). An admin corrects the sheet by hand.` };
-  }
-  let pending = [];
-  try { pending = await approvalQueueRepository.getAllPending(); } catch (_) { /* a failed read refuses below */ }
-  const twin = pending.find((p) => (p.actionJSON || {}).action === transferService.REVERSAL_ACTION
-    && String((p.actionJSON || {}).transferId) === String(row.requestId));
-  if (twin) return { ok: false, why: `A reversal for this transfer is already awaiting approval (${String(twin.requestId).slice(0, 8)}).` };
-  return { ok: true, received: closed && !st.received.length ? st.bales : st.received };
-}
-
-/** Open the "which bales did NOT arrive" list on a received transfer (session-free door `trf:unrcv:`). */
-async function startUnreceivePicker(bot, query, requestId) {
-  const userId = String(query.from.id);
-  const chatId = query.message.chat.id;
-  const row = await transferService.findTransfer(requestId);
-  if (!row) { await bot.answerCallbackQuery(query.id, { text: 'Transfer not found.', show_alert: true }).catch(() => {}); return true; }
-  const chk = await unreceiveCheck(row, userId);
-  if (!chk.ok) { await bot.answerCallbackQuery(query.id, { text: chk.why, show_alert: true }).catch(() => {}); return true; }
-  await bot.answerCallbackQuery(query.id).catch(() => {});
-  const aj = await ensureLineBales(row.actionJSON);
-  const received = new Set(chk.received);
-  const items = [];
-  const seen = new Set();
-  for (const d of (Array.isArray(aj.dispatched) ? aj.dispatched : [])) {
-    for (const b of (Array.isArray(d.bales) ? d.bales : []).map(String)) {
-      if (received.has(b) && !seen.has(b)) { seen.add(b); items.push({ pkg: b, design: String(d.design || ''), shade: String(d.shade || '') }); }
-    }
-  }
-  for (const b of chk.received) if (!seen.has(b)) { seen.add(b); items.push({ pkg: b, design: '', shade: '' }); }
-  const kb = ((query.message.reply_markup || {}).inline_keyboard || []).flat();
-  const back = kb.find((b) => b && typeof b.text === 'string' && b.text.startsWith('⬅ Back') && b.callback_data);
-  sessionStore.set(userId, {
-    type: SESSION_TYPE, step: 'unrcv_pick', requestId, from: aj.from, to: aj.to,
-    _rcv: items, _rcvSel: [], _rcvPage: 0, _backCb: back ? back.callback_data : null,
-    _cardMessageId: query.message.message_id, flowMessageId: null, ttlMs: 30 * 60 * 1000,
-  });
-  await showReceivePicker(bot, chatId, userId);
-  return true;
-}
-
-async function askUnreceiveReason(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  if (!session || !['unrcv_pick', 'unrcv_confirm'].includes(session.step)) return;
-  const picked = (session._rcvSel || []).slice();
-  if (!picked.length) { session.step = 'unrcv_pick'; sessionStore.set(userId, session); await showReceivePicker(bot, chatId, userId); return; }
-  session.step = 'unrcv_reason';
-  sessionStore.set(userId, session);
-  await render(bot, chatId, userId,
-    `↩️ *${shortTransferRef(session.requestId)} — ${picked.length} bale(s) did not arrive*\n${baleListPreview(picked)}\n\n`
-    + '✍️ Reply with the reason (3–120 characters), e.g. _truck came half, 2 bales still at Lagos store_.',
-    [[{ text: '⬅ Back to the list', callback_data: 'trf:ur:back' }, { text: '❌ Cancel', callback_data: 'trf:ur:cancel' }]]);
-}
-
-async function showUnreceiveConfirm(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  session.step = 'unrcv_confirm';
-  sessionStore.set(userId, session);
-  const picked = session._rcvSel || [];
-  await render(bot, chatId, userId,
-    `↩️ *Not all arrived — ${shortTransferRef(session.requestId)}*\n*${session.from}* → *${session.to}*\n\n`
-    + `Back on the road: *${picked.length}* bale(s) — ${baleListPreview(picked)}\nReason: ${mdEscape(session.unrcvReason || '')}\n\n`
-    + '_Two admins must approve. The records change the moment the second one does; the receiver then confirms these bales when they really arrive._',
-    [[{ text: '✅ Send for approval', callback_data: 'trf:ur:go' }],
-      [{ text: '✏️ Change reason', callback_data: 'trf:ur:reason' }, { text: '⬅ Back to the list', callback_data: 'trf:ur:back' }],
-      [{ text: '❌ Cancel', callback_data: 'trf:ur:cancel' }]]);
-}
-
-async function submitUnreceive(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  if (!session || session.step !== 'unrcv_confirm') return;
-  const row = await transferService.findTransfer(session.requestId);
-  const chk = row ? await unreceiveCheck(row, userId) : { ok: false, why: 'Transfer not found.' };
-  if (!chk.ok) { await render(bot, chatId, userId, `⚠️ ${mdEscape(chk.why)}`, [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]); sessionStore.clear(userId); return; }
-  const aj0 = row.actionJSON || {};
-  const bales = (session._rcvSel || []).filter((b) => chk.received.includes(b));
-  if (!bales.length) { await render(bot, chatId, userId, '⚠️ None of the ticked bales is on record as received any more.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]); sessionStore.clear(userId); return; }
-  const ACTION = transferService.REVERSAL_ACTION;
-  const aj = {
-    action: ACTION, transferId: session.requestId, transferRef: shortTransferRef(session.requestId),
-    from: aj0.from || '', to: aj0.to || '', receiver: aj0.receiver || '', dispatcher: aj0.dispatcher || '',
-    bales, reason: session.unrcvReason || '', requestedBy: String(userId),
-  };
-  const risk = await require('../risk/evaluate').evaluate({ action: ACTION, userId: String(userId) });
-  const requestId = require('../utils/idGenerator').requestId();
-  await approvalQueueRepository.append({ requestId, user: String(userId), actionJSON: aj, riskReason: risk.reason || 'dual_admin_required', status: 'pending' });
-  try { await require('../repositories/auditLogRepository').append('approval_queued', { requestId, action: ACTION, transferId: session.requestId, bales }, String(userId)); } catch (_) { /* best effort */ }
-  const approvalCards = require('../services/approvalCards');
-  const summary = `↩️ Not all arrived — ${aj.transferRef} ${aj.from} → ${aj.to}: ${bales.length} bale(s) back on the road (${bales.join(', ')}). Reason: ${aj.reason}`;
-  await require('../events/approvalEvents').notifyAdminsApprovalRequest(bot, requestId,
-    await approvalCards.resolveUserLabel(userId, bot), summary, risk.reason || 'dual_admin_required', String(userId));
-  await render(bot, chatId, userId,
-    `⏳ *Sent for approval — ${aj.transferRef}*\n${bales.length} bale(s) to go back on the road: ${baleListPreview(bales)}\nRequest: \`${requestId}\`\n\n`
-    + 'Two admins must approve (you cannot approve your own). You will be told when it is done.',
-    [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-  sessionStore.clear(userId);
-}
-
-/**
- * After two admins approved the reversal: the receiver gets their card back
- * (tick door, ✅ Received, ⚠️ Reject), the dispatcher, requester and the other
- * admins hear what went back on the road.
- */
-async function afterUnreceive(bot, aj, res, actorId) {
-  const requestId = aj.transferId;
-  const row = await transferService.findTransfer(requestId);
-  if (!row) return;
-  const live = await ensureLineBales(row.actionJSON);
-  const label = `reopened ↩️ (${res.reversed.length} back on the road)`;
-  const status = await pushStatus(requestId, live);
-  const receiver = String(live.receiver || '');
-  if (receiver) {
-    const card = receiverCard(requestId, live, status);
-    try {
-      await bot.sendMessage(receiver, `↩️ *Not all arrived — approved.* ${res.reversed.join(', ')} are back on the road; confirm them when they really arrive.\n\n${card.text}`,
-        { parse_mode: 'Markdown', reply_markup: card.kb });
-    } catch (_) { /* best-effort */ }
-  }
-  await notifyAdmins(bot, requestId, live, label, actorId);
-  await notifyRequester(bot, row, requestId, live, label, actorId);
-  const dispatcher = String(live.dispatcher || '');
-  if (dispatcher && dispatcher !== receiver && dispatcher !== String(actorId)
-      && !config.access.adminIds.includes(dispatcher) && !(row && String(row.user) === dispatcher)) {
-    try {
-      await bot.sendMessage(dispatcher, `${shortCard(requestId, live, label)}${status ? `\n${status}` : ''}\n↩️ Back on the road: ${res.reversed.join(', ')}`,
-        { parse_mode: 'Markdown', reply_markup: viewMoreKb(requestId) });
-    } catch (_) { /* best-effort */ }
-  }
 }
 
 /** TRF-21 — ticks confirmed: arm the photo gate for exactly those bales. */
@@ -2567,12 +2376,8 @@ async function showActionCard(bot, query, requestId, opts = {}) {
     const settledNames = await nameMap([aj.dispatcher, aj.receiver, row.user]);
     // The waiting line already carries the verdict, the person and the date
     // — repeating stateLabel() in the title would say it twice.
-    // TRF-22 — a received transfer can be reopened for the bales that never
-    // arrived (receiver or admin, inside the window, no reversal pending).
-    const unrcv = row.status === 'approved' && (await unreceiveCheck(row, userId)).ok
-      ? [[{ text: '↩️ Not all arrived — put some back', callback_data: `trf:unrcv:${requestId}` }]] : [];
-    await editInPlace(`🚚 *${shortTransferRef(requestId)}*\n${waitingLine(row, settledNames)}\n${compactOf(aj)}${reversalNote(aj)}`,
-      { inline_keyboard: [...balesChipRow(requestId, aj), ...docRows(requestId, aj), ...unrcv, navRow] });
+    await editInPlace(`🚚 *${shortTransferRef(requestId)}*\n${waitingLine(row, settledNames)}\n${compactOf(aj)}`,
+      { inline_keyboard: [...balesChipRow(requestId, aj), ...docRows(requestId, aj), navRow] });
     return true;
   }
   // TRF-18 — a parked package is the ADMIN's move, nobody else's. The admin
@@ -2953,14 +2758,11 @@ async function handleCallback(bot, query) {
   // Session-free actions first (cards live in counterparties' / admins' DMs).
   const m = data.match(/^trf:(acc|dec|rcv|rcvp|rej|rejc):(.+)$/);
   if (m) return handleAction(bot, query, m[2], m[1]);
-  // TRF-22 — bales confirmed received that never arrived: open the received list.
-  const mUn = data.match(/^trf:unrcv:(.+)$/);
-  if (mUn) return startUnreceivePicker(bot, query, mUn[1]);
   // TRF-21 — arrival picker "Not now": drop the ticks, restore the card.
   const mRpNn = data.match(/^trf:rp:nn:(.+)$/);
   if (mRpNn) {
     const s0 = sessionStore.get(userId);
-    const live = s0 && s0.type === SESSION_TYPE && ['receive_pick', 'unrcv_pick'].includes(s0.step)
+    const live = s0 && s0.type === SESSION_TYPE && s0.step === 'receive_pick'
       && String(s0.requestId) === mRpNn[1] && s0.flowMessageId === query.message.message_id;
     // Only the LIVE picker may drop the session (a stale copy from an earlier
     // open must not wipe the ticks on the current one); the picker message
@@ -3041,7 +2843,7 @@ async function handleCallback(bot, query) {
   // are the one legitimate off-anchor surface — TRF-7 sends them
   // separately. The requester-side create wizard stays un-guarded: its
   // steps carry no cross-request risk of this class.
-  const DISPATCH_CHAIN_STEPS = ['dispatch_pick', 'dispatch_search', 'dispatch_confirm', 'dispatch_date', 'await_doc', 'receive_pick', 'unrcv_pick', 'unrcv_reason', 'unrcv_confirm'];
+  const DISPATCH_CHAIN_STEPS = ['dispatch_pick', 'dispatch_search', 'dispatch_confirm', 'dispatch_date', 'await_doc', 'receive_pick'];
   if (DISPATCH_CHAIN_STEPS.includes(session.step)
       && data !== 'trf:noop' && !data.startsWith('trf:bl:m:')
       && session.flowMessageId && query.message && query.message.message_id
@@ -3058,26 +2860,8 @@ async function handleCallback(bot, query) {
   }
   if (data === 'trf:back') { await stepBack(bot, chatId, userId); return true; }
   // TRF-21 — arrival picker (receive_pick only; indexes are session-relative).
-  // TRF-22 — reason / confirm / back / cancel of the reversal.
-  if (data.startsWith('trf:ur:')) {
-    if (!['unrcv_reason', 'unrcv_confirm'].includes(session.step)) return true;
-    const what = data.slice(7);
-    if (what === 'go') { await submitUnreceive(bot, chatId, userId); return true; }
-    if (what === 'reason') { await askUnreceiveReason(bot, chatId, userId); return true; }
-    if (what === 'back') { session.step = 'unrcv_pick'; sessionStore.set(userId, session); await showReceivePicker(bot, chatId, userId); return true; }
-    if (what === 'cancel') {
-      const { requestId: rid, _cardMessageId: cardId, _backCb: backCb } = session;
-      sessionStore.clear(userId);
-      try { await bot.deleteMessage(chatId, query.message.message_id); } catch (_) {
-        await bot.editMessageText(`↩️ *${shortTransferRef(rid)}* — nothing sent, nothing changed.`, { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown' }).catch(() => {});
-      }
-      await refreshCard(bot, chatId, cardId, userId, rid, backCb || null);
-      return true;
-    }
-    return true;
-  }
   if (data.startsWith('trf:rp:')) {
-    if (!['receive_pick', 'unrcv_pick'].includes(session.step)) return true;
+    if (session.step !== 'receive_pick') return true;
     const rest = data.slice(7);
     if (rest.startsWith('t:')) {
       const it = (session._rcv || [])[parseInt(rest.slice(2), 10)];
@@ -3096,11 +2880,7 @@ async function handleCallback(bot, query) {
       await showReceivePicker(bot, chatId, userId);
       return true;
     }
-    if (rest === 'go') {
-      if (session.step === 'unrcv_pick') await askUnreceiveReason(bot, chatId, userId); // TRF-22
-      else await askReceiptDoc(bot, chatId, userId);
-      return true;
-    }
+    if (rest === 'go') { await askReceiptDoc(bot, chatId, userId); return true; }
     return true;
   }
   // TRF-8b — typed-preload review: continue to the destination step, or
@@ -3259,12 +3039,10 @@ module.exports = {
   handleText,
   showActionCard,
   myQueueSection,
-  afterUnreceive,
   _internals: {
     candidatesFor, resolvePeople, submit, handleAction, startPrefilled,
     parseTypedTransfer, typedBaleMap,
     startDispatchPicker, askDispatchDoc, completeDispatch, completeReceipt,
-    unreceiveCheck, startUnreceivePicker, submitUnreceive, // TRF-22
     armDocGate, gateNotNow, showInfo, promptForDoc, handleFile,
     docRows, sendTransferDoc, balesChipRow, showBaleNumbers, reconcileBaleNumbers,
     buildBaleBreakdown, baleCardRows, effectiveBales, ensureLineBales,

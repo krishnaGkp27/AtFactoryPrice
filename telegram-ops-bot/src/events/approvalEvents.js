@@ -2193,12 +2193,6 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
         await bot.sendMessage(chatIdCb, approvedMsg + creditTail + noteTail);
         await notifyEmployee(bot, requestingUser, requestId, `✅ Your request ${shortRequestRef(requestId)} has been approved by admin. Changes applied.${creditTail}${noteTail}`);
 
-        // TRF-22 — the transfer reopened: the receiver gets their card back
-        // (tick door, ✅ Received, ⚠️ Reject), the dispatcher and admins hear.
-        if (result.unreceive && item && item.actionJSON && item.actionJSON.action === 'transfer_unreceive') {
-          try { await require('../flows/transferFlow').afterUnreceive(bot, item.actionJSON, result.unreceive, adminId); } catch (e) { logger.warn(`TRF-22 after-apply failed: ${e.message}`); }
-        }
-
         // CAT-C1 — a container landed with designs lacking fresh catalogue
         // photos (shades differ per shipment): ONE checklist card to every
         // env admin (specs/CAT-C1_CONTAINER_PHOTOS.md, owner decision #2).

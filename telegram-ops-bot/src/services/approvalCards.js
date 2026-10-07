@@ -889,16 +889,6 @@ function buildShadePhotoCard(aj) {
  * executor will apply. Two edits of two bales can never read identically
  * (D-4), and the approver sees exactly what the sheet will become.
  */
-/** TRF-22 — the receipt-reversal card: which transfer, which bales go back on the road, why. */
-function buildTransferUnreceiveCard(aj) {
-  const bales = Array.isArray(aj.bales) ? aj.bales : [];
-  let text = `↩️ Not all arrived — transfer ${aj.transferRef || aj.transferId || '?'} · ${aj.from || '?'} → ${aj.to || '?'}`;
-  text += `\n${bales.length} bale(s) go back on the road: ${bales.join(', ')}`;
-  if (aj.reason) text += `\nReason: ${aj.reason}`;
-  text += '\nThe transfer reopens; the receiver confirms them when they arrive. A bale sold or moved since the receipt is refused by name.';
-  return text;
-}
-
 function buildEditBaleCard(aj) {
   const baleEdit = require('./baleEditService');
   const plan = baleEdit.buildPlan(aj.snapshot || [], aj.edits || {});
@@ -931,7 +921,6 @@ async function buildCardFromActionJSON(aj) {
     if (aj.action === 'add_warehouse') return await buildAddWarehouseCard(aj);
     if (aj.action === 'design_asset_upload' && aj.kind === 'shade') return buildShadePhotoCard(aj);
     if (aj.action === 'edit_bale') return buildEditBaleCard(aj);
-    if (aj.action === 'transfer_unreceive') return buildTransferUnreceiveCard(aj);
     // CUR-1 S-CUR rule 5 — PAY-1 money LEAVING the office is SIDE A. The
     // inbox and the reminder sweep rebuild it from the queue row through the
     // side-A builder (₦ printed there, never here), instead of the generic
