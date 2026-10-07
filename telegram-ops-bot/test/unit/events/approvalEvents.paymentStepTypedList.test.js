@@ -95,8 +95,8 @@ test('Step 3 card, drawn exactly: typed list Cash · Paid to [Bank] · Not yet p
   assert.ok(!/Credit/.test(text), 'Credit is not offered as a typed word');
   assert.equal(state.paymentMode, undefined, 'nothing is pre-selected — the admin decides');
   assert.deepEqual(chipsOf(card).map((r) => r.map((b) => b.text)), [
-    ['💵 Cash', '🕐 Not yet paid'], ['🏦 ZENITH BANK', '🏦 GTBank'], ['✏️ Type payment mode'], ['🏦 Manage accounts'],
-  ], 'the chip set is exactly as before');
+    ['💵 Cash', '🕐 Not yet paid'], ['🏦 ZENITH BANK', '🏦 GTBank'], ['✏️ Type payment mode'], ['🏦 Manage accounts'], ['⬅ Change rate'],
+  ], 'the chip set is exactly as before, plus the WIZ-BACK row (07-Oct-2026)');
   assert.equal(card.args.opts.parse_mode, 'Markdown');
 });
 

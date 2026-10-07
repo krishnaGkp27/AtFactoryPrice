@@ -131,9 +131,9 @@ test('Step 5 card: header, prompt, three chips (Settings chip when the cell is u
   assert.ok(!/₦|NGN|Naira/.test(text), 'R13: no unit anywhere on this card');
 
   const rows = chipsOf(card);
-  assert.deepEqual(rows.map((r) => r.map((b) => b.text)), [['No multiplier', 'Settings: 1,250'], ['✏️ Type a number']]);
+  assert.deepEqual(rows.map((r) => r.map((b) => b.text)), [['No multiplier', 'Settings: 1,250'], ['✏️ Type a number'], ['⬅ Change amount']]);
   assert.deepEqual(rows.flat().map((b) => b.callback_data),
-    ['enr:q:R-REQ1:mult:none', 'enr:q:R-REQ1:mult:def', 'enr:q:R-REQ1:mult:custom'], 'APC-1 wire form');
+    ['enr:q:R-REQ1:mult:none', 'enr:q:R-REQ1:mult:def', 'enr:q:R-REQ1:mult:custom', 'enr:q:R-REQ1:back:amount_paid'], 'APC-1 wire form');
   for (const b of rows.flat()) assert.ok(Buffer.byteLength(b.callback_data) <= 64, `${b.callback_data} fits Telegram's 64 bytes`);
 });
 
@@ -144,7 +144,7 @@ test('Step 5 card: the Settings chip is hidden when the cell is blank / 0 / 1 / 
     const bot = createFakeBot();
     await sendMultiplierStep(bot, CHAT, { ...stateAtAmount(), amountPaid: 400, settingsMultiplier: (await approvalEvents._internals.multiplierStepConfig()).settingsFactor });
     const rows = chipsOf(lastCard(bot));
-    assert.deepEqual(rows.map((r) => r.map((b) => b.text)), [['No multiplier'], ['✏️ Type a number']], `cell ${JSON.stringify(cell)}`);
+    assert.deepEqual(rows.map((r) => r.map((b) => b.text)), [['No multiplier'], ['✏️ Type a number'], ['⬅ Change amount']], `cell ${JSON.stringify(cell)}`);
   }
 });
 
@@ -156,7 +156,7 @@ test('Step 5 card: a Settings outage still asks — no Settings chip, the sale i
     open(stateAtAmount());
     await approvalEvents.handleEnrichmentCallback(bot, cbq('enr:q:R-REQ1:amt:full'));
     assert.equal(pendingEnrichment.get(wizKey(ADMIN, 'R-REQ1')).step, 'multiplier');
-    assert.deepEqual(chipsOf(lastCard(bot)).map((r) => r.map((b) => b.text)), [['No multiplier'], ['✏️ Type a number']]);
+    assert.deepEqual(chipsOf(lastCard(bot)).map((r) => r.map((b) => b.text)), [['No multiplier'], ['✏️ Type a number'], ['⬅ Change amount']]);
   } finally { settingsRepository.getAll = orig; }
 });
 

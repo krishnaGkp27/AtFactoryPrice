@@ -804,6 +804,13 @@ async function sendRateStep(bot, chatId, state) {
     }
   }
   rows.push([{ text: '✏️ Type a custom rate', callback_data: wizCb(state, 'rate:custom') }]);
+  // WIZ-BACK (owner, 07-Oct-2026) — coming back from Step 3 to change the
+  // price: the rate(s) already entered are shown so the admin knows what
+  // they are replacing. A fresh wizard has none and prints nothing.
+  const entered = Object.entries(state.ratePerUnitByDesign || {}).filter(([, r]) => Number.isFinite(r) && r > 0);
+  const enteredLine = entered.length
+    ? `\nEntered: ${entered.map(([d, r]) => (designs.length > 1 ? `${mdLite(d)} ${rateText(r)}` : rateText(r))).join(', ')} — tap or type to change it.`
+    : '';
   // DSP-1b — a mistapped buyer must be recoverable HERE. Without this chip
   // the wrong customer was locked in: the choice persists on the queue row
   // the moment it is tapped, so abandoning and re-approving skipped Step 1
@@ -827,8 +834,13 @@ async function sendRateStep(bot, chatId, state) {
   }
 
   await renderWizard(bot, chatId, state,
-    `${wizHeader(state)}\n\nCustomer: *${customer || '—'}*${outstandingLine}\nDesign(s): ${designList}\nUnit: ${unit}\n\n*Step 2 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\`${noHistoryLine}${TYPED_NOTE}`,
+    `${wizHeader(state)}\n\nCustomer: *${customer || '—'}*${outstandingLine}\nDesign(s): ${designList}\nUnit: ${unit}\n\n*Step 2 — Rate:* tap below, or reply with rate per ${unit}.\n• Single design: e.g. \`1500\`\n• Multiple: e.g. \`44200:1500, 44201:1200\`${noHistoryLine}${enteredLine}${TYPED_NOTE}`,
     rows);
+}
+
+/** WIZ-BACK — the row that takes a step back; `label` names what gets changed. */
+function backRow(state, to, label) {
+  return [{ text: `⬅ ${label}`, callback_data: wizCb(state, `back:${to}`) }];
 }
 
 /** ST-1 Part B — Step 2 with payment-mode chips (banks from Settings). */
@@ -845,6 +857,9 @@ async function sendPaymentStep(bot, chatId, state) {
   // BANK-2 — no dead-end mid-approval: if the receiving account isn't
   // registered yet, one tap opens 🏦 Manage Banks (admin-only anyway).
   rows.push([{ text: '🏦 Manage accounts', callback_data: 'act:manage_banks' }]);
+  // WIZ-BACK (owner, 07-Oct-2026: "it is not giving me a back option to
+  // change or correct the price before final submission").
+  rows.push(backRow(state, 'rate', 'Change rate'));
   // SRF-PAY (owner, 11-Sep-2026) — the typed list reads the same words as
   // the requester's chips: Cash · Paid to [Bank] · Not yet paid. "Credit" is
   // no longer offered (no chip anywhere carries that value); a typed
@@ -879,6 +894,7 @@ async function sendAmountStep(bot, chatId, state) {
     rows.push([{ text: `✅ Paid in full — ${money.sale(state.fullAmount)}`, callback_data: wizCb(state, 'amt:full') }]);
   }
   rows.push([{ text: '✏️ Type the amount', callback_data: wizCb(state, 'amt:custom') }]);
+  rows.push(backRow(state, 'payment', 'Change payment mode')); // WIZ-BACK
   await renderWizard(bot, chatId, state,
     `${wizHeader(state)}\n👤 ${state.customer || '—'} · ${state.paymentMode || ''}\n\n*Step 4 — Amount paid:* tap below, or reply with the amount received, e.g. 50000${TYPED_NOTE}`,
     rows);
@@ -899,7 +915,7 @@ async function sendMultiplierStep(bot, chatId, state) {
   if (state.settingsMultiplier) {
     first.push({ text: `Settings: ${factorText(state.settingsMultiplier)}`, callback_data: wizCb(state, 'mult:def') });
   }
-  const rows = [first, [{ text: '✏️ Type a number', callback_data: wizCb(state, 'mult:custom') }]];
+  const rows = [first, [{ text: '✏️ Type a number', callback_data: wizCb(state, 'mult:custom') }], backRow(state, 'amount_paid', 'Change amount')]; // WIZ-BACK
   const rates = Object.values(state.ratePerUnitByDesign || {}).filter((r) => Number.isFinite(r) && r > 0);
   const eg = rates.length === 1 ? ` (${money.saleRate(rates[0], { fraction: 2 })})` : '';
   await renderWizard(bot, chatId, state,
@@ -1056,6 +1072,21 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
       return true;
     }
     await ack();
+    return true;
+  }
+
+  // WIZ-BACK — ⬅ on Steps 3/4/5 returns to the previous step with the
+  // earlier answer kept on state (shown on the card), so a wrong price,
+  // mode or amount is corrected before the sale is sealed. Only the step
+  // the chip was drawn on may go back: a stale card's chip does nothing.
+  if (data.startsWith('enr:back:')) {
+    const to = data.slice('enr:back:'.length);
+    const from = { rate: 'payment', payment: 'amount_paid', amount_paid: 'multiplier' }[to];
+    if (!from || state.step !== from) { await ack('That card is stale — use the latest one.'); return true; }
+    await ack();
+    if (to === 'rate') await sendRateStep(bot, chatId, state);
+    else if (to === 'payment') await sendPaymentStep(bot, chatId, state);
+    else await sendAmountStep(bot, chatId, state);
     return true;
   }
 
@@ -2984,7 +3015,7 @@ module.exports = {
   notifyDispatchManagers,
   startApprovalEnrichment,
   _internals: {
-    pendingEnrichment, getLastPaidRate, sendPaymentStep, sendRateStep, bookedRateFor, _resetRateMemo, // RATE-1 — exposed for the Step 2 tests
+    pendingEnrichment, getLastPaidRate, sendPaymentStep, sendRateStep, sendAmountStep, bookedRateFor, _resetRateMemo, // RATE-1 — exposed for the Step 2 tests
     // DSP-1 — exposed for the fail-closed test: a sale with no customer
     // must never reach executeApprovedAction.
     runApprovedSaleWithEnrichment, updateRequesterCard, sendCustomerStep,
