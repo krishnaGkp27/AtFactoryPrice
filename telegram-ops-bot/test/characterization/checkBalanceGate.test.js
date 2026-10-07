@@ -5,6 +5,9 @@
  * 06-Aug-2026): admins + Finance only. Before this, typed "what is X's
  * balance" was the ONE ungated money read in the bot — any registered user
  * could ask any customer's outstanding and credit limit.
+ * FIN-V2 (owner, 07-Oct-2026): admins ONLY — the finance seat is a
+ * payment-only seat; it pays what two admins approved and sees no customer
+ * money and no container value.
  */
 
 process.env.ADMIN_IDS = '777';
@@ -42,7 +45,7 @@ async function ask(userId) {
 
 test('a regular employee is refused — no balance, no limit', async () => {
   const text = await ask('4242');
-  assert.match(text, /admins and Finance only/);
+  assert.match(text, /admins only/);
   assert.ok(!text.includes('140'), 'the outstanding figure must not leak');
   assert.ok(!text.includes('500'), 'the credit limit must not leak');
 });
@@ -52,7 +55,16 @@ test('an admin still gets the balance', async () => {
   assert.match(text, /Alhaji Musa: Outstanding balance/);
 });
 
-test('a Finance user (non-admin) gets the balance', async () => {
+test('FIN-V2: the Finance seat (non-admin) is refused like any employee', async () => {
   const text = await ask('888');
-  assert.match(text, /Alhaji Musa: Outstanding balance/);
+  assert.match(text, /admins only/);
+  assert.ok(!text.includes('140'), 'the outstanding figure must not leak');
+  assert.ok(!text.includes('500'), 'the credit limit must not leak');
+});
+
+test('FIN-V2: container values are for env admins only — not the Finance seat, not a sheet-promoted admin', () => {
+  const { canSeeContainerValues } = controller._internals;
+  assert.equal(canSeeContainerValues('777'), true);
+  assert.equal(canSeeContainerValues('888'), false, 'FINANCE_IDS alone opens nothing');
+  assert.equal(canSeeContainerValues('4242'), false);
 });

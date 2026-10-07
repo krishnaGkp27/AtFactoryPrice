@@ -4652,11 +4652,11 @@ async function handleMessage(bot, msg) {
 
       case 'check_balance': {
         // FIN-V1 (owner, 06-Aug-2026) — a customer's outstanding is money
-        // data: admins + Finance only. This was the one ungated money read
-        // (every other balance surface already checks isAdmin); any typed
-        // "what is X's balance" answered to any registered user.
-        if (!auth.isAdmin(userId) && !config.access.financeIds.includes(String(userId))) {
-          await bot.sendMessage(chatId, 'Customer balances are visible to admins and Finance only.');
+        // data; this was the one ungated money read. FIN-V2 (owner,
+        // 07-Oct-2026): admins ONLY — the finance seat pays what two admins
+        // approved and sees no customer money.
+        if (!auth.isAdmin(userId)) {
+          await bot.sendMessage(chatId, 'Customer balances are visible to admins only.');
           return;
         }
         if (!intent.customer) { await bot.sendMessage(chatId, 'Which customer?'); return; }
@@ -5899,14 +5899,14 @@ async function startSupplyRequestFlow(bot, chatId, userId) {
 }
 
 /**
- * CV-1/CV-2 — who may see ₦ container values: ONLY Railway env IDs
- * (ADMIN_IDS ∪ FINANCE_IDS), per owner mandate 13-Jul-2026. Deliberately
- * NOT auth.isAdmin(): sheet-promoted admins are excluded until the owner
- * adds them to the env lists.
+ * CV-1/CV-2 — who may see ₦ container values: ONLY Railway env ADMIN_IDS
+ * (owner mandate 13-Jul-2026, narrowed 07-Oct-2026: the finance seat is a
+ * payment-only seat and no longer sees them). Deliberately NOT
+ * auth.isAdmin(): sheet-promoted admins are excluded until the owner adds
+ * them to the env list.
  */
 function canSeeContainerValues(userId) {
-  const uid = String(userId);
-  return config.access.adminIds.includes(uid) || config.access.financeIds.includes(uid);
+  return config.access.adminIds.includes(String(userId));
 }
 
 /** Inline button for one arrival-batch (container) tile. */
@@ -13345,6 +13345,7 @@ module.exports = {
   handleMessage,
   handleCallbackQuery,
   handleFileMessage,
+  _internals: { canSeeContainerValues }, // FIN-V2 test seam
   handleLocationMessage,
   // Exposed for cross-module flow resumption (e.g. approval events).
   showSampleQuantityPicker,
