@@ -117,6 +117,12 @@ test('the reconcile chip appears only when a dispatch doc exists, and reads it',
   const noDoc = baleCardRows(REQ, transferRow({ dispatchDoc: null }).actionJSON, null).flat();
   assert.ok(!noDoc.some((b) => String(b.callback_data).startsWith('trf:bnr:')),
     'nothing to reconcile against, so no chip');
+  // NAV-2 — every variant of the card carries an IMMEDIATE back: close the
+  // peek, the transfer card it was opened from is still on screen above it.
+  for (const rows of [withDoc, done, noDoc]) {
+    assert.ok(rows.some((b) => b.text === '⬅ Back' && b.callback_data === `trf:bnx:${REQ}`), 'one step back');
+    assert.ok(!rows.some((b) => String(b.callback_data).startsWith('act:')), 'no menu jump of its own');
+  }
 });
 
 test('the viewer and the reconcile callbacks cannot be confused for each other', async () => {

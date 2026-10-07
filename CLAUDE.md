@@ -150,6 +150,7 @@ Major namespaces already taken:
   `oq/oc/od*`/`os:` (orders; `os:__me__` · `os:__direct__` are the 11-Sep salesperson chips) `rc*` (receipts)
 - Transfers `trf:*` — TRF-19 adds `trf:lcard:<id>` (open a card FROM the 📋
   list; ⬅ Back returns to the list, unlike `trf:card:` from My Tasks);
+  NAV-2 adds `trf:bnx:<id>` (⬅ Back on the bale breakdown — closes the peek);
   TRF-21 adds `trf:rcvp:<id>` (the "only some arrived" door, session-free)
   and the arrival picker `trf:rp:t:<i>` · `trf:rp:pg:<n>` · `trf:rp:go` ·
   `trf:rp:nn:<id>` (session step `receive_pick`); TRF-22 adds the receipt

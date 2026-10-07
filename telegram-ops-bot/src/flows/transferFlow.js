@@ -37,6 +37,7 @@
  *                                (⬅ Back returns to the list)
  *   trf:nn:<id>                  receiver "not now" on the photo gate
  *   trf:vd:d|r:<id>              TRF-9 view attached dispatch/receipt file
+ *   trf:bnx:<id>                 NAV-2 ⬅ Back — closes the breakdown peek
  *   trf:bn:<id>                  TRF-11 bale numbers popup (trf:bl:* is the
  *                                dispatch bale PICKER — do not reuse)
  *   trf:dd:<iso> · trf:dm:<ym> · trf:dq   TRF-16 departure-date picker
@@ -703,7 +704,23 @@ function baleCardRows(requestId, aj, status) {
       callback_data: `trf:bnr:${requestId}`,
     }]);
   }
+  // NAV-2 (owner, 07-Oct-2026: "It doesn't have the back button to go back and
+  // check the transfer. It is going immediately to the main menu" … "an
+  // immediate back button") — this peek is a message UNDER the transfer card,
+  // so one step back is simply closing it: the card the tap came from is
+  // still on screen, untouched. Nothing is redrawn, nothing jumps further.
+  rows.push([{ text: '⬅ Back', callback_data: `trf:bnx:${requestId}` }]);
   return rows;
+}
+
+/** NAV-2 — ⬅ Back on the breakdown: the TRF-9b sweep at the top of every
+ *  transfer tap has already taken the peek down; this only makes sure. */
+async function closeBaleNumbers(bot, query) {
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  if (query.message && query.message.chat) {
+    await bot.deleteMessage(query.message.chat.id, query.message.message_id).catch(() => {});
+  }
+  return true;
 }
 
 /** TRF-17 — the breakdown as its own ephemeral card, swept like a doc view. */
@@ -3131,6 +3148,7 @@ async function handleCallback(bot, query) {
   if (mBnr) return reconcileBaleNumbers(bot, query, mBnr[1]);
   const mBn = data.match(/^trf:bn:(.+)$/);
   if (mBn) return showBaleNumbers(bot, query, mBn[1]);
+  if (/^trf:bnx:/.test(data)) return closeBaleNumbers(bot, query);
   const mLess = data.match(/^trf:less:(.+)$/);
   if (mLess) return showInfo(bot, query, mLess[1], false);
   const mSkip = data.match(/^trf:dsk:([dr]):(.+)$/);

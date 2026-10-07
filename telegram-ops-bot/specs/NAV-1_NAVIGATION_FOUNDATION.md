@@ -85,7 +85,20 @@ per screen. Flows written from now on inherit it.
 Say the word if any footer wording or placement should change — one line in
 `navGuard.footerFor` moves all of them.
 
-## 6. Not in this change
+## 6. A way back is not enough — a drill-down goes ONE step back (NAV-2, 07-Oct)
+
+The owner's screenshot of the transfer bale-number card: its only exit was `🏠 Back to
+menu`, "which is making my work a bit longer since it starts from the transfer again";
+then: "an immediate back button, not Back to Transfer, in case Back to Transfer goes
+multiple cards back." The guard can guarantee *a* way out; it cannot know a card's
+parent. Rule for flows: a card opened FROM another card carries `⬅ Back` that returns
+exactly one step — for a peek sent as its own message under the parent (the transfer
+breakdown, `trf:bnx:`) that is simply closing it, the parent is still on screen
+untouched; for a card drawn IN PLACE of its parent it is a redraw of that parent (the
+receipt drill-down's `⬅ Back to the transfer`). Never a jump to a list or the menu.
+The crawl test cannot detect this class — review new drill-downs by hand.
+
+## 7. Not in this change
 
 Group chats; messages to other people; the content of any card. The `🛒 Sales &
 Marketing` label on the footer is the hub's own label (`activityRegistry`).
