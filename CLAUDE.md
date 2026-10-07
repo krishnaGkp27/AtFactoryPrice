@@ -63,6 +63,8 @@ ask for their status instead of starting new features; help execute them if aske
 
 | **0 — OWNER STEPS** | FIN-V2 SHIPPED 07-Oct-2026 (owner: "stop this feature … customer outstanding and the value of the container"; "adding a finance with it set to payments only"). The finance seat (`FINANCE_IDS`) is payment-only: typed customer balances and ₦ container values are ADMINS ONLY now (BUSINESS_RULES 07-Oct row). **Owner: (1) put the finance person's id in Railway `FINANCE_IDS` (never an id that approves — PAY-4); (2) `node scripts/seed-finance-department.js` (dry-run) → `--commit` adds the `Finance` department with `payments` only (or add it in-bot: 👥 HR → 🏢 Manage Departments); (3) Users sheet → that person's `department` = Finance (an active row, not an admin). Their menu: 💰 Finance → 💳 Payments (+ Waiting for me to pay), plus the injected My Tasks and 💰 Payouts tiles (hiding those two needs code — say the word).** | **Owner** | `scripts/seed-finance-department.js`; `test/characterization/checkBalanceGate.test.js` |
 
+| **0 — OWNER LIVE CHECK** | TRF-22 SHIPPED 07-Oct-2026 (owner: "one extra gate after the goods are received by the recipient … one admin will approve, which will flip the bill details from in transit to received"; rule: "one admin … if the same person is receiving, then another admin — two people: the recipient and the admin"). The receiver's ✅ Received / TRF-21 ticks + file now only REPORT (`receiptReports[]` on the row, numbered for life, the file on the report); nothing flips until ONE admin, never the reporter, taps `🛂 Confirm Receipt n` on the transfer's own card (📋 row `🛂 receipt n awaiting admin`, per-bale `🛂` marks, one `📎 Receipt n` chip per document, the drill-down with the file beneath, `✅ Confirm receipt` = the TRF-21 receipt with the reported bales · `↩️ Send back` + typed reason = nothing moves, the receiver's card returns, the report keeps its number). Row stays 🟡 until the last delivery; one dispatch doc, many receipt docs on one card. **Valve: Settings `TRANSFER_RECEIPT_REVIEW` (default 1; 0 = the instant receipt as before).** The earlier reversal build (be3f46cc) was reverted at the owner's word. **Owner: run spec §9 (report 2 of 3 with a PDF → admin send-back → re-report → other admin confirms → the last bale → green, three 📎 Receipt chips; an admin cannot confirm their own report).** | **Owner** | `telegram-ops-bot/specs/TRF-22_RECEIPT_GATE.md` §9; `src/services/transferService.js` (`reportReceipt`, `confirmReportedReceipt`) |
+
 Known follow-up waiting on Emin's Task-4 finding: if photo archives to Drive are failing
 (service-account quota), build the OAuth-as-user upload fix for `driveBackup`.
 Remove each row (and this section when empty) once signed off.
@@ -150,7 +152,10 @@ Major namespaces already taken:
   list; ⬅ Back returns to the list, unlike `trf:card:` from My Tasks);
   TRF-21 adds `trf:rcvp:<id>` (the "only some arrived" door, session-free)
   and the arrival picker `trf:rp:t:<i>` · `trf:rp:pg:<n>` · `trf:rp:go` ·
-  `trf:rp:nn:<id>` (session step `receive_pick`)
+  `trf:rp:nn:<id>` (session step `receive_pick`); TRF-22 adds the receipt
+  gate `trf:rcok:<id>:<n>` (drill-down) · `trf:rcyes:<id>:<n>` (confirm) ·
+  `trf:rcno:<id>:<n>` (send back → typed step `receipt_sendback`) and
+  `trf:vd:r:<id>:<n>` (report n's document)
 - Approvals inbox `abx:*` — DEC-1 adds `abx:cat:decided` (the read-only
   record group; its rows reuse `abx:i:<idx>`)
 - Catalog: `csf:` `clf:` `crf:` `mkr:` `ctr:` `dab:` `das:` `dat:` `dap:` (incl.
@@ -263,6 +268,7 @@ to a Google Sheet; new tables go through `src/db/migrations.js` MIGRATIONS[].
 | `INVOICE_RATE_MULTIPLIER` | blank (env `INVOICE_RATE_MULTIPLIER` seeds it) | CUR-2 — the factor the CUSTOMER COPY of a sale invoice multiplies the entered rate by (`1250`: entered `3.20/yd` → `4,000.00/yd` on the PDF / web copy). Blank / 0 / 1 = none — the document prints the entered figures unconverted. Read ONCE at issue and frozen in `Invoices.rate_multiplier`; a later change never touches an issued invoice. The sheet's own figures, the ledger and Transactions are never multiplied (§17). the wizard's Step 5 (`INVOICE_MULTIPLIER_ASK`) can override it per sale |
 | `INVOICE_MULTIPLIER_ASK` | 1 | CUR-2 — 1 = the sale approval wizard asks Step 5 (customer-copy multiplier: No multiplier · Settings value · type); 0 = the step is skipped and the Settings cell alone decides |
 | `APPROVALS_DECIDED_DAYS` | 7 | DEC-1 — days of DECIDED (approved or rejected) requests the 🛂 inbox keeps in its ✅❌ Decided group; `0` = every decided row ever. Display only: the ApprovalQueue sheet keeps every row regardless, and the screen caps at 60 and says when it did |
+| `TRANSFER_RECEIPT_REVIEW` | 1 | TRF-22 — 1 = a receipt the receiver reports (✅ Received / ticks + file) waits for ONE admin's `🛂 Confirm Receipt n` before the bales flip to available; 0 = the file applies the receipt at once, as before. An emergency valve, live within a minute, no deploy |
 | `TRANSFER_STALE_DAYS` | 3 | TRF-20 — days an OPEN transfer may wait on its holder (dispatcher / receiver) before every admin is told too (`⚠️ 18Sep·02 · 🔴 LAG▸KAN · 10B has waited 5d on Abdul to dispatch` + Open button). The holder's own card re-sends every `APPROVAL_REMINDER_HOURS` regardless; 0 = holder only |
 | `PAYMENT_FINANCE_REMINDER_HOURS` | 4 | PAY-2 — hours after approval (or the last finance card / reminder) before an approved-but-unpaid payment re-sends its finance card to the finance seat; 0 = off |
 

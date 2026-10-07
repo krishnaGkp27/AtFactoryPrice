@@ -29,6 +29,9 @@ installFakeSheets(createFakeSheets({}));
 installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
 
 const controller = loadController();
+// TRF-22 — these tests pin the INSTANT receipt (the valve at 0); the gated
+// path is pinned in test/characterization/transferReceiptGate.test.js.
+{ const sr = require(path.join(SRC, 'repositories/settingsRepository')); const real = sr.getAll; sr.getAll = async () => ({ ...(await real()), TRANSFER_RECEIPT_REVIEW: '0' }); }
 const sessionStore = require(path.join(SRC, 'utils/sessionStore'));
 const inventoryRepository = require(path.join(SRC, 'repositories/inventoryRepository'));
 const usersRepository = require(path.join(SRC, 'repositories/usersRepository'));

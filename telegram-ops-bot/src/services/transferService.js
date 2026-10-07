@@ -90,6 +90,12 @@ async function getActionableFor(userId) {
   return open.filter((t) => {
     const aj = t.actionJSON;
     if (aj.stage === STAGES.REQUESTED) return String(aj.dispatcher) === uid;
+    // TRF-22 — a reported receipt is the ADMINS' move (never the reporter's).
+    if (aj.stage === STAGES.IN_TRANSIT && aj.pendingReceipt) {
+      const rep = pendingReport(aj);
+      if (rep && String(rep.by) === uid) return false;
+      try { return require('../middlewares/auth').isAdmin(uid); } catch (_) { return false; }
+    }
     if (aj.stage === STAGES.IN_TRANSIT) return String(aj.receiver) === uid;
     // TRF-18 — a parked package is the ADMIN's move; without this, a
     // transfer awaiting approval sat in NOBODY's My Tasks queue and only
@@ -668,6 +674,139 @@ async function confirmReceiptInner(requestId, byUserId, opts = {}) {
   return { ok: true, aj: ajOut, mismatch, closed: !remaining.length, received: picked, remaining, delivery: receipts.length };
 }
 
+/* ── TRF-22: the receipt gate — the receiver reports, one admin confirms ── */
+
+/** The receipt reports on a row (every report ever made, in order). */
+function receiptReports(aj) {
+  return Array.isArray(aj && aj.receiptReports) ? aj.receiptReports : [];
+}
+
+/** The report waiting for an admin, or null. */
+function pendingReport(aj) {
+  const n = Number(aj && aj.pendingReceipt) || 0;
+  if (!n) return null;
+  return receiptReports(aj).find((r) => Number(r.n) === n && r.status === 'pending') || null;
+}
+
+/**
+ * TRF-22 (owner, 07-Oct-2026: "there shall be one extra gate after the goods
+ * are received by the recipient … one admin will approve, which will flip
+ * the bill details from in transit to received") — the receiver REPORTS a
+ * delivery: which bales arrived (all outstanding when `bales` is absent)
+ * and, once the photo gate lands, the receipt document. Nothing moves on
+ * the sheet. The report rides the transfer's own row as `receiptReports[]`
+ * (one entry per report, numbered for life — a sent-back report keeps its
+ * number) with `pendingReceipt` = the number waiting for an admin.
+ *
+ * @param {string} requestId
+ * @param {string} byUserId the receiver (or an admin in that seat)
+ * @param {{bales?:string[]}} [opts]
+ * @returns {Promise<{ok:boolean, aj?:object, n?:number, bales?:string[], all?:boolean, message?:string}>}
+ */
+async function reportReceipt(requestId, byUserId, opts = {}) {
+  return mutex.runExclusive(requestId, async () => {
+    const row = await findTransfer(requestId);
+    if (!row) return { ok: false, message: 'transferService: transfer not found' };
+    const aj = row.actionJSON;
+    if (row.status !== 'pending' || aj.stage !== STAGES.IN_TRANSIT) {
+      return { ok: false, message: `transferService: cannot report a receipt (${row.status}/${aj.stage})` };
+    }
+    if (pendingReport(aj)) {
+      return { ok: false, message: `transferService: receipt ${aj.pendingReceipt} is already with the admins — wait for their decision` };
+    }
+    const state = receiptState(aj);
+    let bales = null;
+    if (Array.isArray(opts.bales)) {
+      const remaining = new Set(state.remaining);
+      bales = [...new Set(opts.bales.map(String))].filter((b) => remaining.has(b));
+      if (!bales.length) return { ok: false, message: 'transferService: none of those bales is still on the road for this transfer' };
+    }
+    const reports = receiptReports(aj).map((r) => ({ ...r }));
+    const n = reports.length + 1;
+    const now = new Date().toISOString();
+    reports.push({
+      n, at: now, on: todayInLagos(), by: String(byUserId || ''), status: 'pending',
+      bales: bales || state.remaining, all: !bales, doc: null,
+    });
+    const patch = { receiptReports: reports, pendingReceipt: n, receiptReportedAt: now };
+    await approvalQueueRepository.updateActionJSON(requestId, patch);
+    await mirror(requestId, 'receipt_reported', byUserId, { n, bales: (bales || state.remaining).length });
+    await auditLogRepository.append('transfer.receipt_reported', { requestId, n, bales: bales || state.remaining }, String(byUserId || ''));
+    return { ok: true, aj: { ...aj, ...patch }, n, bales: bales || state.remaining, all: !bales };
+  });
+}
+
+/**
+ * TRF-22 — one admin confirms the reported receipt: the REAL receipt runs
+ * now with the reporter's bales (TRF-21 confirmReceipt, byte-identical
+ * effects: rows flip, Transactions, movements, status), the report's
+ * document is stamped on the delivery, the report is marked confirmed.
+ * Two people on every receipt: the admin must not be the reporter.
+ */
+async function confirmReportedReceipt(requestId, adminId) {
+  return mutex.runExclusive(requestId, async () => {
+    const row = await findTransfer(requestId);
+    if (!row) return { ok: false, message: 'transferService: transfer not found' };
+    const aj = row.actionJSON;
+    const rep = pendingReport(aj);
+    if (row.status !== 'pending' || aj.stage !== STAGES.IN_TRANSIT || !rep) {
+      return { ok: false, message: `transferService: no receipt awaiting confirmation (${row.status}/${aj.stage})` };
+    }
+    if (String(rep.by) === String(adminId)) {
+      return { ok: false, message: 'transferService: you reported this receipt — a different admin must confirm it (two people on every receipt)' };
+    }
+    const res = await confirmReceiptInner(requestId, rep.by, rep.all ? {} : { bales: rep.bales });
+    if (!res.ok) return res;
+    // Re-read: confirmReceiptInner wrote the delivery; stamp the document on
+    // it and settle the report. (The status flip, when closing, is already on
+    // the sheet — a failure here leaves a confirmed delivery whose report
+    // still reads pending, which the card shows and the admin can re-tap.)
+    const fresh = await findTransfer(requestId);
+    const live = (fresh && fresh.actionJSON) || res.aj;
+    const now = new Date().toISOString();
+    const reports = receiptReports(live).map((r) => (Number(r.n) === rep.n
+      ? { ...r, status: 'confirmed', confirmedBy: String(adminId), confirmedAt: now, delivery: res.delivery || null } : r));
+    const patch = { receiptReports: reports, pendingReceipt: null };
+    if (rep.doc && (rep.doc.fileId || rep.doc.url)) {
+      const entry = { url: rep.doc.url || '', name: rep.doc.name || '', fileId: rep.doc.fileId || '', mime: rep.doc.mime || '', by: String(rep.by), at: rep.at };
+      patch.receiveDoc = entry;
+      const n = Number(res.delivery) || 0;
+      if (n > 0 && Array.isArray(live.receipts) && n <= live.receipts.length) {
+        patch.receipts = live.receipts.map((r, i) => (i === n - 1 ? { ...r, doc: { url: entry.url, name: entry.name, fileId: entry.fileId, mime: entry.mime } } : r));
+      }
+    }
+    await approvalQueueRepository.updateActionJSON(requestId, patch);
+    await mirror(requestId, 'receipt_confirmed', adminId, { n: rep.n, delivery: res.delivery || null, closed: !!res.closed });
+    await auditLogRepository.append('transfer.receipt_confirmed', { requestId, n: rep.n, bales: rep.bales, delivery: res.delivery || null }, String(adminId));
+    return { ...res, aj: { ...live, ...patch }, report: { ...rep, confirmedBy: String(adminId) } };
+  });
+}
+
+/**
+ * TRF-22 — the admin sends a reported receipt back: nothing flipped, the
+ * report stays on the row as `sent_back` with the reason, the receiver's
+ * card returns so they can report again.
+ */
+async function sendBackReceipt(requestId, adminId, reason) {
+  return mutex.runExclusive(requestId, async () => {
+    const row = await findTransfer(requestId);
+    if (!row) return { ok: false, message: 'transferService: transfer not found' };
+    const aj = row.actionJSON;
+    const rep = pendingReport(aj);
+    if (row.status !== 'pending' || aj.stage !== STAGES.IN_TRANSIT || !rep) {
+      return { ok: false, message: `transferService: no receipt awaiting confirmation (${row.status}/${aj.stage})` };
+    }
+    const now = new Date().toISOString();
+    const reports = receiptReports(aj).map((r) => (Number(r.n) === rep.n
+      ? { ...r, status: 'sent_back', sentBackBy: String(adminId), sentBackAt: now, reason: String(reason || '') } : r));
+    const patch = { receiptReports: reports, pendingReceipt: null, receiptSentBackAt: now };
+    await approvalQueueRepository.updateActionJSON(requestId, patch);
+    await mirror(requestId, 'receipt_sent_back', adminId, { n: rep.n, reason: String(reason || '') });
+    await auditLogRepository.append('transfer.receipt_sent_back', { requestId, n: rep.n, reason: String(reason || '') }, String(adminId));
+    return { ok: true, aj: { ...aj, ...patch }, report: { ...rep, sentBackBy: String(adminId), reason: String(reason || '') } };
+  });
+}
+
 /**
  * Decline (pre-dispatch: nothing was moved, just close) or reject
  * (post-dispatch: revert the logged bales to the source).
@@ -779,6 +918,16 @@ async function attachDocInner(requestId, kind, doc = {}) {
     receipts[n - 1].doc = { url: entry.url, name: entry.name, fileId: entry.fileId, mime: entry.mime };
     patch.receipts = receipts;
   }
+  // TRF-22 — a REPORTED receipt's document belongs to its report until an
+  // admin confirms it (confirmReportedReceipt then copies it onto the
+  // delivery and receiveDoc); it must not overwrite the last confirmed doc.
+  const rn = Number(doc.report) || 0;
+  if (kind === 'receive' && rn > 0) {
+    const reports = receiptReports(row.actionJSON).map((r) => (Number(r.n) === rn
+      ? { ...r, doc: { url: entry.url, name: entry.name, fileId: entry.fileId, mime: entry.mime } } : r));
+    delete patch.receiveDoc;
+    patch.receiptReports = reports;
+  }
   await approvalQueueRepository.updateActionJSON(requestId, patch);
   await mirror(requestId, `${kind}_doc`, entry.by, { url: entry.url });
   await auditLogRepository.append(`transfer.${kind}_doc`, { requestId, url: entry.url, name: entry.name }, entry.by);
@@ -801,6 +950,11 @@ module.exports = {
   sendBackFromReview,
   confirmReceipt,
   receiptState,
+  reportReceipt,
+  confirmReportedReceipt,
+  sendBackReceipt,
+  receiptReports,
+  pendingReport,
   abort,
   attachDoc,
 };

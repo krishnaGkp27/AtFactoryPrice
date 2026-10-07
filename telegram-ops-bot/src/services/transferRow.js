@@ -123,6 +123,9 @@ function label(row) {
 function duty(row) {
   const s = stateOf(row);
   if (s === 'in_transit') {
+    const aj = (row && row.actionJSON) || {};
+    // TRF-22 — a reported receipt is the admins' move.
+    if (aj.pendingReceipt) return { icon: '🛂', verb: 'Confirm receipt', line: `🛂 receipt ${aj.pendingReceipt} reported — waiting for an admin to confirm` };
     const got = receivedCount(row);
     // TRF-21 — part of the load is here already; the duty is the rest.
     if (got) {

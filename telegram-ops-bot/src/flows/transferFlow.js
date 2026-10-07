@@ -413,7 +413,10 @@ function dispatchedBlock(aj) {
   // TRF-21 — a bale confirmed by an earlier delivery carries a ✅ in the
   // bracket so the card reads which numbers are here and which are not.
   const got = new Set((Array.isArray(aj.receivedBales) ? aj.receivedBales : []).map(String));
-  const mark = (b) => (got.has(String(b)) ? `${b} ✅` : String(b));
+  // TRF-22 — a bale in the receipt now with the admins carries 🛂.
+  const pend = transferService.pendingReport(aj);
+  const rep = new Set(pend ? (pend.bales || []).map(String) : []);
+  const mark = (b) => (got.has(String(b)) ? `${b} ✅` : rep.has(String(b)) ? `${b} 🛂` : String(b));
   for (const [design, list] of byDesign) {
     out.push(designHead(design));
     for (const d of list) {
@@ -545,8 +548,42 @@ function docRows(requestId, aj) {
   const has = (d) => d && (d.fileId || d.url);
   const rows = [];
   if (has(aj.dispatchDoc)) rows.push([{ text: '📄 Dispatch doc', callback_data: `trf:vd:d:${requestId}` }]);
-  if (has(aj.receiveDoc)) rows.push([{ text: '📄 Receipt doc', callback_data: `trf:vd:r:${requestId}` }]);
+  // TRF-22 — one dispatch document, one receipt document per report: every
+  // report with a file gets its own chip (`📎 Receipt 2`), three per row.
+  const reports = transferService.receiptReports(aj).filter((r) => has(r.doc));
+  if (reports.length) {
+    rows.push(...chunk(reports.map((r) => ({ text: `📎 Receipt ${r.n}`, callback_data: `trf:vd:r:${requestId}:${r.n}` })), 3));
+  } else if (has(aj.receiveDoc)) {
+    rows.push([{ text: '📄 Receipt doc', callback_data: `trf:vd:r:${requestId}` }]);
+  }
   return rows;
+}
+
+/**
+ * TRF-22 — the receipt reports as lines on the admin's transfer card:
+ * `📎 Receipt 1 · Musa · 07-Oct · 771, 772 · ✅ confirmed by Ajeet`.
+ */
+function reportsBlock(aj, names = {}) {
+  const reports = transferService.receiptReports(aj);
+  if (!reports.length) return '';
+  const nameOf = (id) => mdEscape(names[String(id)] || String(id || '—'));
+  const lines = reports.map((r) => {
+    const verdict = r.status === 'confirmed' ? `✅ confirmed by ${nameOf(r.confirmedBy)}`
+      : r.status === 'sent_back' ? `↩️ sent back by ${nameOf(r.sentBackBy)}${r.reason ? ` — ${mdEscape(r.reason)}` : ''}`
+        : '🛂 awaiting an admin';
+    const bales = r.all && !(r.bales || []).length ? 'everything outstanding' : baleListPreview(r.bales || []);
+    return `${r.doc && (r.doc.fileId || r.doc.url) ? '📎' : '📄'} Receipt ${r.n} · ${nameOf(r.by)} · ${fmtDate(r.on || r.at)} · ${bales} · ${verdict}`;
+  });
+  return `\n\n${lines.join('\n')}`;
+}
+
+/** Settings TRANSFER_RECEIPT_REVIEW (default 1): does a reported receipt wait for an admin? */
+async function receiptReviewOn() {
+  try {
+    const v = (await require('../repositories/settingsRepository').getAll()).TRANSFER_RECEIPT_REVIEW;
+    if (v === undefined || v === null || String(v).trim() === '') return true;
+    return !['0', 'false', 'no', 'off'].includes(String(v).trim().toLowerCase());
+  } catch (_) { return true; }
 }
 
 /** TRF-11 (owner 01-Aug) — bale-number chip on every transfer card: always
@@ -946,6 +983,16 @@ async function handleReviewReconcile(bot, query, requestId) {
 function receiverCard(requestId, aj, statusLine = '') {
   const shortNote = aj.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
   const status = statusLine ? `${statusLine}\n` : '';
+  // TRF-22 — a report is with the admins: the receiver's card shows it and
+  // offers nothing to tap until they decide (no second report over the same bales).
+  const pend = transferService.pendingReport(aj);
+  if (pend) {
+    return {
+      text: `📦 *Transfer ${shortTransferRef(requestId)} incoming*\n${status}${headOf(aj)}${departedLine(aj)}\n${dispatchedBlock(aj)}${shortNote}${receiptLine(aj)}`
+        + `\n\n🛂 _Receipt ${pend.n} (${baleListPreview(pend.bales || [])}) is with the admins to confirm — nothing to do until they decide. You will be told._`,
+      kb: { inline_keyboard: [...balesChipRow(requestId, aj), ...docRows(requestId, aj)] },
+    };
+  }
   // TRF-21 (owner, 30-Sep-2026) — the goods seldom arrive in one batch. ✅
   // Received still confirms everything outstanding; when more than one bale
   // is still on the road, a second door lets the receiver tick the ones
@@ -1047,6 +1094,11 @@ function waitingLine(row, names = {}) {
   }
   if (aj.stage === 'in_transit') {
     const left = aj.dispatchedOn ? ` · left ${fmtDate(aj.dispatchedOn)}` : '';
+    // TRF-22 — a reported receipt waits on the admins, from the report.
+    const pend = transferService.pendingReport(aj);
+    if (pend) {
+      return `🛂 *Receipt ${pend.n} with the admins to confirm* · reported by ${nameOf(pend.by)}${waitedFor(pend.at)}`;
+    }
     // TRF-21 — after a partial delivery the receiver holds only the rest,
     // and the clock restarts at the last confirmation, not at dispatch.
     const st = transferService.receiptState(aj);
@@ -1211,6 +1263,10 @@ async function showInfo(bot, query, requestId, expand) {
 async function sendTransferDoc(bot, query, requestId, kind) {
   const chatId = query.message.chat.id;
   const userId = String(query.from.id);
+  // TRF-22 — `trf:vd:r:<id>:<n>` fetches report n's document.
+  let reportNo = 0;
+  const mRep = String(requestId).match(/^(.+):(\d+)$/);
+  if (mRep) { requestId = mRep[1]; reportNo = parseInt(mRep[2], 10); }
   const row = await transferService.findTransfer(requestId);
   if (!row) {
     await bot.answerCallbackQuery(query.id, { text: '🚚 Transfer not found or already purged.', show_alert: true }).catch(() => {});
@@ -1222,8 +1278,9 @@ async function sendTransferDoc(bot, query, requestId, kind) {
     await bot.answerCallbackQuery(query.id, { text: 'This document is for the people on the transfer.', show_alert: true }).catch(() => {});
     return true;
   }
-  const doc = kind === 'receive' ? aj.receiveDoc : aj.dispatchDoc;
-  const label = kind === 'receive' ? 'Receipt' : 'Dispatch';
+  const report = reportNo ? transferService.receiptReports(aj).find((r) => Number(r.n) === reportNo) : null;
+  const doc = reportNo ? (report && report.doc) : (kind === 'receive' ? aj.receiveDoc : aj.dispatchDoc);
+  const label = reportNo ? `Receipt ${reportNo}` : (kind === 'receive' ? 'Receipt' : 'Dispatch');
   if (!doc || (!doc.fileId && !doc.url)) {
     await bot.answerCallbackQuery(query.id, { text: `No ${label.toLowerCase()} document on this transfer.`, show_alert: true }).catch(() => {});
     return true;
@@ -1321,6 +1378,12 @@ async function handleAction(bot, query, requestId, action) {
   // taps that no longer match the live stage instead of relying on the
   // service. Decline is only valid BEFORE dispatch; Reject only AFTER — a
   // stale ❌ tapped post-dispatch must never perform a full revert.
+  // TRF-22 — while a receipt is with the admins the receiver's buttons are
+  // frozen: no second report, no reject, until the admin decides.
+  if (['rcv', 'rcvp', 'rej', 'rejc'].includes(action) && transferService.pendingReport(aj)) {
+    await bot.answerCallbackQuery(query.id, { text: `Receipt ${aj.pendingReceipt} is with the admins — wait for their decision.`, show_alert: true }).catch(() => {});
+    return true;
+  }
   if (row.status !== 'pending'
       || (action === 'acc' && aj.stage !== 'requested')
       || ((action === 'rcv' || action === 'rcvp') && aj.stage !== 'in_transit')
@@ -1638,6 +1701,16 @@ async function handleText(bot, msg) {
     });
     return true;
   }
+  // TRF-22 — the admin's typed send-back reason.
+  if (session.step === 'receipt_sendback') {
+    const reason = String(msg.text || '').trim().replace(/\s+/g, ' ');
+    if (reason.length < 3 || reason.length > 120) {
+      await bot.sendMessage(chatId, '✍️ The reason must be 3 to 120 characters — reply again.').catch(() => {});
+      return true;
+    }
+    await completeSendBack(bot, chatId, userId, session, reason);
+    return true;
+  }
   if (session.step !== 'dispatch_search') return false;
   const q = String(msg.text || '').trim();
   if (!q) return true;
@@ -1849,6 +1922,20 @@ async function completeReceipt(bot, session, userId) {
   // TRF-21 — the gate may carry the bales ticked on the arrival picker; no
   // picks = everything still on the road (the pre-TRF-21 path).
   const picks = Array.isArray(session.rcvBales) && session.rcvBales.length ? { bales: session.rcvBales } : {};
+  // TRF-22 (owner, 07-Oct-2026) — with the review on, the receiver only
+  // REPORTS: nothing flips until one admin confirms on the transfer card.
+  if (await receiptReviewOn()) {
+    const rep = await transferService.reportReceipt(requestId, userId, picks);
+    if (!rep.ok) return { ok: false, message: rep.message };
+    const st = transferService.receiptState(await ensureLineBales(rep.aj));
+    return {
+      ok: true, reported: true, report: rep.n, delivery: 0,
+      captionNote: ` — receipt ${rep.n}: ${rep.bales.join(', ')} (awaiting an admin)`,
+      sealText: `📦 *${shortTransferRef(requestId)} — receipt ${rep.n} reported*\n`
+        + `${rep.bales.length} bale(s): ${baleListPreview(rep.bales)}${st.received.length ? ` · ${st.received.length} received earlier` : ''}\n`
+        + '🛂 _With the admins to confirm — nothing moves until one of them taps ✅. You will be told._',
+    };
+  }
   const res = await transferService.confirmReceipt(requestId, userId, picks);
   if (!res.ok) return { ok: false, message: res.message };
   const aj = await ensureLineBales(res.aj); // TRF-12 — pre-storage transfers
@@ -2192,6 +2279,7 @@ async function handleFile(bot, msg) {
   let sealText = null;
   let captionNote = '';
   let delivery = 0;
+  let report = 0; // TRF-22 — the receipt report this document belongs to
   let cardStale = false;
   if (session.gate) {
     const done = kind === 'receive'
@@ -2210,6 +2298,7 @@ async function handleFile(bot, msg) {
     sealText = done.sealText;
     captionNote = done.captionNote || '';
     delivery = done.delivery || 0;
+    report = done.report || 0;
     // TRF-21 — a receipt taken through the picker leaves the receiver's own
     // card standing; it is redrawn from the live row once the photo is on.
     cardStale = kind === 'receive' && !!session.cardMessageId;
@@ -2230,6 +2319,7 @@ async function handleFile(bot, msg) {
   await transferService.attachDoc(requestId, kind, {
     url, name: (archive && archive.readableName) || fileName, fileId, mime: mimeType, by: userId,
     ...(delivery ? { delivery } : {}),
+    ...(report ? { report } : {}),
   });
 
   // Forward the file for eyes-on to the counterparty, admins, and requester.
@@ -2287,7 +2377,232 @@ async function handleFile(bot, msg) {
     await sendAdminReviewCards(bot, requestId).catch((e) =>
       logger.warn(`transferFlow: admin review cards failed: ${e.message}`));
   }
+  // TRF-22 — the receipt document is on the report; the admins get the
+  // transfer card with 🛂 Confirm Receipt n (never the reporter).
+  if (kind === 'receive' && report) {
+    await sendReceiptReviewCards(bot, requestId, userId).catch((e) =>
+      logger.warn(`transferFlow: receipt review cards failed: ${e.message}`));
+  }
   return true;
+}
+
+/* ── TRF-22: the receipt gate — the admin's side ───────────────────────── */
+
+/**
+ * The transfer card as the ADMIN sees it while a receipt waits: per-bale
+ * ✅ / 🛂 marks, every report with its verdict, one button for the report
+ * to confirm. The reporter never gets the button (two people per receipt).
+ */
+async function receiptReviewCard(requestId, row, names, viewerId) {
+  const aj = await ensureLineBales(row.actionJSON);
+  const pend = transferService.pendingReport(aj);
+  const st = transferService.receiptState(aj);
+  const text = `🚚 *${shortTransferRef(requestId)} · ${mdEscape(aj.from || '?')} → ${mdEscape(aj.to || '?')} · ${st.bales.length} bale(s)*\n`
+    + `${waitingLine(row, names)}\n${departedLine(aj).replace(/^\n/, '')}${aj.dispatcher ? ` · dispatched by ${mdEscape(names[String(aj.dispatcher)] || String(aj.dispatcher))}` : ''}\n`
+    + `🟡 ${st.received.length} of ${st.bales.length} received · 🚚 ${st.remaining.length} still on the road\n\n`
+    + `${dispatchedBlock(aj)}${reportsBlock(aj, names)}`;
+  const rows = [];
+  if (pend) {
+    if (String(pend.by) === String(viewerId)) rows.push([{ text: `🔒 Receipt ${pend.n} — you reported it; another admin confirms`, callback_data: 'trf:noop' }]);
+    else rows.push([{ text: `🛂 Confirm Receipt ${pend.n}`, callback_data: `trf:rcok:${requestId}:${pend.n}` }]);
+  }
+  rows.push(...balesChipRow(requestId, aj), ...docRows(requestId, aj));
+  return { text, rows };
+}
+
+/** Every name a transfer card may print: the parties and every report's people. */
+function cardPeople(row) {
+  const aj = (row && row.actionJSON) || {};
+  return [row && row.user, aj.dispatcher, aj.receiver,
+    ...transferService.receiptReports(aj).flatMap((r) => [r.by, r.confirmedBy, r.sentBackBy])].filter(Boolean);
+}
+
+/** DM every admin except the reporter the transfer card with 🛂 Confirm Receipt n. */
+async function sendReceiptReviewCards(bot, requestId, reporterId) {
+  const row = await transferService.findTransfer(requestId);
+  const pend = row && transferService.pendingReport(row.actionJSON);
+  if (!row || !pend) return;
+  const names = await nameMap(cardPeople(row));
+  for (const adminId of config.access.adminIds) {
+    if (String(adminId) === String(reporterId || pend.by)) continue;
+    try {
+      const card = await receiptReviewCard(requestId, row, names, adminId);
+      await bot.sendMessage(adminId, `📥 *Receipt ${pend.n} to confirm*\n${card.text}`,
+        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [...card.rows, [{ text: '🔎 View details', callback_data: `trf:info:${requestId}` }]] } });
+    } catch (e) { logger.warn(`transferFlow: receipt review card to ${adminId} failed: ${e.message}`); }
+  }
+}
+
+/** Design · shade of a bale from the dispatched lines, '' when unknown. */
+function lineOfBale(aj, bale) {
+  for (const d of (Array.isArray(aj.dispatched) ? aj.dispatched : [])) {
+    if ((d.bales || []).map(String).includes(String(bale))) return `${d.design} · Shade ${d.shade}`;
+  }
+  return '';
+}
+
+/** trf:rcok — the drill-down: this report alone, its document delivered beneath. */
+async function showReceiptReview(bot, query, requestId, n) {
+  const userId = String(query.from.id);
+  const chatId = query.message.chat.id;
+  if (!auth.isAdmin(userId)) {
+    await bot.answerCallbackQuery(query.id, { text: 'Admin only.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  const row = await transferService.findTransfer(requestId);
+  const aj = row && await ensureLineBales(row.actionJSON);
+  const pend = row && transferService.pendingReport(aj);
+  if (!pend || Number(pend.n) !== Number(n)) {
+    await bot.answerCallbackQuery(query.id, { text: `Receipt ${n} is no longer awaiting confirmation.`, show_alert: true }).catch(() => {});
+    return showActionCard(bot, query, requestId);
+  }
+  if (String(pend.by) === userId) {
+    await bot.answerCallbackQuery(query.id, { text: 'You reported this receipt — a different admin must confirm it.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  const names = await nameMap([pend.by]);
+  const st = transferService.receiptState(aj);
+  const after = st.received.length + pend.bales.length;
+  const lines = pend.bales.map((b) => ` • ${b}${lineOfBale(aj, b) ? ` · ${mdEscape(lineOfBale(aj, b))}` : ''}`).join('\n');
+  const text = `📥 *Receipt ${pend.n} of ${shortTransferRef(requestId)} — to confirm*\n`
+    + `Reported by ${mdEscape(names[String(pend.by)] || String(pend.by))} · ${fmtDate(pend.on || pend.at)}${waitedFor(pend.at)}\n`
+    + `${mdEscape(aj.from || '?')} → ${mdEscape(aj.to || '?')}\n\n`
+    + `This delivery (${pend.bales.length}):\n${lines}\n→ flips to available at *${mdEscape(aj.to || '?')}*\n\n`
+    + (st.received.length ? `Already confirmed: ${baleListPreview(st.received)} (${st.received.length})\n` : '')
+    + (after >= st.bales.length
+      ? `After this: ${st.bales.length} of ${st.bales.length} received — the transfer closes ✅`
+      : `After this: ${after} of ${st.bales.length} received — ${st.bales.length - after} still on the road`)
+    + (pend.doc && (pend.doc.fileId || pend.doc.url) ? `\n\n📎 Receipt ${pend.n} document — sent below` : '\n\n⚠️ _No document on this report yet._');
+  await bot.editMessageText(text, {
+    chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [
+      [{ text: '✅ Confirm receipt', callback_data: `trf:rcyes:${requestId}:${pend.n}` }, { text: '↩️ Send back', callback_data: `trf:rcno:${requestId}:${pend.n}` }],
+      [{ text: '⬅ Back to the transfer', callback_data: `trf:lcard:${requestId}` }],
+    ] },
+  }).catch(() => {});
+  if (pend.doc && (pend.doc.fileId || pend.doc.url)) {
+    await sendTransferDoc(bot, { ...query, id: null }, `${requestId}:${pend.n}`, 'receive').catch(() => {});
+  }
+  return true;
+}
+
+/** Tell the receiver, the dispatcher, the requester and the other admins what a confirmation did. */
+async function announceReceipt(bot, requestId, res, adminId) {
+  const row = await transferService.findTransfer(requestId);
+  const aj = await ensureLineBales(res.aj);
+  const st = transferService.receiptState(aj);
+  const names = await nameMap([adminId, aj.receiver, aj.dispatcher, row && row.user]);
+  const admin = mdEscape(names[String(adminId)] || String(adminId));
+  const deliveries = st.receipts.length;
+  const label = res.closed
+    ? (deliveries > 1 ? `received ✅ (all ${st.bales.length}, in ${deliveries} deliveries)` : 'received ✅')
+    : `partly received 📦 (${st.received.length} of ${st.bales.length})`;
+  const bales = (res.received || []).join(', ');
+  const receiverText = res.closed
+    ? `✅ *${shortTransferRef(requestId)} — receipt ${res.report.n} confirmed by ${admin}*\n${bales ? `${bales} now live at *${mdEscape(aj.to)}*. ` : ''}Every bale is received — the transfer is closed.`
+    : `✅ *${shortTransferRef(requestId)} — receipt ${res.report.n} confirmed by ${admin}*\n${bales} now live at *${mdEscape(aj.to)}* · ${st.remaining.length} still on the road (${baleListPreview(st.remaining)}).\n_Your card is updated — use it for the next delivery._`;
+  const targets = new Set([String(aj.receiver || ''), String(aj.dispatcher || '')]);
+  targets.delete(String(adminId)); targets.delete('');
+  for (const t of targets) {
+    try {
+      if (t === String(aj.receiver) && !res.closed) {
+        const card = receiverCard(requestId, aj, await pushStatus(requestId, aj));
+        await bot.sendMessage(t, `${receiverText}\n\n${card.text}`, { parse_mode: 'Markdown', reply_markup: card.kb });
+      } else {
+        await bot.sendMessage(t, receiverText, { parse_mode: 'Markdown', reply_markup: viewMoreKb(requestId) });
+      }
+    } catch (_) { /* best-effort */ }
+  }
+  await notifyAdmins(bot, requestId, aj, `${label} · receipt ${res.report.n} confirmed by ${admin}`, adminId);
+  if (row) await notifyRequester(bot, row, requestId, aj, label, adminId);
+}
+
+/** trf:rcyes — one admin confirms: the real receipt runs now. */
+async function handleReceiptConfirm(bot, query, requestId, n) {
+  const userId = String(query.from.id);
+  if (!auth.isAdmin(userId)) {
+    await bot.answerCallbackQuery(query.id, { text: 'Admin only.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  const row0 = await transferService.findTransfer(requestId);
+  const pend0 = row0 && transferService.pendingReport(row0.actionJSON);
+  if (!pend0 || Number(pend0.n) !== Number(n)) {
+    await bot.answerCallbackQuery(query.id, { text: `Receipt ${n} is no longer awaiting confirmation.`, show_alert: true }).catch(() => {});
+    return showActionCard(bot, query, requestId);
+  }
+  const res = await transferService.confirmReportedReceipt(requestId, userId);
+  if (!res.ok) {
+    await bot.answerCallbackQuery(query.id, { text: res.message, show_alert: true }).catch(() => {});
+    return true;
+  }
+  await bot.answerCallbackQuery(query.id, { text: res.closed ? '✅ Received — transfer closed' : `✅ Receipt ${n} confirmed` }).catch(() => {});
+  await announceReceipt(bot, requestId, res, userId);
+  if (res.mismatch) {
+    for (const adminId of config.access.adminIds) {
+      try {
+        await bot.sendMessage(adminId,
+          `⚠️ *${shortTransferRef(requestId)} receive mismatch* — expected ${res.mismatch.expectedBales} bale(s), records matched ${res.mismatch.flippedBales}. The Inventory sheet was changed outside the transfer pipeline; check the AuditLog (transfer.receive_mismatch).`,
+          { parse_mode: 'Markdown' });
+      } catch (_) { /* best-effort */ }
+    }
+  }
+  // The same card, now the transfer after the confirmation (green or yellow).
+  return showActionCard(bot, query, requestId);
+}
+
+/** trf:rcno — ask the admin why; the typed reason lands in handleText (step receipt_sendback). */
+async function askSendBackReason(bot, query, requestId, n) {
+  const userId = String(query.from.id);
+  if (!auth.isAdmin(userId)) {
+    await bot.answerCallbackQuery(query.id, { text: 'Admin only.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  const row = await transferService.findTransfer(requestId);
+  const pend = row && transferService.pendingReport(row.actionJSON);
+  if (!pend || Number(pend.n) !== Number(n)) {
+    await bot.answerCallbackQuery(query.id, { text: `Receipt ${n} is no longer awaiting confirmation.`, show_alert: true }).catch(() => {});
+    return showActionCard(bot, query, requestId);
+  }
+  await bot.answerCallbackQuery(query.id).catch(() => {});
+  sessionStore.set(userId, {
+    type: SESSION_TYPE, step: 'receipt_sendback', requestId, reportNo: Number(n),
+    flowMessageId: query.message.message_id, ttlMs: 30 * 60 * 1000,
+  });
+  await bot.editMessageText(
+    `↩️ *Send back receipt ${n} of ${shortTransferRef(requestId)}*\nNothing will move. The receiver gets the card back with your reason and reports again.\n\n✍️ Why? Reply in one line (3–120 characters).`,
+    { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [[{ text: '⬅ Back', callback_data: `trf:rcok:${requestId}:${n}` }]] } },
+  ).catch(() => {});
+  return true;
+}
+
+/** The typed reason arrived: send the report back, re-arm the receiver, tell the admins. */
+async function completeSendBack(bot, chatId, userId, session, reason) {
+  const { requestId, reportNo: n, flowMessageId } = session;
+  sessionStore.clear(userId, 'completed');
+  const res = await transferService.sendBackReceipt(requestId, userId, reason);
+  if (!res.ok) {
+    await bot.sendMessage(chatId, `⚠️ ${res.message}`).catch(() => {});
+    return;
+  }
+  const aj = await ensureLineBales(res.aj);
+  const names = await nameMap([userId, aj.receiver]);
+  const admin = mdEscape(names[String(userId)] || userId);
+  await bot.editMessageText(
+    `📥 *Receipt ${n} of ${shortTransferRef(requestId)} — sent back by you*\nReason: ${mdEscape(reason)}\n\nNothing changed. ${mdEscape(names[String(aj.receiver)] || 'The receiver')} has the card back to report again.`,
+    { chat_id: chatId, message_id: flowMessageId, parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [[{ text: '📋 Transfers', callback_data: 'trf:list' }, { text: '🏠 Menu', callback_data: 'act:__back__' }]] } },
+  ).catch(() => {});
+  if (aj.receiver) {
+    try {
+      const card = receiverCard(requestId, aj, await pushStatus(requestId, aj));
+      await bot.sendMessage(aj.receiver,
+        `↩️ *Receipt ${n} of ${shortTransferRef(requestId)} sent back by ${admin}*\nReason: ${mdEscape(reason)}\nNothing moved — report again when the goods in front of you match.\n\n${card.text}`,
+        { parse_mode: 'Markdown', reply_markup: card.kb });
+    } catch (_) { /* best-effort */ }
+  }
+  await notifyAdmins(bot, requestId, aj, `receipt ${n} sent back ↩️ by ${admin}`, userId);
 }
 
 /* ── My Tasks integration: "transfers waiting on you" queue ────────────── */
@@ -2407,6 +2722,14 @@ async function showActionCard(bot, query, requestId, opts = {}) {
   // TRF-19 — resolve every party once: the card now names whose move it is,
   // which is the whole point of opening someone else's card as an admin.
   const names = await nameMap([aj.dispatcher, aj.receiver, row.user]);
+  // TRF-22 — a receipt is with the admins: an admin gets the review view of
+  // the SAME card (marks, reports, 🛂 Confirm Receipt n); the receiver gets
+  // their frozen card.
+  if (!toDispatch && transferService.pendingReport(aj) && auth.isAdmin(userId)) {
+    const rv = await receiptReviewCard(requestId, row, await nameMap(cardPeople(row)), userId);
+    await editInPlace(rv.text, { inline_keyboard: [...rv.rows, navRow] });
+    return true;
+  }
   // An admin may act in either seat (BUSINESS_RULES §8), so the buttons stay
   // — but the card must not read as the admin's OWN duty. Saying whose seat
   // it is turns "please dispatch" from an order into a stand-in.
@@ -2441,10 +2764,12 @@ async function showList(bot, chatId, userId, messageId) {
   for (const t of shown) {
     const aj = t.actionJSON || {};
     const rst = aj.stage === 'in_transit' ? transferService.receiptState(aj) : null;
-    const badge = aj.stage === 'in_transit'
-      ? (rst && rst.partial ? `📦 ${rst.received.length} of ${rst.bales.length} received` : '🚚 in transit') // TRF-21
-      : aj.stage === 'admin_review' ? '🛂 awaiting approval' : '⏳ awaiting dispatch';
-    const holder = aj.stage === 'in_transit' ? names[String(aj.receiver)]
+    const pendRep = aj.stage === 'in_transit' ? transferService.pendingReport(aj) : null; // TRF-22
+    const badge = pendRep ? `🛂 receipt ${pendRep.n} awaiting admin`
+      : aj.stage === 'in_transit'
+        ? (rst && rst.partial ? `📦 ${rst.received.length} of ${rst.bales.length} received` : '🚚 in transit') // TRF-21
+        : aj.stage === 'admin_review' ? '🛂 awaiting approval' : '⏳ awaiting dispatch';
+    const holder = pendRep ? 'an admin' : aj.stage === 'in_transit' ? names[String(aj.receiver)]
       : aj.stage === 'admin_review' ? 'an admin' : names[String(aj.dispatcher)];
     text += `\n\`${shortTransferRef(t.requestId)}\` ${compactOf(aj)} — ${badge}`
       + `\n   _waiting on ${holder || '—'}${waitedFor(t.createdAt)}_`;
@@ -2782,6 +3107,13 @@ async function handleCallback(bot, query) {
   }
   const mInfo = data.match(/^trf:info:(.+)$/);
   if (mInfo) return showInfo(bot, query, mInfo[1], true);
+  // TRF-22 — the receipt gate: drill-down · confirm · send back (session-free).
+  const mRcok = data.match(/^trf:rcok:(.+):(\d+)$/);
+  if (mRcok) return showReceiptReview(bot, query, mRcok[1], mRcok[2]);
+  const mRcyes = data.match(/^trf:rcyes:(.+):(\d+)$/);
+  if (mRcyes) return handleReceiptConfirm(bot, query, mRcyes[1], mRcyes[2]);
+  const mRcno = data.match(/^trf:rcno:(.+):(\d+)$/);
+  if (mRcno) return askSendBackReason(bot, query, mRcno[1], mRcno[2]);
   const mVd = data.match(/^trf:vd:([dr]):(.+)$/);
   if (mVd) return sendTransferDoc(bot, query, mVd[2], mVd[1] === 'r' ? 'receive' : 'dispatch');
   // TRF-17 — the two are disjoint because both patterns anchor the colon
@@ -3043,6 +3375,7 @@ module.exports = {
     candidatesFor, resolvePeople, submit, handleAction, startPrefilled,
     parseTypedTransfer, typedBaleMap,
     startDispatchPicker, askDispatchDoc, completeDispatch, completeReceipt,
+    receiptReviewOn, receiptReviewCard, sendReceiptReviewCards, showReceiptReview, handleReceiptConfirm, // TRF-22
     armDocGate, gateNotNow, showInfo, promptForDoc, handleFile,
     docRows, sendTransferDoc, balesChipRow, showBaleNumbers, reconcileBaleNumbers,
     buildBaleBreakdown, baleCardRows, effectiveBales, ensureLineBales,

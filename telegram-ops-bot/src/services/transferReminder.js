@@ -97,7 +97,10 @@ async function sweep(bot, { now = Date.now() } = {}) {
         const days = ageDays(t, now);
         const head = `⏰ *Reminder — this transfer is still waiting*\n`;
         let holder = null;
-        if (aj.stage === 'in_transit') {
+        if (aj.stage === 'in_transit' && aj.pendingReceipt) {
+          // TRF-22 — a reported receipt waits on the admins, not the receiver.
+          await tf._internals.sendReceiptReviewCards(bot, t.requestId);
+        } else if (aj.stage === 'in_transit') {
           holder = aj.receiver;
           const card = receiverCard(t.requestId, aj, waitingLine(t, names));
           await send(bot, holder, head + card.text, card.kb);
@@ -110,7 +113,7 @@ async function sweep(bot, { now = Date.now() } = {}) {
         }
         // Escalation: past the stale line, every admin hears it — except the
         // holder, who just received the card itself.
-        if (stale > 0 && days >= stale && aj.stage !== 'admin_review') {
+        if (stale > 0 && days >= stale && aj.stage !== 'admin_review' && !(aj.stage === 'in_transit' && aj.pendingReceipt)) {
           const label = transferRow.label(t);
           const who = names[String(holder)] || String(holder || 'nobody');
           const verb = aj.stage === 'in_transit' ? 'confirm receipt' : 'dispatch';
