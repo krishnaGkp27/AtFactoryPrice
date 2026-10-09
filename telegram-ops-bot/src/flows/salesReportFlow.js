@@ -23,6 +23,7 @@ const sessionStore = require('../utils/sessionStore');
 const menuNav = require('../utils/menuNav');
 const { editOrSend } = require('../utils/telegramUI');
 const { calendarRows, lagosISO } = require('../utils/dateCalendar');
+const { fmtQty } = require('../utils/format');
 const config = require('../config');
 
 const SESSION_TYPE = 'sales_report_dates';
@@ -148,7 +149,49 @@ async function handleCallback(bot, cq) {
   }
 }
 
+/**
+ * SRP-2 (owner, 09-Oct-2026: "multiple times a single design is shown …
+ * show the design with how many are sold written in brackets, first showing
+ * the bales (suffix B) + thans (suffix T) from all the stores or warehouses";
+ * then "remove shade-wise view"; then "remove the value of the goods").
+ *
+ * Design Wise = ONE line per design, every store and warehouse summed, the
+ * bracket in the rule-6c grammar (`39B` · `4B + 4t` · `12t` — whole bales
+ * first, every loose than after, never both units for the same goods), then
+ * yards. No shade, no money. Ranked by yards (the value no longer prints, so
+ * it cannot rank). Every design is listed — one line each needs no cut and
+ * no 🔍 Show all.
+ *
+ * @param {Array<object>} sold Inventory rows already filtered to the period
+ * @param {string} periodLabel as `periodLabel()` prints it
+ * @param {function(Array<object>):string} qty the SYNC labeller from
+ *   `unitDisplayService.createQtyLabeller(allRows)` — the roster decides
+ *   whole vs loose, Settings decides the than-visible stores
+ * @returns {{text:string, keyboard:null}}
+ */
+function designReport(sold, periodLabel, qty) {
+  const byDesign = new Map();
+  let totalYards = 0;
+  for (const r of sold || []) {
+    const design = String(r.design == null ? '' : r.design).trim() || '(no design)';
+    if (!byDesign.has(design)) byDesign.set(design, { design, rows: [], yards: 0 });
+    const g = byDesign.get(design);
+    const y = Number(r.yards) || 0;
+    g.rows.push(r); g.yards += y; totalYards += y;
+  }
+  const sorted = [...byDesign.values()].sort((a, b) => (b.yards - a.yards) || a.design.localeCompare(b.design));
+  let text = `📊 *Sales Report — ${periodLabel} — Design Wise*\n`;
+  text += '_B = whole bales · t = loose thans · yds_\n\n';
+  if (!sorted.length) return { text: text + 'No sales in this period.', keyboard: null };
+  const yds = (n) => fmtQty(n, { maxFraction: 2 });
+  sorted.forEach((g, i) => {
+    text += `${i + 1}. *${g.design}* (${qty(g.rows)}) · ${yds(g.yards)} yds\n`;
+  });
+  text += `\n🧮 *Grand Total: ${qty(sold)} · ${yds(totalYards)} yds*`;
+  return { text, keyboard: null };
+}
+
 module.exports = {
-  SESSION_TYPE, handleCallback, periodCard, showGroupBy, filterByPeriod, periodLabel, titleLabel,
+  SESSION_TYPE, handleCallback, periodCard, showGroupBy, filterByPeriod, periodLabel, titleLabel, designReport,
   _internals: { rangeKey, parseKey, rangeLabel, gridRows, MAX_DAYS_BACK },
 };

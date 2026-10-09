@@ -614,48 +614,7 @@ async function buildInventoryDesignReport(allItems, opts = {}) {
 
 // ─── Sales Report (Interactive) ─────────────────────────────────────────────
 
-function buildSalesDesignReport(sold, periodLabel, opts = {}) {
-  const expandAll = !!opts.expand;
-  const byDS = new Map();
-  for (const r of sold) {
-    const key = `${r.design}|${r.shade || '-'}`;
-    if (!byDS.has(key)) byDS.set(key, { design: r.design, shade: r.shade || '-', pkgs: new Set(), thans: 0, yards: 0, value: 0 });
-    const ds = byDS.get(key);
-    ds.pkgs.add(r.packageNo); ds.thans++; ds.yards += r.yards; ds.value += r.yards * r.pricePerYard;
-  }
-  const sorted = [...byDS.values()].sort((a, b) => b.value - a.value);
-  let text = `📊 *Sales Report — ${periodLabel} — Design Wise*\n`;
-  text += buildReportLegend(['Bales · thans · yds · value'], true);
-  text += '\n';
-  if (!sorted.length) {
-    return { text: text + 'No sales in this period.', keyboard: null };
-  }
-  const limit = expandAll ? sorted.length : Math.min(3, sorted.length);
-  let gPkgs = new Set(), gThans = 0, gYards = 0, gValue = 0;
-  for (const ds of sorted) {
-    for (const p of ds.pkgs) gPkgs.add(p);
-    gThans += ds.thans; gYards += ds.yards; gValue += ds.value;
-  }
-  // Promote the Design value when consecutive ranked rows share it.
-  let prevDesign = null;
-  for (let i = 0; i < limit; i++) {
-    const ds = sorted[i];
-    if (ds.design === prevDesign) {
-      text += `   ${i + 1}. Shade ${ds.shade} — ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds · ${money.sale(ds.value)}\n`;
-    } else {
-      text += `${i + 1}. *${ds.design}* Shade ${ds.shade} — ${ds.pkgs.size} Bales · ${ds.thans} thans · ${fmtQty(ds.yards)} yds · ${money.sale(ds.value)}\n`;
-    }
-    prevDesign = ds.design;
-  }
-  const restCount = sorted.length - limit;
-  const buttons = [];
-  if (restCount > 0) {
-    text += `\n_… and ${restCount} more design${restCount > 1 ? 's' : ''}_\n`;
-    buttons.push([{ text: `🔍 Show all (${sorted.length})`, callback_data: `rxw:sales_d:${opts.periodKey || ''}` }]);
-  }
-  text += `\n🧮 *Grand Total: ${gPkgs.size} Bales · ${gThans} thans · ${fmtQty(gYards)} yds · ${money.sale(gValue)}*`;
-  return { text, keyboard: buttons.length ? { inline_keyboard: buttons } : null };
-}
+// SRP-2 (09-Oct-2026) — the Design Wise builder lives in flows/salesReportFlow.designReport.
 
 function buildSalesCustomerReport(sold, periodLabel, opts = {}) {
   const expandKey = (opts.expand || '').trim().toLowerCase();
@@ -7948,7 +7907,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       const filtered = salesReportFlow.filterByPeriod(sold, periodKey);
       const periodLabel = salesReportFlow.periodLabel(periodKey);
       const report = groupBy === 'design'
-        ? buildSalesDesignReport(filtered, periodLabel, { periodKey })
+        ? salesReportFlow.designReport(filtered, periodLabel, await unitDisplayService.createQtyLabeller(allItems)) // SRP-2
         : buildSalesCustomerReport(filtered, periodLabel, { periodKey });
       await sendLong(bot, callbackQuery.message.chat.id, report.text, {
         parse_mode: 'Markdown',
@@ -9554,7 +9513,9 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
           const sold = allItems.filter((r) => r.status === 'sold' && r.soldTo && r.soldDate);
           const filtered = salesReportFlow.filterByPeriod(sold, payload);
           const periodLabel = salesReportFlow.periodLabel(payload);
-          const expanded = buildSalesDesignReport(filtered, periodLabel, { expand: true, periodKey: payload });
+          // SRP-2 — nothing emits this any more (every design is one line, no
+          // cut); a 🔍 Show all on a card sent before 09-Oct still answers.
+          const expanded = salesReportFlow.designReport(filtered, periodLabel, await unitDisplayService.createQtyLabeller(allItems));
           await sendLong(bot, chatId, expanded.text, {
             parse_mode: 'Markdown',
             ...(expanded.keyboard ? { reply_markup: expanded.keyboard } : {}),

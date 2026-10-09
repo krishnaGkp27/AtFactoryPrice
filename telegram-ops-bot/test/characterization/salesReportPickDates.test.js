@@ -49,6 +49,26 @@ test('tile → Pick dates → start → end → Group by → report titled with 
   assert.equal(sessionStore.get('777'), null);
 });
 
+test('SRP-2 — Group by design: one line per design in rule-6c grammar, no shade, no value, no Show all', async () => {
+  sessionStore.clear('777');
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:sales_report', '777', 5));
+  await controller.handleCallbackQuery(bot, cb('srd:start', '777', 5));
+  await controller.handleCallbackQuery(bot, cb('srd:dm:2026-09', '777', 5));
+  await controller.handleCallbackQuery(bot, cb('srd:dd:2026-09-12', '777', 5));
+  await controller.handleCallbackQuery(bot, cb('srd:dm:2026-10', '777', 5));
+  await controller.handleCallbackQuery(bot, cb('srd:dd:2026-10-03', '777', 5));
+  await controller.handleCallbackQuery(bot, cb('srg:design', '777', 5));
+  const text = bot.allText();
+  // Kano office is than-visible by default, so its two in-period thans read 2t.
+  assert.match(text, /📊 \*Sales Report — 12 Sep – 03 Oct 2026 — Design Wise\*\n_B = whole bales · t = loose thans · yds_\n\n1\. \*9043-A\* \(2t\) · 120 yds\n\n🧮 \*Grand Total: 2t · 120 yds\*/);
+  assert.ok(!/Shade|Bales|\d thans|Show all|rxw:sales_d/.test(text), 'no shade line, no double count, no money, no cut');
+  const last = bot.calls.filter((c) => c.method === 'sendMessage').pop();
+  const kb = last.args.opts && last.args.opts.reply_markup && last.args.opts.reply_markup.inline_keyboard;
+  assert.ok(!kb || kb.flat().every((b) => b.callback_data.startsWith('act:')), 'only the NAV-1 footer, no report buttons');
+  assert.equal(sessionStore.get('777'), null);
+});
+
 test('Back from the end grid returns to the start grid; Back from the start grid returns to the period card; Weekly still works', async () => {
   sessionStore.clear('777');
   const bot = createFakeBot();

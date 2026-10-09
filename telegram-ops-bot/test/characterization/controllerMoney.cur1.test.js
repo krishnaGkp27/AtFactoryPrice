@@ -199,15 +199,17 @@ test('Stock Value: list row, grand total, drill button and the shade drill-down 
 
 /* ── sales reports and their legend ── */
 
-test('sales report (design wise): legend has no "amounts in" fragment; rows and grand total bare', async () => {
+test('sales report (design wise): no money at all since SRP-2 — legend, row and grand total carry quantity only', async () => {
   sessionStore.clear('777');
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srg:design', '777'));
   const text = bot.allText();
-  assert.match(text, /^_Bales · thans · yds · value_$/m, `legend line is the parts alone, got: ${text}`);
+  assert.match(text, /^_B = whole bales · t = loose thans · yds_$/m, `legend line is the parts alone, got: ${text}`);
   assert.doesNotMatch(text, /amounts in/);
-  assert.match(text, /1\. \*9043-A\* Shade 6 — 1 Bales · 1 thans · 60 yds · 210,000/, `got: ${text}`);
-  assert.match(text, /🧮 \*Grand Total: 1 Bales · 1 thans · 60 yds · 210,000\*/);
+  // Kano office is than-visible, so the one sold than reads 1t (SRP-2 / rule 6c).
+  assert.match(text, /1\. \*9043-A\* \(1t\) · 60 yds\n/, `got: ${text}`);
+  assert.match(text, /🧮 \*Grand Total: 1t · 60 yds\*/);
+  assert.doesNotMatch(text, /210,000/, 'the value no longer prints');
   assert.doesNotMatch(text, NO_UNIT);
 });
 
