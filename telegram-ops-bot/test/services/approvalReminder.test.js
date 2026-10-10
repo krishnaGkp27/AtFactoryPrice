@@ -127,7 +127,7 @@ test('APU-1: sale reminders rebuild the full card and re-forward the bill', asyn
   assert.match(text, /👤 OKESON/);
   assert.match(text, /🧑 Abdul/);
   assert.match(text, /896/);
-  assert.match(text, /📎 Sales bill/);
+  assert.ok(!/📎 Sales bill/.test(text), 'CARD-6: the re-forwarded bill says it, the card does not');
   const photos = bot.calls.filter((c) => c.method === 'sendPhoto');
   assert.equal(photos.length, 2, 'bill re-forwarded to both admins');
   assert.equal(photos[0].args.photo, 'bill-1');

@@ -660,7 +660,7 @@ async function submitBatch(bot, chatId, userId, session) {
         + rescued.map((m) => `${m.packageNo} (${m._rescued})`).join('; ');
     }
     if (batch.skipped.length) {
-      card += `\n⚠️ Skipped from the PDF (${batch.skipped.length}): `
+      card += `\n\n⚠️ Skipped from the PDF (${batch.skipped.length}): `
         + batch.skipped.map((s) => `${s.label} (${s.reason})`).join('; ');
     }
     const res = await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, sellerLabel,

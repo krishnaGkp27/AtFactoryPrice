@@ -24,6 +24,11 @@ const designCategoriesRepository = require(path.join(SRC, 'repositories/designCa
 
 crmService.getCustomer = async () => null;
 designCategoriesRepository.categoryOfSync = () => '';
+// CARD-6 — the shade heading reads the catalogue colour; stub the lookup so
+// no test reaches for a sheet. 9060-A names shade 1; 77014 has no entry.
+const designAssetsRepository = require(path.join(SRC, 'repositories/designAssetsRepository'));
+designAssetsRepository.findActive = async (design) => (String(design) === '9060-A' ? { design, shades: [{ number: 1, name: 'Black' }] } : null);
+designAssetsRepository.findLatest = async () => null;
 
 function row(pkg, design, shade, wh, thanNo, status = 'available') {
   return {
@@ -45,16 +50,12 @@ test('a bare bale number becomes design, shade, warehouse and quantities', async
     salesDate: '2026-08-05', items: [{ type: 'package', packageNo: '516' }],
     totalYards: 150, sale_doc_file_id: 'F1',
   });
-  // CARD-3 — the same facts, without the words repeated on every line.
-  assert.match(text, /👤 set at approval/);
-  assert.match(text, /🧑 Abdul/);
-  assert.match(text, /🧾 Sale · IDUMOTA/, 'one store rides the header, not every line');
-  // CARD-5 — a whole-bale item tallies as its printed number: 1B, not
-  // "3 than · 1 bale"; its internal than count stays in the ×3 token.
-  assert.match(text, /🧵 9060-A — 1B · 150 yd/);
-  assert.match(text, /#01 → 516 ×3/);
-  assert.match(text, /Σ 1B · 150 yd/);
-  assert.match(text, /📎 Sales bill/);
+  // CARD-6 — one fact per line, the tally once on the first line, the
+  // catalogue colour on the shade heading, one bale per line with its yards.
+  assert.match(text, /^🧾 Sale · IDUMOTA · 1B · 150 yd\n🧑 Abdul · 📅 05-Aug-2026\n\n9060-A\n 01 - Black\n {2}516 · 150 yd$/);
+  assert.ok(!/👤|Σ |×3|📎|#01|🧵|@/.test(text), 'no empty customer line, no tally repeat, no ×N, no 📎 line, no # or @ links');
+  // CARD-5 — a whole-bale item still tallies as its printed number: 1B, not
+  // "3 than · 1 bale".
   assert.ok(!text.includes('see below'), 'the stale pointer is gone');
 });
 
@@ -66,7 +67,7 @@ test('a number living under TWO designs stays bare — never guessed (§2)', asy
   const text = await approvalCards.buildSaleBundleCard({
     action: 'sale_bundle', items: [{ type: 'package', packageNo: '516' }], totalYards: 150,
   });
-  assert.match(text, /🧵 not resolved/, 'no design attached');
+  assert.match(text, /\n\nnot resolved — this number lives under more than one design/, 'no design attached');
   assert.match(text, /\n {2}516/, 'the number still shows');
   assert.ok(!text.includes('9060-A') && !text.includes('77008'), 'no design was invented');
   assert.match(text, /Queued total: 150 yards/, 'the requester’s figure still shows');
@@ -80,11 +81,9 @@ test('a single-than sale names its than', async () => {
   const text = await approvalCards.buildSaleBundleCard({
     action: 'sale_bundle', items: [{ type: 'than', packageNo: '516', thanNo: 2 }],
   });
-  // CARD-3 — the than rides the bale in the grammar Abdul already types.
+  // CARD-6 — the than rides the bale in the grammar Abdul already types.
   // CARD-5 — and a than item tallies in thans: 1t, never "1 bale".
-  assert.match(text, /🧵 9060-A — 1t · 50 yd/);
-  assert.match(text, /#01 → 516\/2/);
-  assert.match(text, /Σ 1t · 50 yd/);
+  assert.match(text, /^🧾 Sale · IDUMOTA · 1t · 50 yd\n\n9060-A\n 01 - Black\n {2}516\/2 · 50 yd$/);
 });
 
 test('CARD-5: the tally speaks each item’s packaging — t, B, and B + t', async () => {
@@ -103,8 +102,7 @@ test('CARD-5: the tally speaks each item’s packaging — t, B, and B + t', asy
       { type: 'than', packageNo: '700', thanNo: 2 },
     ],
   });
-  assert.match(thanOnly, /🧵 77014 — 2t · 100 yd/);
-  assert.match(thanOnly, /Σ 2t · 100 yd/);
+  assert.match(thanOnly, /^🧾 Sale · Kano office · 2t · 100 yd\n\n77014\n Shade 11\n {2}700\/1 · 50 yd\n {2}700\/2 · 50 yd$/, 'no catalogue entry → "Shade 11", never a guessed colour');
   assert.ok(!/\d+ bale/.test(thanOnly), 'no "· N bale" tail on a than sale');
   // Whole-bale: distinct printed numbers as B.
   const wholeBale = await approvalCards.buildSaleBundleCard({
@@ -114,7 +112,9 @@ test('CARD-5: the tally speaks each item’s packaging — t, B, and B + t', asy
       { type: 'package', packageNo: '700' },
     ],
   });
-  assert.match(wholeBale, /Σ 2B · 250 yd/);
+  // Two stores → no store on the header, each bale names its own; several
+  // designs → each design line carries its own tally under the total.
+  assert.match(wholeBale, /^🧾 Sale · 2B · 250 yd\n\n9060-A · 1B · 100 yd\n 01 - Black\n {2}516 · 100 yd · IDUMOTA\n77014 · 1B · 150 yd\n Shade 11\n {2}700 · 150 yd · Kano office$/);
   // Mixed: both units, each speaking its own goods.
   const mixed = await approvalCards.buildSaleBundleCard({
     action: 'sale_bundle',
@@ -123,9 +123,9 @@ test('CARD-5: the tally speaks each item’s packaging — t, B, and B + t', asy
       { type: 'than', packageNo: '700', thanNo: 3 },
     ],
   });
-  assert.match(mixed, /🧵 9060-A — 1B · 100 yd/);
-  assert.match(mixed, /🧵 77014 — 1t · 50 yd/);
-  assert.match(mixed, /Σ 1B \+ 1t · 150 yd/);
+  assert.match(mixed, /^🧾 Sale · 1B \+ 1t · 150 yd\n/);
+  assert.match(mixed, /\n9060-A · 1B · 100 yd\n/);
+  assert.match(mixed, /\n77014 · 1t · 50 yd\n Shade 11\n {2}700\/3 · 50 yd · Kano office$/);
 });
 
 test('an Inventory outage degrades to the bare list — the card never fails', async () => {
@@ -212,8 +212,8 @@ test('VRF-4: the single-bale (sell_package) card carries the same 🔬 line and 
     docVerify: { ok: 0, differs: 0, missing: 1, extra: 0, okNos: [], okNoted: [], differRows: [], missingNos: ['516'], extraRows: [] },
   });
   assert.match(checked, /🔬 Bill check: 0 confirmed · 0 differ · 1 missing · 0 extra ⚠️\n {2}❌ 516 not on bill/, checked);
-  // The line sits AFTER the goods and the Σ tally, like the bundle card.
-  assert.ok(checked.indexOf('Σ ') < checked.indexOf('🔬'), 'verdict follows the tally');
+  // The line sits AFTER the goods, like the bundle card.
+  assert.ok(checked.indexOf('516 · 50 yd') < checked.indexOf('🔬'), 'verdict follows the goods');
 });
 
 test('VRF-4: "+N more" states the persisted COUNT, not the length of a shed row list', async () => {

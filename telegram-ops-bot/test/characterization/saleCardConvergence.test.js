@@ -36,11 +36,10 @@ inventoryRepository.getAll = async () => [
   { packageNo: '1003', thanNo: 1, design: '77014', shade: '2', warehouse: 'IDUMOTA', status: 'available', yards: 25 },
 ];
 
-/** Every CARD-3 card carries these marks; the verbose card carried none. */
+/** Every CARD-6 card carries these marks; the verbose card carried none. */
 function assertCard3(text, where) {
-  assert.match(text, /🧾/, `${where}: CARD-3 header`);
-  assert.match(text, /Σ .*yd/, `${where}: Σ key line`);
-  assert.match(text, /\(bale\/than · #shade\)/, `${where}: grammar key`);
+  assert.match(text, /^🧾 Sale · Kano office · \d+[Bt] · \d+ yd\n/, `${where}: header carries store and the one tally`);
+  assert.ok(!/Σ |\(bale\/than|#\d|@|🧵/.test(text), `${where}: no Σ repeat, no legend, no # or @ links (CARD-6)`);
   assert.ok(!/Total: \d+ Bale/.test(text), `${where}: no verbose "Total: N Bale" line`);
   assert.ok(!/thans, \d+ yds/.test(text), `${where}: no verbose per-line nouns`);
 }
@@ -52,9 +51,8 @@ test('the seller confirm card (Sell Bale door) is CARD-3, not the old verbose bl
     sale_doc_file_id: 'bill-1',
   });
   assertCard3(text, 'buildSummary');
-  assert.match(text, /🧵 9060-B/, 'design group heading');
-  assert.match(text, /📎 Sales bill/, 'attachment noted by the shared builder');
-  assert.match(text, /👤 set at approval/, 'DSP-1 customer wording');
+  assert.match(text, /\n\n9060-B\n Shade 3\n {2}1003 · 60 yd$/, 'design group heading, shade heading, one bale per line');
+  assert.ok(!/📎|👤/.test(text), 'CARD-6: no 📎 line (the button / forwarded file says it), no customer line until there is one');
 });
 
 test('the admin approval card is rendered FROM the queued row (same builder)', async () => {

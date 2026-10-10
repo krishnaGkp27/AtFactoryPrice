@@ -948,16 +948,18 @@ async function renderItem(bot, chatId, userId, idx) {
     // Fall through to the snapshot card — the executor still refuses.
   }
 
+  let who = String(item.user || '—');
+  try { who = await approvalCards.resolveUserLabel(item.user, bot); } catch (_) { /* id fallback */ }
+
   let card = '';
   try {
-    card = await approvalCards.buildCardFromActionJSON(item.actionJSON) || '';
+    // CARD-6 — the footer below names the requester, so the card can leave
+    // out a `🧑` salesperson line that would only repeat the same name.
+    card = await approvalCards.buildCardFromActionJSON(item.actionJSON, { requester: who }) || '';
   } catch (e) {
     logger.warn(`approvalsInbox: card build failed for ${item.requestId}: ${e.message}`);
   }
   if (!card) card = `${actionLabel(item)} request`;
-
-  let who = String(item.user || '—');
-  try { who = await approvalCards.resolveUserLabel(item.user, bot); } catch (_) { /* id fallback */ }
 
   const days = ageDays(item.createdAt);
   // DUAL-1: a first approval is recorded on actionJSON.approvals and the

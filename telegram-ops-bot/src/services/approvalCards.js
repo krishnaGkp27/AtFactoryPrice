@@ -185,37 +185,88 @@ function sortSaleItems(items) {
  * the one thing that must never be terse.
  */
 
-/** One item as a token in the typed grammar: `1100/1`, or `1100 ×3`. */
-function itemToken(it, showWarehouse) {
+/**
+ * CARD-6 (owner, 09/10-Oct-2026, from a screenshot of the inbox card: "I
+ * cannot see it in a proper format … reframe the layout in a more elegant
+ * manner"; then "the shade … doesn't show the colour"; "no need to mention
+ * the label, like cashmira"; "remove this button chips"; and the two
+ * redundancies he asked me to find — the bill announced twice, the
+ * salesperson named twice).
+ *
+ * The CARD-3 grammar above packed three bales on a line, so a phone wrapped
+ * them mid-number, and its `@Lagos` / `#1` tokens were rendered by Telegram
+ * as blue tappable links — most of why the card looked broken. CARD-6 keeps
+ * every fact and lays them out one per line, in words:
+ *
+ *   🧾 Sale · 5B · 718 yd
+ *   📅 07-Oct-2026
+ *
+ *   9045
+ *    1 - Dark Brown
+ *     1148 · 150 yd · IDUMOTA
+ *     6487 · 150 yd · Lagos
+ *    Shade 3
+ *     6495 · 150 yd · Lagos
+ *
+ *  - the tally ONCE, on the first line (a design line carries its own only
+ *    when the sale has several designs); the Σ line and the legend are gone;
+ *  - one bale per line: number (a than item as `1100/1`, the owner's own
+ *    typed grammar), its yards, and its store only when the sale ships
+ *    from more than one place; never `×N` and never `@`;
+ *  - the shade heading carries the catalogue COLOUR — `1 - Dark Brown`, the
+ *    form the cart block and Check Stock use — from the design's active
+ *    DesignAssets entry (the sale's container first, else the newest);
+ *    no name on file reads `Shade 3`, never a guess; no `#`;
+ *  - no category label (`· Cashmere`) — the design number is enough;
+ *  - no `👤 set at approval` — the customer line appears once there IS a
+ *    customer; no `📎` line — the 📄 button (inbox) or the forwarded file
+ *    (DM) already says a bill is attached;
+ *  - `🧑 <salesperson>` only when it is NOT the requester the footer already
+ *    names (`p.requester`, passed by the inbox); without a requester to
+ *    compare against the line prints as before.
+ *
+ * Warnings keep their full sentences at the foot; a sold-already bale keeps
+ * its ⚠️ on its own line. CARD-5's tally rule (each item's OWN packaging:
+ * a than item counts t, a whole-bale item counts its printed number as B)
+ * is unchanged — only the words around the numbers moved.
+ */
+
+/** One item as a token: `1100/1` for a than, the bare number for a bale. */
+function itemToken(it) {
   const pkg = String(it.packageNo ?? '?');
-  let tok;
-  if (it.type === 'than' && it.thanNo) tok = `${pkg}/${it.thanNo}`;
-  else if (Number(it.thans) > 1) tok = `${pkg} ×${it.thans}`;
-  else tok = pkg;
-  if (it.noStock) tok += ' ⚠️';
-  if (showWarehouse && it.warehouse) tok += ` @${it.warehouse}`;
-  return tok;
+  return it.type === 'than' && it.thanNo ? `${pkg}/${it.thanNo}` : pkg;
+}
+
+/**
+ * CARD-6 — the catalogue colour of each shade of a design, keyed by shade
+ * number as a string. The sale's container picks the entry when known (the
+ * shade picker's rule, CAT-C1), else the newest active, else the latest of
+ * any status. Every failure is an empty map: the heading then reads
+ * `Shade N` — a missing name is never guessed.
+ */
+async function shadeNamesFor(design, arrivalBatch) {
+  try {
+    const repo = require('../repositories/designAssetsRepository');
+    const asset = (arrivalBatch ? await repo.findActive(design, arrivalBatch) : null)
+      || await repo.findActive(design)
+      || await repo.findLatest(design);
+    return require('../utils/shadeButtons').buildShadeNameMap(asset);
+  } catch (_) { return new Map(); }
+}
+
+/** `01 - Black` when the catalogue names it (shade `01` matches entry 1), else `Shade 01`. */
+function shadeHeading(sh, names) {
+  const n = Number(sh);
+  const name = names.get(sh) || (Number.isFinite(n) ? names.get(String(n)) : '');
+  return name ? `${sh} - ${name}` : `Shade ${sh}`;
 }
 
 async function buildSaleCard(p) {
   const items = sortSaleItems(p.items);
   // The store is a header fact when the whole request ships from one place;
-  // a mixed request keeps it per item so no bale is mis-attributed.
+  // a mixed request keeps it per line so no bale is mis-attributed.
   const stores = [...new Set(items.map((it) => String(it.warehouse || '')).filter(Boolean))];
   const oneStore = stores.length === 1 ? stores[0] : '';
-
-  let text = `🧾 ${p.headline || 'Sale'}${oneStore ? ` · ${oneStore}` : ''}`;
-  text += `\n👤 ${p.customer || 'set at approval'}`;
-  const contact = await customerContact(p.customer);
-  const who = [contact.phone, contact.address].filter(Boolean).join(' · ');
-  if (who) text += `\n   ${who}`;
-  const meta = [];
-  if (p.salesPerson) meta.push(`🧑 ${p.salesPerson}`);
-  if (p.salesDate) meta.push(`📅 ${fmtDate(p.salesDate)}`);
-  if (p.paymentMode) meta.push(`💳 ${p.paymentMode}`);
-  if (meta.length) text += `\n${meta.join(' · ')}`;
-  if (p.docAttached) text += `\n📎 ${p.docLabel || 'Sales bill'}`;
-  text += '\n';
 
   const { formatCounts } = require('./unitDisplayService');
   // CARD-5 — an item's own packaging decides its unit: type 'than' counts
@@ -226,55 +277,75 @@ async function buildSaleCard(p) {
     (s, x) => s + (x.type === 'than' ? (Number(x.thans) || 1) : 0), 0);
   const baleCount = (arr) => new Set(arr.filter((x) => x.type !== 'than')
     .map((x) => String(x.packageNo ?? ''))).size;
-  let totalYards = 0;
+  const yardsOf = (arr) => arr.reduce((s, x) => s + (Number(x.yards) || 0), 0);
+  const tallyOf = (arr) => {
+    const y = yardsOf(arr);
+    return [formatCounts({ bales: baleCount(arr), thans: thanCount(arr) }), y ? `${fmtQty(y)} yd` : '']
+      .filter(Boolean).join(' · ');
+  };
+
+  let text = [`🧾 ${p.headline || 'Sale'}`, oneStore, tallyOf(items)].filter(Boolean).join(' · ');
+  if (p.customer) {
+    text += `\n👤 ${p.customer}`;
+    const contact = await customerContact(p.customer);
+    const who = [contact.phone, contact.address].filter(Boolean).join(' · ');
+    if (who) text += `\n   ${who}`;
+  }
+  const norm = (v) => String(v || '').trim().toLowerCase();
+  const meta = [];
+  if (p.salesPerson && !(p.requester && norm(p.requester) === norm(p.salesPerson))) meta.push(`🧑 ${p.salesPerson}`);
+  if (p.salesDate) meta.push(`📅 ${fmtDate(p.salesDate)}`);
+  if (p.paymentMode) meta.push(`💳 ${p.paymentMode}`);
+  if (meta.length) text += `\n${meta.join(' · ')}`;
+
   // APF-1 / §2 — an item with no design heads no design group, and the
   // two causes are DIFFERENT facts that must not share a heading: "no live
   // rows at all" is sold-already / unknown-number (a warning), while "one
   // number living under two designs" is merely unknown — never guessed.
   const groupKey = (it) => (it.design ? `d:${it.design}` : (it.noStock ? 'gone' : 'unknown'));
   const groupKeys = [...new Set(items.map(groupKey))];
+  const several = groupKeys.length > 1;
+  let first = true;
   for (const gk of groupKeys) {
     const dKey = gk.startsWith('d:') ? gk.slice(2) : '';
     const group = items.filter((x) => groupKey(x) === gk);
-    const gYards = group.reduce((s, x) => s + (Number(x.yards) || 0), 0);
-    let cat = '';
+    let head;
     if (dKey) {
-      try { cat = require('../repositories/designCategoriesRepository').categoryOfSync(dKey) || ''; } catch (_) { /* bare */ }
+      const tally = several ? tallyOf(group) : '';
+      head = tally ? `${dKey} · ${tally}` : dKey;
+    } else if (gk === 'gone') {
+      head = '⚠️ no available stock (sold already, or unknown number)';
+    } else {
+      head = 'not resolved — this number lives under more than one design';
     }
-    const head = dKey
-      ? `🧵 ${dKey}${cat ? ` · ${cat}` : ''}`
-      : (gk === 'gone'
-        ? '⚠️ no available stock (sold already, or unknown number)'
-        : '🧵 not resolved — this number lives under more than one design');
-    const qty = [formatCounts({ bales: baleCount(group), thans: thanCount(group) }),
-      gYards ? `${fmtQty(gYards)} yd` : ''].filter(Boolean).join(' · ');
-    text += `\n${head}${qty ? ` — ${qty}` : ''}`;
+    text += `${first ? '\n\n' : '\n'}${head}`;
+    first = false;
+    const batches = [...new Set(group.map((x) => String(x.arrivalBatch || '')).filter(Boolean))];
+    const names = dKey ? await shadeNamesFor(dKey, batches.length === 1 ? batches[0] : '') : new Map();
     const shades = [...new Set(group.map((x) => String(x.shade ?? '')))];
     for (const sh of shades) {
-      const line = group.filter((x) => String(x.shade ?? '') === sh);
-      const toks = line.map((it) => itemToken(it, !oneStore)).join(' · ');
-      text += `\n  ${sh ? `#${sh} → ` : ''}${toks}`;
+      if (sh) text += `\n ${shadeHeading(sh, names)}`;
+      for (const it of group.filter((x) => String(x.shade ?? '') === sh)) {
+        const parts = [itemToken(it)];
+        if (Number(it.yards) > 0) parts.push(`${fmtQty(it.yards)} yd`);
+        if (!oneStore && it.warehouse) parts.push(String(it.warehouse));
+        text += `\n  ${parts.join(' · ')}${it.noStock ? ' ⚠️' : ''}`;
+      }
     }
-    totalYards += gYards;
   }
 
-  // CARD-5 — one packaging tally in the rule-6c grammar: "28t", "7B",
-  // "4B + 8t". Thans of a still-sealed bale ride inside its B; only sold
-  // thans are counted as t.
-  const pkgLabel = formatCounts({ bales: baleCount(items), thans: thanCount(items) });
-  text += `\n\nΣ ${pkgLabel ? `${pkgLabel} · ` : ''}${fmtQty(totalYards)} yd`;
-  text += '\n(bale/than · #shade)';
+  const foot = [];
   const noStock = items.filter((it) => it.noStock).length;
   const ownSale = items.filter((it) => it.noStock && it.ownSale).length;
   if (noStock && ownSale === noStock) {
     // QTA-2 — every ⚠️ item is this request's own earlier, half-done run.
-    text += `\n⚠️ ${noStock} of ${items.length} item(s) marked ⚠️ are sold to ${p.customer || 'this customer'}`
-      + `${p.salesDate ? ` on ${fmtDate(p.salesDate)}` : ''} — this request's own half-done run. Approve restarts it: they are put back and the whole request is sold afresh; nothing is charged twice (a than another approved sale covers is refused as a duplicate).`;
+    foot.push(`⚠️ ${noStock} of ${items.length} item(s) marked ⚠️ are sold to ${p.customer || 'this customer'}`
+      + `${p.salesDate ? ` on ${fmtDate(p.salesDate)}` : ''} — this request's own half-done run. Approve restarts it: they are put back and the whole request is sold afresh; nothing is charged twice (a than another approved sale covers is refused as a duplicate).`);
   } else if (noStock && noStock === items.length) {
-    text += '\n🚨 NOTHING in this request is available — it may already be executed, or duplicate another sale. Approving will NOT sell or charge anything.';
+    foot.push('🚨 NOTHING in this request is available — it may already be executed, or duplicate another sale. Approving will NOT sell or charge anything.');
   } else if (noStock) {
-    text += `\n⚠️ ${noStock} of ${items.length} item(s) marked ⚠️ have no available stock — check before approving.`;
-    if (ownSale) text += ` ${ownSale} of them are this request's own half-done run: put back and sold afresh on Approve.`;
+    foot.push(`⚠️ ${noStock} of ${items.length} item(s) marked ⚠️ have no available stock — check before approving.`
+      + (ownSale ? ` ${ownSale} of them are this request's own half-done run: put back and sold afresh on Approve.` : ''));
   }
   // CARD-4 (owner 23-Aug) — the backdated banner belongs to the SHARED
   // builder, not to each door. Every sale path used to word it its own way
@@ -282,8 +353,9 @@ async function buildSaleCard(p) {
   // on which tile the seller used.
   if (p.backdated) {
     const d = Number(p.daysBack) || 0;
-    text += `\n⚠️ BACKDATED sale — ${d ? `${d} day(s)` : 'dated'} in the past. Check the date before approving.`;
+    foot.push(`⚠️ BACKDATED sale — ${d ? `${d} day(s)` : 'dated'} in the past. Check the date before approving.`);
   }
+  if (foot.length) text += `\n\n${foot.join('\n')}`;
   return text;
 }
 
@@ -359,15 +431,14 @@ function keyboardForRequest(requestId, aj) {
 }
 
 /** Card for a queued snap-sale sell_package actionJSON. */
-async function buildSellPackageCard(aj) {
+async function buildSellPackageCard(aj, opts = {}) {
   let text = await buildSaleCard({
     headline: aj.source === 'snap_sale' ? 'Sale · Snap' : 'Sale',
     customer: aj.customer,
     salesPerson: aj.salesPerson,
     salesDate: aj.salesDate,
-    items: [{ packageNo: aj.packageNo, design: aj.design, shade: aj.shade, thans: aj.thans, yards: aj.yards, warehouse: aj.warehouse }],
-    docAttached: !!aj.sale_doc_file_id,
-    docLabel: aj.source === 'snap_sale' ? 'Sales bill (label photo)' : 'Sales bill',
+    items: [{ packageNo: aj.packageNo, design: aj.design, shade: aj.shade, thans: aj.thans, yards: aj.yards, warehouse: aj.warehouse, arrivalBatch: aj.arrivalBatch }],
+    requester: opts.requester, // CARD-6
   });
   // VRF-4 — this door's bill IS checked (SALE_ACTIONS) and its verdict
   // persisted, yet only the bundle card ever showed the 🔬 line. Same line,
@@ -683,7 +754,7 @@ function docVerifyLine(aj) {
 
 /** Card for a queued classic sale_bundle actionJSON. SAB-1: enriched from
  *  Inventory best-effort; degrades to the bare item list on any failure. */
-async function buildSaleBundleCard(aj) {
+async function buildSaleBundleCard(aj, opts = {}) {
   let items = (Array.isArray(aj.items) ? aj.items : []).map((it) => ({ ...it }));
   try { items = await enrichBundleItems(items, aj); } catch (_) { /* thin items still render */ }
   let text = await buildSaleCard({
@@ -693,10 +764,9 @@ async function buildSaleBundleCard(aj) {
     paymentMode: aj.paymentMode,
     salesDate: aj.salesDate,
     items,
-    docAttached: !!aj.sale_doc_file_id,
-    docLabel: 'Sales bill',
     backdated: !!aj.backdated,
     daysBack: aj.daysBack,
+    requester: opts.requester, // CARD-6
   });
   // When enrichment could not price a single item (Sheets down, or every
   // number ambiguous), the computed total reads 0 — the queue row's own
@@ -907,14 +977,20 @@ function buildEditBaleCard(aj) {
   return text;
 }
 
-async function buildCardFromActionJSON(aj) {
+/**
+ * @param {object} aj the queued actionJSON
+ * @param {{requester?: string}} [opts] CARD-6 — the requester's display name
+ *   when the surface already prints it (the inbox footer), so a sale card can
+ *   drop a `🧑` line that would only repeat it
+ */
+async function buildCardFromActionJSON(aj, opts = {}) {
   if (!aj || typeof aj !== 'object') return 'pending action';
   try {
-    if (aj.action === 'sell_package') return await buildSellPackageCard(aj);
+    if (aj.action === 'sell_package') return await buildSellPackageCard(aj, opts);
     // RET-4 — the second signer's inbox and the reminder sweep rebuild the
     // SAME card from the sheet row, than numbers and buyer included.
     if (aj.action === 'return_thans') return await buildReturnThansCard(aj);
-    if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj);
+    if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj, opts);
     if (aj.action === 'supply_request') return buildSupplyRequestCard(aj);
     if (aj.action === 'add_contact') return buildAddContactCard(aj);
     if (aj.action === 'remove_customer' || aj.action === 'restore_customer') return buildRemoveCustomerCard(aj);

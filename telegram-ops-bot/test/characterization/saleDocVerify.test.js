@@ -231,21 +231,30 @@ test('CARD-3: designs grouped, shades folded, each noun said once', async () => 
     ],
   });
   // CARD-5 — whole-bale items tally as B (distinct printed numbers).
-  assert.match(card, /🧵 77014 — 2B · 300 yd/);
-  assert.match(card, /🧵 77016 — 2B · 300 yd/);
-  assert.ok(card.indexOf('🧵 77014') < card.indexOf('836'), 'header precedes its group');
-  assert.ok(card.indexOf('836') < card.indexOf('844'), 'shade 1 before shade 2');
-  assert.ok(card.indexOf('844') < card.indexOf('🧵 77016'), '77014 closes before 77016 opens');
-  assert.ok(card.indexOf('879') < card.indexOf('881'), '77016 sorted by shade');
-  assert.match(card, /Σ 4B · 600 yd/, 'one totals line');
-  assert.match(card, /🧾 Sale · IDUMOTA/, 'one store, stated once in the header');
-  // The point of CARD-3 (tightened by CARD-5's B/t grammar): the three
-  // nouns appear ONCE each — in the key line only.
-  assert.equal((card.match(/\bbale\b/gi) || []).length, 1, `"bale" said once (the key), got: ${card}`);
-  assert.equal((card.match(/\bthan\b/gi) || []).length, 1, 'than: the key line only');
-  assert.equal((card.match(/\bshade\b/gi) || []).length, 1, 'shade: the key line only');
+  // CARD-6 — the tally once on the header, the store once, each design its
+  // own line, shades in order under it, one bale per line with its yards.
+  assert.equal(card, [
+    '🧾 Sale · IDUMOTA · 4B · 600 yd',
+    '👤 OKESON',
+    '',
+    '77014 · 2B · 300 yd',
+    ' Shade 1',
+    '  836 · 150 yd',
+    ' Shade 2',
+    '  844 · 150 yd',
+    '77016 · 2B · 300 yd',
+    ' Shade 1',
+    '  879 · 150 yd',
+    ' Shade 2',
+    '  881 · 150 yd',
+  ].join('\n'));
+  // The point of CARD-3, kept by CARD-6: the nouns "bale" and "than" never
+  // appear — the B / t tally and the number lines carry them; "shade" only
+  // heads a shade the catalogue has no colour for.
+  assert.equal((card.match(/\bbale\b/gi) || []).length, 0, `"bale" never said, got: ${card}`);
+  assert.equal((card.match(/\bthan\b/gi) || []).length, 0, 'than: never said');
 
-  // A single-design sale needs no design header repeated per line either.
+  // A single-design sale carries no per-design tally — the header has it.
   const single = await approvalCards.buildSaleCard({
     customer: 'X',
     items: [
@@ -253,8 +262,7 @@ test('CARD-3: designs grouped, shades folded, each noun said once', async () => 
       { packageNo: '896', design: '77016', shade: '5', thans: 2, yards: 60 },
     ],
   });
-  assert.match(single, /🧵 77016 — 2B · 115 yd/, 'one design head');
-  assert.ok(single.indexOf('#2 → 897') < single.indexOf('#5 → 896 ×2'), 'still sorted by shade');
+  assert.equal(single, '🧾 Sale · 2B · 115 yd\n👤 X\n\n77016\n Shade 2\n  897 · 55 yd\n Shade 5\n  896 · 60 yd', 'one design head, sorted by shade');
 });
 
 /* ── VRF-1b: the partial-sale false-mismatch class (owner, 29-Jul) ────── */
