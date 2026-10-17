@@ -533,7 +533,8 @@ test('SHP-2b: starting a NEW supply request takes the previous one’s picture d
     const after = bot.calls.slice(mark);
     assert.ok(after.some((c) => c.method === 'deleteMessage' && c.args.messageId === comboId),
       'the old request’s picture goes when a new request starts');
-    assert.equal(sessionStore.get(UID).step, 'container', 'and the fresh flow opens');
+    // SRF-5 — the flow opens on the store; a one-store seller lands on designs.
+    assert.equal(sessionStore.get(UID).step, 'design', 'and the fresh flow opens');
   } finally {
     usersRepository.findByUserId = priorFind;
     inventoryRepository.getArrivalBatches = priorBatches;

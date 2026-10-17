@@ -850,7 +850,8 @@ async function getWarehouses() {
  */
 const UNLABELLED_BATCH = '(unlabelled)';
 async function getArrivalBatches(opts = {}) {
-  const all = await getAll();
+  // Through the export, so a harness that stubs `getAll` feeds this too.
+  const all = await module.exports.getAll();
   const scope = new Set();
   if (opts && opts.warehouse) scope.add(upper(opts.warehouse));
   if (opts && Array.isArray(opts.warehouses)) {
