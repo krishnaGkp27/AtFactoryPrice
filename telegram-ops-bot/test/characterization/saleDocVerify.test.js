@@ -329,8 +329,7 @@ test('VRF-4: record ↔ replay parity — the replayed verdict is the live verdi
   assert.equal(rec.truncated, false);
   assert.ok(typeof rec.at === 'string' && rec.at.length > 10);
   // The whitelist is the lock: nothing from the label or the item rides along.
-  assert.deepEqual(Object.keys(rec).sort(), ['at', 'differRows', 'differs', 'extra', 'extraRows', 'missing',
-    'missingNos', 'ok', 'okNos', 'okNoted', 'thanUnchecked', 'truncated']);
+  assert.deepEqual(Object.keys(rec).sort(), ['at', 'billSeq', 'differRows', 'differs', 'extra', 'extraRows', 'missing', 'missingNos', 'ok', 'okNos', 'okNoted', 'rechecks', 'thanUnchecked', 'truncated']);
   for (const e of rec.extraRows) assert.deepEqual(Object.keys(e).sort(), ['design', 'no', 'shade']);
 
   // Same requestId in → identical text out. Not "similar": identical.

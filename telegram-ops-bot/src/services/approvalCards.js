@@ -305,6 +305,8 @@ async function buildSaleCard(p) {
   const groupKey = (it) => (it.design ? `d:${it.design}` : (it.noStock ? 'gone' : 'unknown'));
   const groupKeys = [...new Set(items.map(groupKey))];
   const several = groupKeys.length > 1;
+  // VRF-5 — the bill's order and the per-line ✅ / 🔴 from the saved check.
+  const marks = billMarks(p.docVerify, p.marksOffAbovePct);
   let first = true;
   for (const gk of groupKeys) {
     const dKey = gk.startsWith('d:') ? gk.slice(2) : '';
@@ -325,11 +327,17 @@ async function buildSaleCard(p) {
     const shades = [...new Set(group.map((x) => String(x.shade ?? '')))];
     for (const sh of shades) {
       if (sh) text += `\n ${shadeHeading(sh, names)}`;
-      for (const it of group.filter((x) => String(x.shade ?? '') === sh)) {
+      // VRF-5 — matched bales as the bill lists them; the rest (a bale the
+      // bill does not carry, a loose than) after, in their existing order.
+      const ordered = group.filter((x) => String(x.shade ?? '') === sh)
+        .map((it, i) => ({ it, i, pos: marks.posOf(it.packageNo) }))
+        .sort((a, b) => (a.pos - b.pos) || (a.i - b.i))
+        .map((x) => x.it);
+      for (const it of ordered) {
         const parts = [itemToken(it)];
         if (Number(it.yards) > 0) parts.push(`${fmtQty(it.yards)} yd`);
         if (!oneStore && it.warehouse) parts.push(String(it.warehouse));
-        text += `\n  ${parts.join(' · ')}${it.noStock ? ' ⚠️' : ''}`;
+        text += `\n  ${parts.join(' · ')}${it.noStock ? ' ⚠️' : ''}${marks.markOf(it.packageNo)}`;
       }
     }
   }
@@ -432,6 +440,7 @@ function keyboardForRequest(requestId, aj) {
 
 /** Card for a queued snap-sale sell_package actionJSON. */
 async function buildSellPackageCard(aj, opts = {}) {
+  const pct = await marksOffAbovePct();
   let text = await buildSaleCard({
     headline: aj.source === 'snap_sale' ? 'Sale · Snap' : 'Sale',
     customer: aj.customer,
@@ -439,11 +448,12 @@ async function buildSellPackageCard(aj, opts = {}) {
     salesDate: aj.salesDate,
     items: [{ packageNo: aj.packageNo, design: aj.design, shade: aj.shade, thans: aj.thans, yards: aj.yards, warehouse: aj.warehouse, arrivalBatch: aj.arrivalBatch }],
     requester: opts.requester, // CARD-6
+    docVerify: aj.docVerify, marksOffAbovePct: pct, // VRF-5
   });
   // VRF-4 — this door's bill IS checked (SALE_ACTIONS) and its verdict
   // persisted, yet only the bundle card ever showed the 🔬 line. Same line,
   // same place, so a single-bale sale reads like every other sale.
-  text += docVerifyLine(aj);
+  text += docVerifyLine(aj, { marksOff: billMarks(aj.docVerify, pct).marksOff });
   return text;
 }
 
@@ -728,9 +738,55 @@ function capTokens(tokens, total) {
  * a count: they need no eye. A row checked before VRF-4 carries counts and
  * no rows, and renders exactly as it always did.
  */
-function docVerifyLine(aj) {
+/**
+ * VRF-5 (owner, 18-Oct-2026) — what the saved bill check lets the sale card
+ * say per bale line, and in which order. `✅` a bale the bill confirmed,
+ * `🔴` one that differs or is missing, nothing for one that was never
+ * checked (a loose than, no record). Above `marksOffAbovePct` of flagged
+ * bales among the checked ones the marks go off — twenty red dots say
+ * nothing a line of counts does not (owner's 75% rule).
+ */
+function billMarks(v, marksOffAbovePct) {
+  const none = { posOf: () => Infinity, markOf: () => '', marksOff: false, checked: 0 };
+  if (!v || !Array.isArray(v.differRows)) return none;
+  const key = (n) => String(n == null ? '' : n).trim().toUpperCase();
+  const flagged = new Set([...(v.differRows || []).map((r) => key(r && r.no)), ...(v.missingNos || []).map(key)]);
+  const confirmed = new Set([...(v.okNos || []).map(key), ...(v.okNoted || []).map((r) => key(r && r.no))]);
+  const checked = (Number(v.ok) || 0) + (Number(v.differs) || 0) + (Number(v.missing) || 0);
+  const bad = (Number(v.differs) || 0) + (Number(v.missing) || 0);
+  const pct = Number.isFinite(Number(marksOffAbovePct)) ? Number(marksOffAbovePct) : 75;
+  const marksOff = checked > 0 && (bad / checked) * 100 > pct;
+  const seq = new Map();
+  (Array.isArray(v.billSeq) ? v.billSeq : []).forEach((n, i) => { if (!seq.has(key(n))) seq.set(key(n), i); });
+  return {
+    checked,
+    marksOff,
+    posOf: (no) => (seq.has(key(no)) ? seq.get(key(no)) : Infinity),
+    markOf: (no) => {
+      if (marksOff) return '';
+      if (flagged.has(key(no))) return ' 🔴';
+      if (confirmed.has(key(no))) return ' ✅';
+      return '';
+    },
+  };
+}
+
+/** VRF-5 — the owner's threshold, a Settings cell (`BILL_MARKS_OFF_ABOVE_PCT`, default 75). */
+async function marksOffAbovePct() {
+  try {
+    const s = await require('../repositories/settingsRepository').getAll();
+    const n = Number(s.BILL_MARKS_OFF_ABOVE_PCT);
+    return Number.isFinite(n) ? n : 75;
+  } catch (_) { return 75; }
+}
+
+function docVerifyLine(aj, opts = {}) {
   const v = aj && aj.docVerify;
   if (!v) return '';
+  // VRF-5 — a re-check that could not read the bill, with no verdict to fall back on.
+  if (v.readFailed && !Array.isArray(v.differRows) && !((v.ok || 0) + (v.differs || 0) + (v.missing || 0) + (v.extra || 0))) {
+    return '\n🔬 Bill check: could not read the bill — compare by hand';
+  }
   const bad = (v.differs || 0) + (v.missing || 0) + (v.extra || 0);
   // VRF-3 — a MIXED sale's thans are never compared (a than has no bale
   // number on the bill). Without saying so the line renders a clean ✅ for
@@ -740,7 +796,8 @@ function docVerifyLine(aj) {
   const tail = unchecked ? ` · ${unchecked} than not checked` : '';
   let text = `\n🔬 Bill check: ${v.ok || 0} confirmed · ${v.differs || 0} differ · `
     + `${v.missing || 0} missing · ${v.extra || 0} extra${tail}`
-    + `${bad ? ' ⚠️' : (unchecked ? ' ◍' : ' ✅')}`;
+    + `${bad ? ' ⚠️' : (unchecked ? ' ◍' : ' ✅')}`
+    + (opts.marksOff ? ' · marks off, compare by hand' : '');
   const differRows = Array.isArray(v.differRows) ? v.differRows : [];
   const missingNos = Array.isArray(v.missingNos) ? v.missingNos : [];
   const extraRows = Array.isArray(v.extraRows) ? v.extraRows : [];
@@ -757,6 +814,7 @@ function docVerifyLine(aj) {
 async function buildSaleBundleCard(aj, opts = {}) {
   let items = (Array.isArray(aj.items) ? aj.items : []).map((it) => ({ ...it }));
   try { items = await enrichBundleItems(items, aj); } catch (_) { /* thin items still render */ }
+  const pct = await marksOffAbovePct();
   let text = await buildSaleCard({
     headline: 'Sale',
     customer: aj.customer,
@@ -767,6 +825,7 @@ async function buildSaleBundleCard(aj, opts = {}) {
     backdated: !!aj.backdated,
     daysBack: aj.daysBack,
     requester: opts.requester, // CARD-6
+    docVerify: aj.docVerify, marksOffAbovePct: pct, // VRF-5
   });
   // When enrichment could not price a single item (Sheets down, or every
   // number ambiguous), the computed total reads 0 — the queue row's own
@@ -774,7 +833,7 @@ async function buildSaleBundleCard(aj, opts = {}) {
   if (!items.some((i) => Number(i.yards)) && aj.totalYards) {
     text += `\nQueued total: ${fmtQty(aj.totalYards)} yards`;
   }
-  text += docVerifyLine(aj);
+  text += docVerifyLine(aj, { marksOff: billMarks(aj.docVerify, pct).marksOff });
   return text;
 }
 
@@ -1097,6 +1156,7 @@ async function forwardAttachmentsToAdmins(bot, requestId, attachments, excludeId
 }
 
 module.exports = {
+  billMarks, // VRF-5
   resolveUserLabel,
   actionLabel,
   _resetNameCacheForTests,

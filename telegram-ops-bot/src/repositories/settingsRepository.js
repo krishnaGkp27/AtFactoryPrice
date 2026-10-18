@@ -49,6 +49,10 @@ const DEFAULTS = {
   // VRF-1 — OCR bill-vs-request check on documented sale approvals
   // (skips snap-sourced requests). 0 switches it off, no deploy.
   PDF_VERIFY_ENABLED: 1,
+  // VRF-5 — above this share of flagged bales (differ + missing, over the
+  // bales checked) the sale card drops its per-line ✅ / 🔴 marks and says
+  // so on the check line (owner: clutter).
+  BILL_MARKS_OFF_ABOVE_PCT: 75,
   // EXT-1 — customer-facing OTP ledger (WhatsApp/SMS/app). Master switch
   // + the hard daily ceiling on PAID message sends (money-leak guard).
   EXT_LEDGER_ENABLED: 1,

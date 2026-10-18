@@ -211,7 +211,9 @@ test('VRF-4: the single-bale (sell_package) card carries the same 🔬 line and 
     ...base,
     docVerify: { ok: 0, differs: 0, missing: 1, extra: 0, okNos: [], okNoted: [], differRows: [], missingNos: ['516'], extraRows: [] },
   });
-  assert.match(checked, /🔬 Bill check: 0 confirmed · 0 differ · 1 missing · 0 extra ⚠️\n {2}❌ 516 not on bill/, checked);
+  // VRF-5 — one bale, one miss: 100% flagged is above the 75% cut, so the
+  // line itself is unmarked and the check line says why.
+  assert.match(checked, /\n {2}516 · 50 yd\n🔬 Bill check: 0 confirmed · 0 differ · 1 missing · 0 extra ⚠️ · marks off, compare by hand\n {2}❌ 516 not on bill/, checked);
   // The line sits AFTER the goods, like the bundle card.
   assert.ok(checked.indexOf('516 · 50 yd') < checked.indexOf('🔬'), 'verdict follows the goods');
 });

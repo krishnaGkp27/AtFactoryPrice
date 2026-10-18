@@ -42,6 +42,7 @@ const approvalQueueRepository = require('../repositories/approvalQueueRepository
 const inventoryRepository = require('../repositories/inventoryRepository');
 const designAssetsRepository = require('../repositories/designAssetsRepository');
 const locationService = require('./locationService');
+const mutex = require('../utils/asyncMutex');
 
 const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle'];
 const QTY_TOLERANCE = 0.15; // OCR + meters→yards rounding slack
@@ -321,7 +322,8 @@ function compareItemsToLabels(items, labels, opts = {}) {
       }
     }
     if (via === 'details') diffs.push(`bale no: bill reads "${l.packageNo || '?'}" — matched by details`);
-    results.push({ item: it, status: diffs.length ? 'differs' : 'ok', diffs, notes, label: l });
+    // VRF-5 — `pos` is the bill row's position: the card follows the bill.
+    results.push({ item: it, status: diffs.length ? 'differs' : 'ok', diffs, notes, label: l, pos: idx });
   }
 
   // VRF-1 misread pairing: a leftover missing request bale and a leftover
@@ -357,6 +359,7 @@ function compareItemsToLabels(items, labels, opts = {}) {
     const l = labels[idx];
     r.status = 'differs';
     r.label = l;
+    r.pos = idx;
     r.diffs = [`bale no: bill reads "${l.packageNo}" — matched by details`];
     r.notes = [];
   }
@@ -505,6 +508,12 @@ function docVerifyRecord(results, extras, opts = {}) {
       design: l.design ? String(l.design) : '',
       shade: l.shade ? String(l.shade) : '',
     })),
+    // VRF-5 — the request's bales in the order the bill lists them (matched
+    // rows only; a missing bale has no bill row). The sale card follows it.
+    billSeq: results.filter((r) => r.pos !== undefined && r.status !== 'missing')
+      .sort((a, b) => a.pos - b.pos).slice(0, RECORD_ROW_CAP).map(no),
+    // VRF-5 — who re-checked the bill and when: one tap per admin per request.
+    rechecks: Array.isArray(opts.rechecks) ? opts.rechecks : [],
     truncated: flag.cut
       || [okPlain, okNoted, differs, missing, extras].some((l) => l.length > RECORD_ROW_CAP),
   };
@@ -513,7 +522,7 @@ function docVerifyRecord(results, extras, opts = {}) {
   // reason strings, so halving them is what actually frees bytes — and the
   // bare missing numbers last. One list halved per pass until the record
   // fits. The counts are never touched.
-  const SHED_ORDER = ['okNos', 'okNoted', 'extraRows', 'differRows', 'missingNos'];
+  const SHED_ORDER = ['billSeq', 'okNos', 'okNoted', 'extraRows', 'differRows', 'missingNos'];
   while (JSON.stringify(rec).length > RECORD_BYTES_CAP) {
     const key = SHED_ORDER.find((k) => rec[k].length);
     if (!key) break;
@@ -609,143 +618,170 @@ async function loadShadeCatalog(items) {
  * Verify one queued request's attached sale document, if applicable.
  * Fire-and-forget safe: never throws; returns true when a verdict was sent.
  */
+/**
+ * The check itself — shared by the submit-time run (`maybeVerify`) and the
+ * VRF-5 re-check door (`recheckBill`). Every early exit names its reason so
+ * the re-check can tell the admin why nothing was read.
+ * @returns {Promise<{status:'skipped'|'unreadable'|'done', reason?:string, record?:object}>}
+ */
+async function runCheck(bot, aj, requestId, { admins, recheck } = {}) {
+  if (!SALE_ACTIONS.includes(aj.action)) return { status: 'skipped', reason: 'not a sale' };
+  if (!aj.sale_doc_file_id) return { status: 'skipped', reason: 'no bill attached' };
+  if (/^snap/i.test(String(aj.source || ''))) return { status: 'skipped', reason: 'a snap sale is not bill-checked' };
+  let settings = {};
+  try { settings = await settingsRepository.getAll(); } catch { settings = {}; }
+  if (Number(settings.PDF_VERIFY_ENABLED ?? 1) !== 1) return { status: 'skipped', reason: 'the bill check is switched off in Settings' };
+  let storeOnly = false;
+  try {
+    storeOnly = await locationService.shipsOnlyFromStores(aj);
+  } catch (e) {
+    logger.warn(`saleDocVerify ${requestId}: place lookup failed, checking anyway: ${e.message}`);
+  }
+  if (storeOnly) {
+    logger.info(`saleDocVerify ${requestId}: store-origin sale — bill check skipped (VRF-2)`);
+    return { status: 'skipped', reason: 'a store sale is not bill-checked' };
+  }
+
+  // VRF-3 — a loose than has no bale number on a bill, so the thans of a
+  // mixed sale are left out of the compare; a bale whose EVERY than is in
+  // the request is one whole bale to the bill and is compared as such.
+  const allItems = itemsFromActionJSON(aj);
+  const looseThans = allItems.filter((i) => i.isThan);
+  const wholeFromThans = looseThans.length
+    ? await completeBalesAmongThans(looseThans)
+    : new Set();
+  const collapsed = [];
+  for (const k of wholeFromThans) {
+    const lines = looseThans.filter((i) => digits(i.packageNo) === k);
+    if (!lines.length) continue;
+    collapsed.push({
+      packageNo: lines[0].packageNo,
+      design: lines.find((l) => l.design)?.design || '',
+      shade: lines.find((l) => l.shade)?.shade || '',
+      thans: lines.length,
+      yards: lines.reduce((s, l) => s + (Number(l.yards) || 0), 0),
+      isThan: false,
+    });
+  }
+  const baleItems = allItems.filter((i) => !i.isThan).concat(collapsed);
+  const thanItems = looseThans.filter((i) => !wholeFromThans.has(digits(i.packageNo)));
+  if (allItems.length && !baleItems.length) {
+    logger.info(`saleDocVerify ${requestId}: than-only sale (${thanItems.length} than item(s)) — bill check skipped (VRF-3)`);
+    return { status: 'skipped', reason: 'a than-only sale is not bill-checked' };
+  }
+
+  const { downloadTelegramFile } = require('../utils/telegramFiles');
+  const vision = require('./vision');
+  const dl = await downloadTelegramFile(bot, aj.sale_doc_file_id);
+  const mime = aj.sale_doc_type === 'document' ? 'application/pdf' : (dl.mimeType || 'image/jpeg');
+  // VRF-1 — the verification read ALWAYS asks for the strong model (owner:
+  // precision over cost on the one read that gates an approval).
+  const ocr = await vision.extractBales(dl.buffer, mime, { forceStrongModel: true });
+
+  const adminIds = (admins && admins.length ? admins : config.access.adminIds);
+  const tell = async (text) => {
+    for (const a of adminIds) { try { await bot.sendMessage(a, text); } catch (_) { /* best-effort */ } }
+  };
+  const ref = () => { try { return require('./approvalCards').shortRequestRef(requestId); } catch (_) { return requestId; } };
+  const now = () => new Date().toISOString();
+  if (!ocr.ok || !Array.isArray(ocr.bales) || !ocr.bales.length) {
+    const why = ocr.error || 'no labels recognised';
+    if (recheck) {
+      // VRF-5 — a failed re-read keeps the earlier verdict (if any) and only
+      // records the tap: the old rows are still the best the bot has.
+      const prev = recheck.prev && typeof recheck.prev === 'object' ? recheck.prev : {};
+      const record = {
+        ...prev, readFailed: true, readFailedAt: now(),
+        rechecks: [...(Array.isArray(prev.rechecks) ? prev.rechecks : []), { by: recheck.by, at: now(), ok: false }],
+      };
+      try { await approvalQueueRepository.updateActionJSON(requestId, { docVerify: record }); } catch (e) { logger.warn(`saleDocVerify persist ${requestId}: ${e.message}`); }
+      await tell(`🔬 Bill of ${ref()} re-checked by ${recheck.byLabel || recheck.by} · could not read the bill (${why}) — compare by hand`);
+      return { status: 'unreadable', record };
+    }
+    await tell(`🔬 Bill check — request ${requestId}\n⚠️ Could not read the attached bill (${why}). Compare it manually before approving.`);
+    return { status: 'unreadable' };
+  }
+
+  const toCheck = baleItems.length ? baleItems : allItems;
+  const items = await enrichItems(toCheck);
+  const shadeCatalog = await loadShadeCatalog(items);
+  const labels = baleItems.length
+    ? dropLabelsFor(ocr.bales, thanItems.map((i) => i.packageNo))
+    : ocr.bales;
+  const { results, extras } = compareItemsToLabels(items, labels, { shadeCatalog });
+  const thanExcluded = baleItems.length ? thanItems.length : 0;
+  const prevRechecks = recheck && recheck.prev && Array.isArray(recheck.prev.rechecks) ? recheck.prev.rechecks : [];
+  const record = docVerifyRecord(results, extras, {
+    thanExcluded,
+    rechecks: recheck ? [...prevRechecks, { by: recheck.by, at: now() }] : prevRechecks,
+  });
+  try {
+    await approvalQueueRepository.updateActionJSON(requestId, { docVerify: record });
+  } catch (e) { logger.warn(`saleDocVerify persist ${requestId}: ${e.message}`); }
+  if (recheck) {
+    // VRF-5 — one line to every admin, so nobody spends their own tap on a
+    // bill that was just read; the cards all rebuild from the saved record.
+    await tell(`🔬 Bill of ${ref()} re-checked by ${recheck.byLabel || recheck.by} · ${record.ok} confirmed · ${record.differs} differ · ${record.missing} missing · ${record.extra} extra`);
+  } else {
+    await tell(buildVerdictMessage(requestId, results, extras, { thanExcluded }));
+  }
+  return { status: 'done', record };
+}
+
+/**
+ * Submit-time entry point. Resolves false when nothing was checked (not a
+ * sale, no bill, snap, store-only, than-only, switched off), true when a
+ * read ran — readable or not — so the caller knows the admins were told.
+ */
 async function maybeVerify(bot, requestId, opts = {}) {
   try {
     const row = await approvalQueueRepository.getByRequestId(requestId);
     if (!row || !row.actionJSON) return false;
-    const aj = row.actionJSON;
-    if (!SALE_ACTIONS.includes(aj.action)) return false;
-    if (!aj.sale_doc_file_id) return false;
-    // Owner cost rule: snap items came FROM this document — already read once.
-    if (/^snap/i.test(String(aj.source || ''))) return false;
-    let settings = {};
-    try { settings = await settingsRepository.getAll(); } catch { settings = {}; }
-    if (Number(settings.PDF_VERIFY_ENABLED ?? 1) !== 1) return false;
-    // VRF-2 (owner 14-Aug-2026): "stop giving the approval check from any
-    // store, but keep it intact from warehouse supply." A STORE sells in
-    // thans and its bill is a handwritten than-receipt with no bale rows
-    // printed on it, so this bale-row OCR can only ever answer "No bale
-    // rows recognised" — the identical false warning on every Kano office
-    // sale, which trains the eye to ignore the one that matters. Warehouse
-    // bills DO list bale numbers, so the check stays whole there.
-    // The bill itself is still mandatory and still forwarded with the card;
-    // only the automated read is dropped, and only where it cannot work.
-    // Its own try, deliberately: this function's outer catch returns false,
-    // so an exception escaping the lookup would SKIP the check — the exact
-    // opposite of the rule. Only a positive answer may drop it.
-    let storeOnly = false;
-    try {
-      storeOnly = await locationService.shipsOnlyFromStores(aj);
-    } catch (e) {
-      logger.warn(`saleDocVerify ${requestId}: place lookup failed, checking anyway: ${e.message}`);
-    }
-    if (storeOnly) {
-      logger.info(`saleDocVerify ${requestId}: store-origin sale — bill check skipped (VRF-2)`);
-      return false;
-    }
-
-    // VRF-3 (owner 15-Aug-2026, with a screenshot of ten false ❌ lines):
-    // "Stop doing bill checks for the sale which is made in thans…
-    // selling in thans doesn't have detailed information in the image
-    // attached inside the PDF of the bill, therefore there is no use of
-    // wasting the credit unless you find that there is a complete bale
-    // sold in the approval card."
-    //
-    // A than sale's bill is a handwritten receipt: it names no bale
-    // numbers, so this bale-row OCR can only ever report every line as
-    // missing. Deciding on the GOODS rather than the place also makes the
-    // rule work today — VRF-2's store skip waits on a Locations sheet
-    // that is not seeded yet, so it never fired on the owner's Kano sale.
-    //
-    // The gate sits BEFORE the download and the vision call, so the OCR
-    // credit is genuinely saved rather than spent and then discarded.
-    const allItems = itemsFromActionJSON(aj);
-    const looseThans = allItems.filter((i) => i.isThan);
-    // A bale taken WHOLE through the bundle door still arrives as than
-    // lines, so the shape alone would skip the case the owner carved out.
-    // Inventory says which of those bales are going out complete.
-    const wholeFromThans = looseThans.length
-      ? await completeBalesAmongThans(looseThans)
-      : new Set();
-    // Those lines COLLAPSE to one item per bale: the bill carries a single
-    // row for the bale, so leaving five than lines standing would match the
-    // first and report the other four missing — the noise, rebuilt.
-    const collapsed = [];
-    for (const k of wholeFromThans) {
-      const lines = looseThans.filter((i) => digits(i.packageNo) === k);
-      if (!lines.length) continue;
-      collapsed.push({
-        packageNo: lines[0].packageNo,
-        design: lines.find((l) => l.design)?.design || '',
-        shade: lines.find((l) => l.shade)?.shade || '',
-        thans: lines.length,
-        yards: lines.reduce((s, l) => s + (Number(l.yards) || 0), 0),
-        isThan: false,
-      });
-    }
-    const baleItems = allItems.filter((i) => !i.isThan).concat(collapsed);
-    const thanItems = looseThans.filter((i) => !wholeFromThans.has(digits(i.packageNo)));
-    if (allItems.length && !baleItems.length) {
-      logger.info(`saleDocVerify ${requestId}: than-only sale (${thanItems.length} than item(s)) — bill check skipped (VRF-3)`);
-      return false;
-    }
-    // Goods that cannot be classified at all (a malformed actionJSON) still
-    // get checked: uncertainty degrades TOWARDS verifying, never away.
-
-    const { downloadTelegramFile } = require('../utils/telegramFiles');
-    const vision = require('./vision');
-    const dl = await downloadTelegramFile(bot, aj.sale_doc_file_id);
-    const mime = aj.sale_doc_type === 'document' ? 'application/pdf' : (dl.mimeType || 'image/jpeg');
-    // VRF-1 accuracy (owner 23-Jul: precision over cost for verification):
-    // verification bills are per-bale photo PDFs of rotated handwriting —
-    // ALWAYS read them with the strong photo model + thinking, whatever
-    // the page count. The fast model turned the owner's clean 11-page
-    // bill into 0 confirmed / 8 differ / 3 missing / 3 extra.
-    const ocr = await vision.extractBales(dl.buffer, mime, { forceStrongModel: true });
-
-    const admins = (opts.adminIds && opts.adminIds.length ? opts.adminIds : config.access.adminIds);
-    if (!ocr.ok || !Array.isArray(ocr.bales) || !ocr.bales.length) {
-      const msg = `🔬 Bill check — request ${requestId}\n⚠️ Could not read the attached bill (${ocr.error || 'no labels recognised'}). Compare it manually before approving.`;
-      for (const a of admins) { try { await bot.sendMessage(a, msg); } catch (_) { /* best-effort */ } }
-      return true;
-    }
-
-    // VRF-3 — a MIXED sale (whole bales + loose thans) is checked on its
-    // BALE lines only. A than's bill line carries no bale number, so
-    // comparing it could only ever add a false "NOT found" beside real
-    // findings, which is what taught the owner to distrust the whole
-    // verdict. The thans are named once, quietly, so the reader knows
-    // what the verdict does NOT cover.
-    const toCheck = baleItems.length ? baleItems : allItems;
-    const items = await enrichItems(toCheck);
-    const shadeCatalog = await loadShadeCatalog(items);
-    // The excluded thans' own bill rows leave the pool entirely — see
-    // dropLabelsFor for why suppressing them later would not be enough.
-    const labels = baleItems.length
-      ? dropLabelsFor(ocr.bales, thanItems.map((i) => i.packageNo))
-      : ocr.bales;
-    const { results, extras } = compareItemsToLabels(items, labels, { shadeCatalog });
-    const msg = buildVerdictMessage(requestId, results, extras,
-      { thanExcluded: baleItems.length ? thanItems.length : 0 });
-    // Persist the verdict on the queue row so pending views can surface it.
-    // VRF-4 — counts AND the flagged rows: the card names the bales, the
-    // inbox chip replays the verdict, and neither needs the OCR again.
-    try {
-      await approvalQueueRepository.updateActionJSON(requestId, {
-        docVerify: docVerifyRecord(results, extras,
-          { thanExcluded: baleItems.length ? thanItems.length : 0 }),
-      });
-    } catch (e) { logger.warn(`saleDocVerify persist ${requestId}: ${e.message}`); }
-    for (const a of admins) { try { await bot.sendMessage(a, msg); } catch (_) { /* best-effort */ } }
-    return true;
+    const r = await runCheck(bot, row.actionJSON, requestId, { admins: opts.adminIds });
+    return r.status !== 'skipped';
   } catch (e) {
     logger.warn(`saleDocVerify ${requestId}: ${e.message}`);
     return false;
   }
 }
 
+const RECHECK_FRESH_MS = 60 * 1000;
+
+/**
+ * VRF-5 (owner, 18-Oct-2026) — the re-check door. One tap per admin per
+ * request, recorded on the request itself (`docVerify.rechecks`). A tap
+ * that lands within a minute of another admin's completed re-check is
+ * served that result without a second read and without spending the tap;
+ * two taps at the same moment are serialised on the request, so the bill
+ * is read once. Only a PENDING request is re-checked.
+ * @returns {Promise<{status:'done'|'unreadable'|'fresh'|'used'|'skipped', reason?:string, record?:object}>}
+ */
+async function recheckBill(bot, requestId, { by, byLabel } = {}) {
+  const who = String(by || '');
+  const spent = (v) => Array.isArray(v && v.rechecks) && v.rechecks.some((r) => String(r.by) === who);
+  const row0 = await approvalQueueRepository.getByRequestId(requestId);
+  if (!row0 || !row0.actionJSON) return { status: 'skipped', reason: 'request not found' };
+  if (String(row0.status || '').toLowerCase() !== 'pending') return { status: 'skipped', reason: 'the request is already decided' };
+  if (spent(row0.actionJSON.docVerify)) return { status: 'used' };
+  return mutex.runExclusive(`recheck:${requestId}`, async () => {
+    const row = (await approvalQueueRepository.getByRequestId(requestId)) || row0;
+    const aj = row.actionJSON || row0.actionJSON;
+    const prev = (aj.docVerify && typeof aj.docVerify === 'object') ? aj.docVerify : {};
+    if (spent(prev)) return { status: 'used' };
+    const last = Array.isArray(prev.rechecks) && prev.rechecks.length ? prev.rechecks[prev.rechecks.length - 1] : null;
+    if (last && Date.now() - Date.parse(last.at || 0) < RECHECK_FRESH_MS) return { status: 'fresh', record: prev };
+    try {
+      return await runCheck(bot, aj, requestId, { admins: config.access.adminIds, recheck: { by: who, byLabel, prev } });
+    } catch (e) {
+      logger.warn(`saleDocVerify recheck ${requestId}: ${e.message}`);
+      return { status: 'skipped', reason: e.message };
+    }
+  });
+}
+
 module.exports = {
   maybeVerify,
+  recheckBill,
   // VRF-4 — the inbox chip's replay, and the card's "does this row carry
   // detail" question, without reaching into _internals.
   verdictMessageFromRecord,
@@ -754,6 +790,6 @@ module.exports = {
     compareItemsToLabels, itemsFromActionJSON, enrichItems, buildVerdictMessage, SALE_ACTIONS,
     itemIsThan, dropLabelsFor, completeBalesAmongThans,
     compareShades, normShade, designPrefixMisread, editDistance, loadShadeCatalog,
-    docVerifyRecord, RECORD_ROW_CAP,
+    docVerifyRecord, RECORD_ROW_CAP, runCheck, RECHECK_FRESH_MS,
   },
 };

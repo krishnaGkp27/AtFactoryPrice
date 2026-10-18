@@ -127,6 +127,17 @@ function ageDays(createdAt) {
 }
 
 /** 🟢 fresh · 🟠 getting old · 🔴 needs clearing. */
+/** VRF-5 — "5m ago" · "2h ago" · "3d ago" for a stored ISO instant. */
+function agoLabel(iso) {
+  const ms = Date.now() - Date.parse(iso || '');
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
 function ageDot(days) {
   if (days >= 7) return '🔴';
   if (days >= 3) return '🟠';
@@ -1011,7 +1022,29 @@ async function renderItem(bot, chatId, userId, idx) {
   if (require('../services/saleDocVerifyService').recordHasRows(docAj.docVerify)) {
     peekRow.push({ text: '🔬 Bill check', callback_data: `abx:chk:${idx}` });
   }
-  const docRow = peekRow.length ? [peekRow] : [];
+  // VRF-5 — the re-check door: one tap per admin per request, on its own
+  // row under the peeks. Shown on every sale with a bill (a failed first
+  // read included — that is the case a re-read helps most).
+  let recheckRow = [];
+  try {
+    const { SALE_ACTIONS: saleActions } = require('../services/saleStockCheck');
+    if (saleActions.includes(docAj.action) && docAj.sale_doc_file_id && config.access.adminIds.includes(userId)) {
+      const rechecks = (docAj.docVerify && Array.isArray(docAj.docVerify.rechecks)) ? docAj.docVerify.rechecks : [];
+      if (rechecks.some((r) => String(r.by) === userId)) {
+        recheckRow = [{ text: '🔬 Re-check used', callback_data: 'abx:rck:used' }];
+      } else {
+        const last = rechecks[rechecks.length - 1];
+        let label = '🔬 Re-check bill';
+        if (last) {
+          let doneBy = String(last.by || '');
+          try { doneBy = await approvalCards.resolveUserLabel(last.by, bot); } catch (_) { /* id fallback */ }
+          label += ` · done by ${doneBy} ${agoLabel(last.at)}`.replace(/ $/, '');
+        }
+        recheckRow = [{ text: label, callback_data: `abx:rck:${idx}` }];
+      }
+    }
+  } catch (_) { /* the door is a convenience; the card stands without it */ }
+  const docRow = [...(peekRow.length ? [peekRow] : []), ...(recheckRow.length ? [recheckRow] : [])];
   // APF-2 (owner, 08-Aug-2026): a pending sale whose stock is ALL gone gets
   // the two REAL choices — plain Approve could only walk the wizard into a
   // dead end. Same shared judgement as the ⚠️ chips and Sentinel C8; if the
@@ -1134,7 +1167,7 @@ async function handleCallback(bot, query) {
 
   // Approve/Reject must NOT be pre-answered here — the delegated handler
   // answers the query itself (and a second answer is dropped by Telegram).
-  const delegating = data.startsWith('abx:ok:') || data.startsWith('abx:no:');
+  const delegating = data.startsWith('abx:ok:') || data.startsWith('abx:no:') || data.startsWith('abx:rck:');
   if (!delegating) {
     try { await bot.answerCallbackQuery(query.id); } catch (_) { /* ignore */ }
   }
@@ -1144,7 +1177,7 @@ async function handleCallback(bot, query) {
   // the earlier bill, tapping 🔬 replaces the earlier verdict, and the two
   // stay up together — the verdict names the bill rows to look at, so the
   // bill must still be on screen. Every other tap sweeps everything.
-  const peekKind = data.startsWith('abx:doc:') ? 'doc' : (data.startsWith('abx:chk:') ? 'chk' : null);
+  const peekKind = data.startsWith('abx:doc:') ? 'doc' : ((data.startsWith('abx:chk:') || data.startsWith('abx:rck:')) ? 'chk' : null);
   try {
     await require('../services/ephemeralDocs').sweep(bot, userId, peekKind ? { kind: peekKind } : {});
   } catch (_) { /* best-effort */ }
@@ -1217,6 +1250,42 @@ async function handleCallback(bot, query) {
 
   if (!config.access.adminIds.includes(userId)) {
     try { await bot.answerCallbackQuery(query.id, { text: 'Approvals are admin-only.', show_alert: true }); } catch (_) { /* ignore */ }
+    return true;
+  }
+
+  // VRF-5 — re-check the attached bill: one tap per admin per request.
+  if (data === 'abx:rck:used') {
+    try { await bot.answerCallbackQuery(query.id, { text: 'You have used your re-check on this request.', show_alert: true }); } catch (_) { /* ignore */ }
+    return true;
+  }
+  if (data.startsWith('abx:rck:')) {
+    const session0 = sessionStore.get(userId);
+    const idx = parseInt(data.slice('abx:rck:'.length), 10);
+    const item = session0 && Array.isArray(session0._items) ? session0._items[idx] : null;
+    if (!item) {
+      try { await bot.answerCallbackQuery(query.id, { text: 'Open the inbox again.', show_alert: true }); } catch (_) { /* ignore */ }
+      return true;
+    }
+    let byLabel = userId;
+    try { byLabel = await approvalCards.resolveUserLabel(userId, bot); } catch (_) { /* id fallback */ }
+    const r = await require('../services/saleDocVerifyService').recheckBill(bot, item.requestId, { by: userId, byLabel });
+    const notice = r.status === 'done' ? 'Bill re-checked.'
+      : r.status === 'unreadable' ? 'Could not read the bill — compare by hand.'
+        : r.status === 'fresh' ? 'Re-checked moments ago by another admin — showing that result.'
+          : r.status === 'used' ? 'You have used your re-check on this request.'
+            : `Not re-checked: ${r.reason || 'unavailable'}.`;
+    try { await bot.answerCallbackQuery(query.id, { text: notice, show_alert: r.status !== 'done' }); } catch (_) { /* ignore */ }
+    if (['done', 'unreadable', 'fresh'].includes(r.status)) {
+      // The list is a snapshot — carry the fresh verdict into it so the
+      // redraw (and every later open of this card) shows it.
+      try {
+        const live = await approvalQueueRepository.getByRequestId(item.requestId);
+        if (live && live.actionJSON) item.actionJSON = live.actionJSON;
+        else if (r.record) item.actionJSON = { ...(item.actionJSON || {}), docVerify: r.record };
+      } catch (_) { if (r.record) item.actionJSON = { ...(item.actionJSON || {}), docVerify: r.record }; }
+      sessionStore.set(userId, session0);
+      await renderItem(bot, cid, userId, idx);
+    }
     return true;
   }
 
