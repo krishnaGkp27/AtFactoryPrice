@@ -61,7 +61,7 @@ test('the chip, a tap, the redraw in bill order, and the three chip states', asy
 
   // Before the re-check: number order (no bill order on file), marks already on.
   let card = lastText(bot);
-  assert.match(card, /483 · 150 yd ✅\n {2}490 · 150 yd ✅\n {2}577 · 150 yd 🔴\n Shade WHITE\n {2}526 · 150 yd 🔴/, card);
+  assert.match(card, /1\. 483 · 150 yd ✅\n {2}2\. 490 · 150 yd ✅\n {2}3\. 577 · 150 yd 🔴\n Shade WHITE\n {2}4\. 526 · 150 yd 🔴/, card);
   let rows = lastKb(bot);
   const chipRow = rows.find((r) => r.some((b) => b.callback_data.startsWith('abx:rck:')));
   assert.deepEqual(chipRow.map((b) => b.text), ['🔬 Re-check bill'], 'the door, on its own row');
@@ -79,7 +79,7 @@ test('the chip, a tap, the redraw in bill order, and the three chip states', asy
   await flow.handleCallback(bot, cb(tap, '777'));
   assert.deepEqual(calls, [{ requestId: 'REQ-VRF5', by: '777', byLabel: 'Musa' }]);
   card = lastText(bot);
-  assert.match(card, /483 · 150 yd ✅\n {2}577 · 150 yd 🔴\n {2}490 · 150 yd ✅\n Shade WHITE\n {2}526 · 150 yd 🔴/, `bill order after the re-check: ${card}`);
+  assert.match(card, /1\. 483 · 150 yd ✅\n {2}2\. 577 · 150 yd 🔴\n {2}3\. 490 · 150 yd ✅\n Shade WHITE\n {2}4\. 526 · 150 yd 🔴/, `bill order after the re-check: ${card}`);
   rows = lastKb(bot);
   assert.deepEqual(rows.find((r) => r.some((b) => b.callback_data.startsWith('abx:rck'))).map((b) => [b.text, b.callback_data]),
     [['🔬 Re-check used', 'abx:rck:used']], 'the tapping admin has spent their tap');

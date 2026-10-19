@@ -35,7 +35,9 @@ const REQUIRED_SHEETS = {
   Customers: {
     // CUS-1 — `aliases` (JSON array string) holds former/typo spellings that
     // resolve to this customer after a merge. New column at END per rule 4.
-    headers: ['customer_id', 'name', 'phone', 'address', 'category', 'credit_limit', 'outstanding_balance', 'payment_terms', 'notes', 'status', 'created_at', 'updated_at', 'aliases'],
+    // CUS-3 (19-Oct-2026) — N `stores` (CSV of the stores the customer buys
+    // from) and O `first_sale_at` (stamped once at the first approved sale).
+    headers: ['customer_id', 'name', 'phone', 'address', 'category', 'credit_limit', 'outstanding_balance', 'payment_terms', 'notes', 'status', 'created_at', 'updated_at', 'aliases', 'stores', 'first_sale_at'],
   },
   Users: {
     // Column K = notification_prefs (JSON object string). Stores per-user

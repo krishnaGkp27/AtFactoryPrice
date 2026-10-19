@@ -1711,20 +1711,24 @@ async function showSampleCustomerPicker(bot, chatId, userId, showAll = false) {
   const session = sessionStore.get(userId);
   if (!session) return;
 
-  const allCust = await customersRepo.getAll();
-  const active = allCust.filter((c) => (c.status || 'Active').toLowerCase() === 'active' && c.name);
+  // CUS-3 — a sample names no store, so the picker takes the viewer's own
+  // supply scope (one store → that store's customers; admins → everyone).
+  const customerScope = require('../services/customerScope');
+  const scopeWhs = await supplyScopeWarehouses(userId);
+  const scoped = customerScope.forStore(await customersRepo.getAll(), scopeWhs.length === 1 ? scopeWhs[0] : '');
+  const active = scoped.all;
 
   const topBuyers = await getTopBuyersForDesigns([session.design]);
   const suggestedSet = new Set(topBuyers.slice(0, 6));
   const suggested = active.filter((c) => suggestedSet.has(c.name));
-  const remaining = active.filter((c) => !suggestedSet.has(c.name)).sort((a, b) => a.name.localeCompare(b.name));
+  const remaining = active.filter((c) => !suggestedSet.has(c.name));
 
   const list = showAll ? remaining : (suggested.length ? suggested : active.slice(0, 6));
   const rows = [];
   for (let i = 0; i < list.length; i += 2) {
     const icon = showAll ? '👤' : '⭐';
-    const row = [{ text: `${icon} ${list[i].name}`, callback_data: `smcu:${list[i].name.slice(0, 55)}` }];
-    if (list[i + 1]) row.push({ text: `${icon} ${list[i + 1].name}`, callback_data: `smcu:${list[i + 1].name.slice(0, 55)}` });
+    const row = [{ text: customerScope.chipLabel(list[i], icon), callback_data: `smcu:${list[i].name.slice(0, 55)}` }];
+    if (list[i + 1]) row.push({ text: customerScope.chipLabel(list[i + 1], icon), callback_data: `smcu:${list[i + 1].name.slice(0, 55)}` });
     rows.push(row);
   }
   if (!showAll && remaining.length) {
@@ -6929,24 +6933,35 @@ async function showSupplyCustomerPicker(bot, chatId, userId) {
   const cart = (session && session.cart) || [];
   const cartDesigns = [...new Set(cart.map((c) => c.design))];
 
-  const allCust = await customersRepo.getAll();
-  const active = allCust.filter((c) => (c.status || 'Active').toLowerCase() === 'active');
-  const activeNames = new Set(active.map((c) => c.name));
+  // CUS-3 — only the customers of THIS store (column N), buyers first, the
+  // never-bought last as 🆕; 🌐 All customers behind See More is the door out.
+  const customerScope = require('../services/customerScope');
+  const store = (session && session.warehouse) || '';
+  const scoped = customerScope.forStore(await customersRepo.getAll(), store);
+  const activeNames = new Set(scoped.all.map((c) => c.name));
 
   const topBuyers = await getTopBuyersForDesigns(cartDesigns);
   const suggested = topBuyers.filter((n) => activeNames.has(n)).slice(0, 6);
   const suggestedSet = new Set(suggested);
+  const storeNote = store ? ` · 🏭 ${String(store).replace(/[*_`[\]]/g, '\\$&')}` : '';
 
   const rows = [];
+  const pair = (list, icon) => {
+    for (let i = 0; i < list.length; i += 2) {
+      const row = [{ text: customerScope.chipLabel(list[i], icon), callback_data: `srf_cu:${list[i].name}` }];
+      if (list[i + 1]) row.push({ text: customerScope.chipLabel(list[i + 1], icon), callback_data: `srf_cu:${list[i + 1].name}` });
+      rows.push(row);
+    }
+  };
   if (suggested.length) {
     const designLabel = cartDesigns.length <= 3 ? cartDesigns.join(', ') : `${cartDesigns.length} designs`;
-    const headerText = `👤 Select customer:\n\n⭐ *Top buyers of ${designLabel}:*`;
+    const headerText = `👤 Select customer${storeNote}\n\n⭐ *Top buyers of ${designLabel}:*`;
     for (let i = 0; i < suggested.length; i += 2) {
       const row = [{ text: `⭐ ${suggested[i]}`, callback_data: `srf_cu:${suggested[i]}` }];
       if (suggested[i + 1]) row.push({ text: `⭐ ${suggested[i + 1]}`, callback_data: `srf_cu:${suggested[i + 1]}` });
       rows.push(row);
     }
-    const remaining = active.filter((c) => !suggestedSet.has(c.name));
+    const remaining = scoped.all.filter((c) => !suggestedSet.has(c.name));
     if (remaining.length) {
       rows.push([{ text: '📋 See More Customers', callback_data: 'srf_cu:__more__' }]);
     }
@@ -6954,14 +6969,12 @@ async function showSupplyCustomerPicker(bot, chatId, userId) {
     rows.push([{ text: '⬅️ Back to cart', callback_data: 'srf_back:cart' }]);
     await editOrSendAnchored(bot, chatId, userId, headerText, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
   } else {
-    for (let i = 0; i < active.length; i += 2) {
-      const row = [{ text: `👤 ${active[i].name}`, callback_data: `srf_cu:${active[i].name}` }];
-      if (active[i + 1]) row.push({ text: `👤 ${active[i + 1].name}`, callback_data: `srf_cu:${active[i + 1].name}` });
-      rows.push(row);
-    }
+    pair(scoped.buyers, '👤');
+    pair(scoped.fresh, '👤');
+    if (store) rows.push([{ text: '🌐 All customers', callback_data: 'srf_cu:__all__' }]);
     rows.push([{ text: '➕ Add New Customer', callback_data: 'srf_cu:__new__' }]);
     rows.push([{ text: '⬅️ Back to cart', callback_data: 'srf_back:cart' }]);
-    await editOrSendAnchored(bot, chatId, userId, '👤 Select customer:', { reply_markup: { inline_keyboard: rows } });
+    await editOrSendAnchored(bot, chatId, userId, `👤 Select customer${storeNote}`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
   }
 }
 
@@ -10974,22 +10987,26 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'supply_req_flow') return;
 
-    if (val === '__more__') {
-      const allCust = await customersRepo.getAll();
-      const active = allCust.filter((c) => (c.status || 'Active').toLowerCase() === 'active');
+    if (val === '__more__' || val === '__all__') {
+      // CUS-3 — See More = the rest of THIS store's customers (buyers, then
+      // 🆕); 🌐 All = every active customer, the door for an out-of-place sale.
+      const customerScope = require('../services/customerScope');
+      const everyone = val === '__all__';
+      const scoped = customerScope.forStore(await customersRepo.getAll(), everyone ? '' : (session.warehouse || ''));
       const cart = session.cart || [];
       const cartDesigns = [...new Set(cart.map((c) => c.design))];
       const topBuyers = await getTopBuyersForDesigns(cartDesigns);
-      const suggestedSet = new Set(topBuyers.slice(0, 6));
-      const remaining = active.filter((c) => !suggestedSet.has(c.name));
+      const suggestedSet = new Set(everyone ? [] : topBuyers.slice(0, 6));
+      const remaining = scoped.all.filter((c) => !suggestedSet.has(c.name));
       const rows = [];
       for (let i = 0; i < remaining.length; i += 2) {
-        const row = [{ text: `👤 ${remaining[i].name}`, callback_data: `srf_cu:${remaining[i].name}` }];
-        if (remaining[i + 1]) row.push({ text: `👤 ${remaining[i + 1].name}`, callback_data: `srf_cu:${remaining[i + 1].name}` });
+        const row = [{ text: customerScope.chipLabel(remaining[i]), callback_data: `srf_cu:${remaining[i].name}` }];
+        if (remaining[i + 1]) row.push({ text: customerScope.chipLabel(remaining[i + 1]), callback_data: `srf_cu:${remaining[i + 1].name}` });
         rows.push(row);
       }
+      if (!everyone && session.warehouse) rows.push([{ text: '🌐 All customers', callback_data: 'srf_cu:__all__' }]);
       rows.push([{ text: '⬅️ Back to top buyers', callback_data: 'srf_back:customer' }]);
-      await editOrSendAnchored(bot, chatId, uid, '👤 All other customers:', {
+      await editOrSendAnchored(bot, chatId, uid, everyone ? '👤 All customers, every store:' : '👤 All other customers of this store:', {
         reply_markup: { inline_keyboard: rows },
       });
       return;

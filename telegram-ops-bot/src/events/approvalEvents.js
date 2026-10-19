@@ -446,6 +446,18 @@ async function sendCustomerStep(bot, chatId, state, note) {
     }
   }
 
+  // CUS-3 — the request ships from a store: only that store's customers are
+  // suggested (column N on the Customers sheet; an unplaced customer passes).
+  const customerScope = require('../services/customerScope');
+  const store = require('../services/locationService').placesInAction((state.item && state.item.actionJSON) || {}).place || '';
+  const inScope = (cust) => customerScope.inStore(cust, store);
+  for (let i = designBuyers.length - 1; i >= 0; i--) {
+    try {
+      const cust = await require('../services/customerEntity').resolve({ name: designBuyers[i].name });
+      if (cust && !inScope(cust)) designBuyers.splice(i, 1);
+    } catch (_) { /* keep the chip */ }
+  }
+  state._custStore = store;
   const recent = await getRecentBuyers();
   const names = designBuyers.map((b) => b.name);
   // CUS-ID2 (owner, 06-Aug-2026: "no recommendation, no guessing, only
@@ -458,7 +470,7 @@ async function sendCustomerStep(bot, chatId, state, note) {
     let canonical = null;
     try {
       const cust = await require('../services/customerEntity').resolve({ name: n });
-      if (cust && String(cust.status || 'Active').toLowerCase() === 'active') {
+      if (cust && String(cust.status || 'Active').toLowerCase() === 'active' && inScope(cust)) {
         canonical = String(cust.name || '').trim();
       }
     } catch (_) { /* registry down → no history chips, typed search still works */ }
@@ -530,15 +542,18 @@ async function getRecentBuyers() {
 }
 
 /** DSP-1 — one page of the full customer list (active first, 10 per page). */
-async function sendCustomerPage(bot, chatId, state, page) {
+async function sendCustomerPage(bot, chatId, state, page, everyone = false) {
   const PER = 10;
   let all = [];
+  // CUS-3 — the list is THIS store's customers, buyers first then 🆕, unless
+  // the 🌐 Everyone door was taken (an out-of-place sale is never blocked).
+  const customerScope = require('../services/customerScope');
+  const store = everyone ? '' : (state._custStore || '');
   try {
     // CUS-1 — active canonical customers only (Pending used to leak here).
-    all = (await require('../services/customerEntity').activeList())
-      .map((c) => c.name)
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b));
+    all = customerScope.forStore(await require('../services/customerEntity').activeList(), store)
+      .all.map((c) => ({ name: c.name, label: customerScope.chipLabel(c) }))
+      .filter((c) => c.name);
   } catch (e) {
     logger.warn(`DSP-1 customer list failed: ${e.message}`);
   }
@@ -550,12 +565,15 @@ async function sendCustomerPage(bot, chatId, state, page) {
   }
   const pages = Math.max(1, Math.ceil(all.length / PER));
   const p = Math.min(Math.max(0, page), pages - 1);
-  state._custPage = all.slice(p * PER, (p + 1) * PER);
-  const rows = state._custPage.map((n, i) => [{ text: `👤 ${n.slice(0, 40)}`, callback_data: wizCb(state, `cust:a:${i}`) }]);
+  const slice = all.slice(p * PER, (p + 1) * PER);
+  state._custPage = slice.map((c) => c.name);
+  const rows = slice.map((c, i) => [{ text: c.label.slice(0, 42), callback_data: wizCb(state, `cust:a:${i}`) }]);
   const nav = [];
-  if (p > 0) nav.push({ text: '⬅ Prev', callback_data: wizCb(state, `cust:all:${p - 1}`) });
-  if (p < pages - 1) nav.push({ text: 'Next ➡', callback_data: wizCb(state, `cust:all:${p + 1}`) });
+  const pageCb = (n) => wizCb(state, `cust:${everyone ? 'every' : 'all'}:${n}`);
+  if (p > 0) nav.push({ text: '⬅ Prev', callback_data: pageCb(p - 1) });
+  if (p < pages - 1) nav.push({ text: 'Next ➡', callback_data: pageCb(p + 1) });
   if (nav.length) rows.push(nav);
+  if (!everyone && store) rows.push([{ text: '🌐 Everyone', callback_data: wizCb(state, 'cust:every:0') }]);
   rows.push([{ text: '⬅ Back', callback_data: wizCb(state, 'cust:back') }]);
   await renderWizard(bot, chatId, state,
     `${wizHeader(state)}\n📋 *All customers* (page ${p + 1}/${pages}) — or reply with a name to search.${TYPED_NOTE}`,
@@ -1057,6 +1075,11 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
     if (rest.startsWith('all:')) {
       await ack();
       await sendCustomerPage(bot, chatId, state, Number(rest.slice(4)) || 0);
+      return true;
+    }
+    if (rest.startsWith('every:')) {
+      await ack();
+      await sendCustomerPage(bot, chatId, state, Number(rest.slice(6)) || 0, true);
       return true;
     }
     if (rest.startsWith('a:')) {

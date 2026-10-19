@@ -182,7 +182,7 @@ test('the bill submits the sale, carrying the picked seller and tapped date', as
   // CARD-6 — the tally rides the header once; each design its own line.
   assert.match(adminText, /🧾 Sale · Kano office · 2t · 60 yd\n/);
   assert.match(adminText, /🧑 Abdul/);
-  assert.match(adminText, /\n77014 · 1t · 30 yd\n Shade 11\n {2}1100\/1 · 30 yd/);
+  assert.match(adminText, /\n77014 · 1t · 30 yd\n Shade 11\n {2}\d\. 1100\/1 · 30 yd/);
   assert.ok(!/Σ |#11|\d+ bale/.test(adminText), 'no Σ line, no # link, no bale count');
   assert.match(adminText, /Sent for approval/, 'no "requires admin approval" boilerplate');
   const photos = bot.calls.filter((c) => c.method === 'sendPhoto' && String(c.args.chatId) === '777');

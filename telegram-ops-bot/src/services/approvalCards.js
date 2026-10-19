@@ -307,6 +307,12 @@ async function buildSaleCard(p) {
   const several = groupKeys.length > 1;
   // VRF-5 — the bill's order and the per-line ✅ / 🔴 from the saved check.
   const marks = billMarks(p.docVerify, p.marksOffAbovePct);
+  // CARD-7 (owner, 19-Oct-2026: "I also want a serial number") — one running
+  // count down the card across every group, single digits padded with a
+  // figure space so the dots line up under a two-digit count.
+  const width = String(items.length).length;
+  let serial = 0;
+  const serialOf = () => `${String(++serial).padStart(width, '\u2007')}. `;
   let first = true;
   for (const gk of groupKeys) {
     const dKey = gk.startsWith('d:') ? gk.slice(2) : '';
@@ -337,7 +343,7 @@ async function buildSaleCard(p) {
         const parts = [itemToken(it)];
         if (Number(it.yards) > 0) parts.push(`${fmtQty(it.yards)} yd`);
         if (!oneStore && it.warehouse) parts.push(String(it.warehouse));
-        text += `\n  ${parts.join(' · ')}${it.noStock ? ' ⚠️' : ''}${marks.markOf(it.packageNo)}`;
+        text += `\n  ${serialOf()}${parts.join(' · ')}${it.noStock ? ' ⚠️' : ''}${marks.markOf(it.packageNo)}`;
       }
     }
   }

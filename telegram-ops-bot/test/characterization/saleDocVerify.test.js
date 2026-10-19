@@ -239,14 +239,14 @@ test('CARD-3: designs grouped, shades folded, each noun said once', async () => 
     '',
     '77014 · 2B · 300 yd',
     ' Shade 1',
-    '  836 · 150 yd',
+    '  1. 836 · 150 yd',
     ' Shade 2',
-    '  844 · 150 yd',
+    '  2. 844 · 150 yd',
     '77016 · 2B · 300 yd',
     ' Shade 1',
-    '  879 · 150 yd',
+    '  3. 879 · 150 yd',
     ' Shade 2',
-    '  881 · 150 yd',
+    '  4. 881 · 150 yd',
   ].join('\n'));
   // The point of CARD-3, kept by CARD-6: the nouns "bale" and "than" never
   // appear — the B / t tally and the number lines carry them; "shade" only
@@ -262,7 +262,7 @@ test('CARD-3: designs grouped, shades folded, each noun said once', async () => 
       { packageNo: '896', design: '77016', shade: '5', thans: 2, yards: 60 },
     ],
   });
-  assert.equal(single, '🧾 Sale · 2B · 115 yd\n👤 X\n\n77016\n Shade 2\n  897 · 55 yd\n Shade 5\n  896 · 60 yd', 'one design head, sorted by shade');
+  assert.equal(single, '🧾 Sale · 2B · 115 yd\n👤 X\n\n77016\n Shade 2\n  1. 897 · 55 yd\n Shade 5\n  2. 896 · 60 yd', 'one design head, sorted by shade');
 });
 
 /* ── VRF-1b: the partial-sale false-mismatch class (owner, 29-Jul) ────── */

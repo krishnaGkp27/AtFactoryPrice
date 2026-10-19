@@ -426,6 +426,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // same-numbered duplicate elsewhere can never be flipped by this sale.
     // Pre-TRF-INT4 pending rows carry no warehouse → legacy unscoped match.
     const result = await stockEngine.sellThan(aj.packageNo, aj.thanNo, aj.customer, aj.salesDate, { warehouse: aj.warehouse }, { event: 'sale', approvalId: requestId, adminId: approvedBy });
+    if (result) await require('./customerScope').noteSale({ name: aj.customer, stores: [aj.warehouse], soldDate: aj.salesDate }); // CUS-3
     if (!result) return { ok: false, message: 'Than not found or no longer available.' };
     const pricePerYard = getPricePerYard(enrichment, aj.design);
     // QTA-2 review — the rate stamp is a WRITE after the flip: a refusal here
@@ -465,6 +466,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   } else if (aj.action === 'sell_package') {
     // TRF-INT4 — see sell_than note above.
     const results = await stockEngine.sellPackage(aj.packageNo, aj.customer, aj.salesDate, { warehouse: aj.warehouse }, { event: 'sale', approvalId: requestId, adminId: approvedBy });
+    if (Array.isArray(results) && results.length) await require('./customerScope').noteSale({ name: aj.customer, stores: [aj.warehouse], soldDate: aj.salesDate }); // CUS-3
     if (!results.length) return { ok: false, message: 'Bale already sold.' };
     const pricePerYard = getPricePerYard(enrichment, aj.design);
     if (pricePerYard > 0) {
@@ -1720,6 +1722,14 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         failedItems.push(shape(it, reason));
       }
       for (const a of sold.applied) count(a.rows, a.item.packageNo);
+      // CUS-3 — the stores this sale shipped from join the customer's cell;
+      // the first sale is stamped once. Best-effort, after the stock write.
+      if (sold.applied.length) {
+        await require('./customerScope').noteSale({
+          name: aj.customer, soldDate: aj.salesDate,
+          stores: sold.applied.map((a) => (a.item && a.item.warehouse) || aj.warehouse).filter(Boolean),
+        });
+      }
       // APF-1 (owner report, 08-Aug-2026): when NOTHING flipped, this must
       // not fall through to the money footer — it used to post the payment,
       // issue a fresh invoice and append a qty-0 Transactions row for a sale

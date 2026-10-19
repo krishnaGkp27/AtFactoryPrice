@@ -28,7 +28,24 @@ function parse(r, rowIndex) {
     // targets write here). Stored as a JSON array string; parsed defensively
     // because the column is hand-editable like every sheet cell.
     aliases: parseAliases(r[12]),
+    // CUS-3 (owner, 19-Oct-2026) — column N `stores`: the stores this customer
+    // buys from, comma-separated, declared or stamped at an approved sale;
+    // column O `first_sale_at`: stamped once at the first approved sale.
+    // Pickers read these two cells and never the stock sheet.
+    stores: parseCsv(r[13]),
+    first_sale_at: str(r[14]),
   };
+}
+
+/** `Lagos, IDUMOTA` → ['Lagos', 'IDUMOTA'] (trimmed, de-duplicated, case kept). */
+function parseCsv(raw) {
+  const seen = new Set();
+  return str(raw).split(',').map((s) => s.trim()).filter((s) => {
+    const k = s.toUpperCase();
+    if (!s || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 function parseAliases(raw) {
@@ -50,7 +67,7 @@ function parseAliases(raw) {
 // in-bot change is visible immediately, and a manual sheet edit within 30s.
 const CACHE_TTL_MS = 30 * 1000;
 const _cache = ttlCache(CACHE_TTL_MS, async () => {
-  const rows = await sheets.readRange(SHEET, 'A2:M');
+  const rows = await sheets.readRange(SHEET, 'A2:O');
   return rows.map((r, i) => parse(r, i + 2)).filter((c) => c.customer_id || c.name);
 });
 
@@ -118,8 +135,28 @@ async function append(customer) {
     customer.category || 'Retail', customer.credit_limit || 0, customer.outstanding_balance || 0,
     customer.payment_terms || 'COD', customer.notes || '', customer.status || 'Active',
     now, now, JSON.stringify(customer.aliases || []),
+    (customer.stores || []).join(', '), customer.first_sale_at || '',
   ]]);
   invalidateCache();
+}
+
+/** CUS-3 — rewrite column N alone (the stores this customer buys from). */
+async function setStores(customerId, stores) {
+  const c = await findById(customerId);
+  if (!c) return false;
+  await sheets.updateRange(SHEET, `N${c.rowIndex}`, [[(stores || []).join(', ')]]);
+  invalidateCache();
+  return true;
+}
+
+/** CUS-3 — stamp column O once; a later call never moves an earlier date. */
+async function noteFirstSale(customerId, isoDate) {
+  const c = await findById(customerId);
+  if (!c) return false;
+  if (c.first_sale_at) return false;
+  await sheets.updateRange(SHEET, `O${c.rowIndex}`, [[String(isoDate || '').slice(0, 10)]]);
+  invalidateCache();
+  return true;
 }
 
 async function updateOutstanding(customerId, newBalance) {
@@ -137,11 +174,12 @@ async function updateRow(customerId, fields) {
   if (!c) return false;
   const now = new Date().toISOString();
   const updated = { ...c, ...fields, updated_at: now };
-  await sheets.updateRange(SHEET, `A${c.rowIndex}:M${c.rowIndex}`, [[
+  await sheets.updateRange(SHEET, `A${c.rowIndex}:O${c.rowIndex}`, [[
     updated.customer_id, updated.name, updated.phone, updated.address,
     updated.category, updated.credit_limit, updated.outstanding_balance,
     updated.payment_terms, updated.notes, updated.status, updated.created_at, now,
     JSON.stringify(updated.aliases || []),
+    (updated.stores || []).join(', '), updated.first_sale_at || '',
   ]]);
   invalidateCache();
   return true;
@@ -149,5 +187,5 @@ async function updateRow(customerId, fields) {
 
 module.exports = {
   getAll, findById, findByName, searchByName,
-  append, updateOutstanding, updateRow, invalidateCache, SHEET,
+  append, updateOutstanding, updateRow, setStores, noteFirstSale, invalidateCache, SHEET,
 };

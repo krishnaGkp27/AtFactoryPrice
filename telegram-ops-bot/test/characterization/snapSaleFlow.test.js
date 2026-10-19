@@ -84,7 +84,7 @@ test('DSP-1: photo → match card with OCR read-back → straight to Submit, NO 
   assert.match(adminMsgs, /🧾 Sale · Snap · IDUMOTA · 1B · 60 yd\n/, 'gold-standard headline + store + the one tally');
   assert.match(adminMsgs, /🧑 Yarima/);
   // CARD-5 — a whole-bale sale tallies as 1B. CARD-6 — one bale per line.
-  assert.match(adminMsgs, /\n77016\n Shade 5\n {2}896 · 60 yd/, 'design, shade heading, the bale with its yards');
+  assert.match(adminMsgs, /\n77016\n Shade 5\n {2}1\. 896 · 60 yd/, 'design, shade heading, the bale with its yards');
   assert.ok(!/Σ |#5 →|×2|📎/.test(adminMsgs), 'CARD-6: no Σ line, no # link, no ×N, no 📎 line');
   const adminPhotos = bot.calls.filter((c) => c.method === 'sendPhoto' && String(c.args.chatId) === '777');
   assert.equal(adminPhotos.length, 1, 'label photo forwarded to the admin');
@@ -144,7 +144,7 @@ test('SNAP-3 + DSP-1: PDF batch → review card → ONE sale_bundle, no customer
   // Admin side: full card + the PDF forwarded as a document.
   const adminMsgs = bot.calls.filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === '777').map((c) => c.args.text).join('\n').replace(/\\/g, '');
   assert.match(adminMsgs, /🧾 Sale · Snap PDF[^\n]* · 2B · 115 yd\n/);
-  assert.match(adminMsgs, /\n77016\n Shade 2\n {2}897 · 55 yd\n Shade 5\n {2}896 · 60 yd\n\n⚠️ Skipped from the PDF \(1\): 999 11111/, 'shades in order, one bale per line, the skipped note set apart');
+  assert.match(adminMsgs, /\n77016\n Shade 2\n {2}1\. 897 · 55 yd\n Shade 5\n {2}2\. 896 · 60 yd\n\n⚠️ Skipped from the PDF \(1\): 999 11111/, 'shades in order, one bale per line, the skipped note set apart');
   const adminDocs = bot.calls.filter((c) => c.method === 'sendDocument' && String(c.args.chatId) === '777');
   assert.equal(adminDocs.length, 1, 'PDF forwarded to the admin');
   assert.ok(!sessionStore.get('4242'), 'session cleared');

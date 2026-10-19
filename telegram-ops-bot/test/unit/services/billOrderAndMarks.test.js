@@ -55,7 +55,7 @@ test('the card: bill order, ✅ on confirmed, 🔴 on differ and missing (missin
     items: [...ITEMS, { packageNo: '1100', thanNo: 1, type: 'than', design: '77014', shade: '11', thans: 1, yards: 30, warehouse: 'IDUMOTA' }],
     docVerify, marksOffAbovePct: 75,
   });
-  assert.match(text, /\n44200 · 4B · 600 yd\n Shade BLACK\n {2}483 · 150 yd ✅\n {2}577 · 150 yd 🔴\n {2}490 · 150 yd ✅\n Shade WHITE\n {2}526 · 150 yd 🔴\n77014 · 1t · 30 yd\n Shade 11\n {2}1100\/1 · 30 yd$/, text);
+  assert.match(text, /\n44200 · 4B · 600 yd\n Shade BLACK\n {2}1\. 483 · 150 yd ✅\n {2}2\. 577 · 150 yd 🔴\n {2}3\. 490 · 150 yd ✅\n Shade WHITE\n {2}4\. 526 · 150 yd 🔴\n77014 · 1t · 30 yd\n Shade 11\n {2}5\. 1100\/1 · 30 yd$/, text);
 });
 
 test('above the threshold the marks go off and the check line says so; at exactly the threshold they stay', async () => {

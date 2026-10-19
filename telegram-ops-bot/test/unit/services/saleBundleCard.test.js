@@ -52,7 +52,7 @@ test('a bare bale number becomes design, shade, warehouse and quantities', async
   });
   // CARD-6 — one fact per line, the tally once on the first line, the
   // catalogue colour on the shade heading, one bale per line with its yards.
-  assert.match(text, /^🧾 Sale · IDUMOTA · 1B · 150 yd\n🧑 Abdul · 📅 05-Aug-2026\n\n9060-A\n 01 - Black\n {2}516 · 150 yd$/);
+  assert.match(text, /^🧾 Sale · IDUMOTA · 1B · 150 yd\n🧑 Abdul · 📅 05-Aug-2026\n\n9060-A\n 01 - Black\n {2}1\. 516 · 150 yd$/);
   assert.ok(!/👤|Σ |×3|📎|#01|🧵|@/.test(text), 'no empty customer line, no tally repeat, no ×N, no 📎 line, no # or @ links');
   // CARD-5 — a whole-bale item still tallies as its printed number: 1B, not
   // "3 than · 1 bale".
@@ -68,7 +68,7 @@ test('a number living under TWO designs stays bare — never guessed (§2)', asy
     action: 'sale_bundle', items: [{ type: 'package', packageNo: '516' }], totalYards: 150,
   });
   assert.match(text, /\n\nnot resolved — this number lives under more than one design/, 'no design attached');
-  assert.match(text, /\n {2}516/, 'the number still shows');
+  assert.match(text, /\n {2}1\. 516/, 'the number still shows');
   assert.ok(!text.includes('9060-A') && !text.includes('77008'), 'no design was invented');
   assert.match(text, /Queued total: 150 yards/, 'the requester’s figure still shows');
 });
@@ -83,7 +83,7 @@ test('a single-than sale names its than', async () => {
   });
   // CARD-6 — the than rides the bale in the grammar Abdul already types.
   // CARD-5 — and a than item tallies in thans: 1t, never "1 bale".
-  assert.match(text, /^🧾 Sale · IDUMOTA · 1t · 50 yd\n\n9060-A\n 01 - Black\n {2}516\/2 · 50 yd$/);
+  assert.match(text, /^🧾 Sale · IDUMOTA · 1t · 50 yd\n\n9060-A\n 01 - Black\n {2}1\. 516\/2 · 50 yd$/);
 });
 
 test('CARD-5: the tally speaks each item’s packaging — t, B, and B + t', async () => {
@@ -102,7 +102,7 @@ test('CARD-5: the tally speaks each item’s packaging — t, B, and B + t', asy
       { type: 'than', packageNo: '700', thanNo: 2 },
     ],
   });
-  assert.match(thanOnly, /^🧾 Sale · Kano office · 2t · 100 yd\n\n77014\n Shade 11\n {2}700\/1 · 50 yd\n {2}700\/2 · 50 yd$/, 'no catalogue entry → "Shade 11", never a guessed colour');
+  assert.match(thanOnly, /^🧾 Sale · Kano office · 2t · 100 yd\n\n77014\n Shade 11\n {2}1\. 700\/1 · 50 yd\n {2}2\. 700\/2 · 50 yd$/, 'no catalogue entry → "Shade 11", never a guessed colour');
   assert.ok(!/\d+ bale/.test(thanOnly), 'no "· N bale" tail on a than sale');
   // Whole-bale: distinct printed numbers as B.
   const wholeBale = await approvalCards.buildSaleBundleCard({
@@ -114,7 +114,7 @@ test('CARD-5: the tally speaks each item’s packaging — t, B, and B + t', asy
   });
   // Two stores → no store on the header, each bale names its own; several
   // designs → each design line carries its own tally under the total.
-  assert.match(wholeBale, /^🧾 Sale · 2B · 250 yd\n\n9060-A · 1B · 100 yd\n 01 - Black\n {2}516 · 100 yd · IDUMOTA\n77014 · 1B · 150 yd\n Shade 11\n {2}700 · 150 yd · Kano office$/);
+  assert.match(wholeBale, /^🧾 Sale · 2B · 250 yd\n\n9060-A · 1B · 100 yd\n 01 - Black\n {2}1\. 516 · 100 yd · IDUMOTA\n77014 · 1B · 150 yd\n Shade 11\n {2}2\. 700 · 150 yd · Kano office$/);
   // Mixed: both units, each speaking its own goods.
   const mixed = await approvalCards.buildSaleBundleCard({
     action: 'sale_bundle',
@@ -125,7 +125,7 @@ test('CARD-5: the tally speaks each item’s packaging — t, B, and B + t', asy
   });
   assert.match(mixed, /^🧾 Sale · 1B \+ 1t · 150 yd\n/);
   assert.match(mixed, /\n9060-A · 1B · 100 yd\n/);
-  assert.match(mixed, /\n77014 · 1t · 50 yd\n Shade 11\n {2}700\/3 · 50 yd · Kano office$/);
+  assert.match(mixed, /\n77014 · 1t · 50 yd\n Shade 11\n {2}2\. 700\/3 · 50 yd · Kano office$/);
 });
 
 test('an Inventory outage degrades to the bare list — the card never fails', async () => {
@@ -133,7 +133,7 @@ test('an Inventory outage degrades to the bare list — the card never fails', a
   const text = await approvalCards.buildSaleBundleCard({
     action: 'sale_bundle', items: [{ type: 'package', packageNo: '516' }], totalYards: 150,
   });
-  assert.match(text, /\n {2}516/);
+  assert.match(text, /\n {2}1\. 516/);
   assert.match(text, /Queued total: 150 yards/);
 });
 
@@ -213,7 +213,7 @@ test('VRF-4: the single-bale (sell_package) card carries the same 🔬 line and 
   });
   // VRF-5 — one bale, one miss: 100% flagged is above the 75% cut, so the
   // line itself is unmarked and the check line says why.
-  assert.match(checked, /\n {2}516 · 50 yd\n🔬 Bill check: 0 confirmed · 0 differ · 1 missing · 0 extra ⚠️ · marks off, compare by hand\n {2}❌ 516 not on bill/, checked);
+  assert.match(checked, /\n {2}1\. 516 · 50 yd\n🔬 Bill check: 0 confirmed · 0 differ · 1 missing · 0 extra ⚠️ · marks off, compare by hand\n {2}❌ 516 not on bill/, checked);
   // The line sits AFTER the goods, like the bundle card.
   assert.ok(checked.indexOf('516 · 50 yd') < checked.indexOf('🔬'), 'verdict follows the goods');
 });

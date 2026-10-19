@@ -51,7 +51,7 @@ test('the seller confirm card (Sell Bale door) is CARD-3, not the old verbose bl
     sale_doc_file_id: 'bill-1',
   });
   assertCard3(text, 'buildSummary');
-  assert.match(text, /\n\n9060-B\n Shade 3\n {2}1003 · 60 yd$/, 'design group heading, shade heading, one bale per line');
+  assert.match(text, /\n\n9060-B\n Shade 3\n {2}1\. 1003 · 60 yd$/, 'design group heading, shade heading, one bale per line');
   assert.ok(!/📎|👤/.test(text), 'CARD-6: no 📎 line (the button / forwarded file says it), no customer line until there is one');
 });
 
