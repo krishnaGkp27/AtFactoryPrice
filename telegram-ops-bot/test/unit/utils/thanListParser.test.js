@@ -108,3 +108,27 @@ test('"and" separates bales exactly like a comma', () => {
     { packageNo: '1100', thans: [1] }, { packageNo: '1091', thans: [2] },
   ]);
 });
+
+// RET-5 — the typed RETURN line shares the grammar; a bare-only list qualifies.
+const { looksLikeReturnList } = require('../../../src/utils/thanListParser');
+
+test('looksLikeReturnList: a "Return …" line with a number, bare bales included', () => {
+  assert.equal(looksLikeReturnList('Return 771, 779, 6189/5'), true);
+  assert.equal(looksLikeReturnList('return 771'), true);
+  assert.equal(looksLikeReturnList('Return 771 x3, 6189/1+2'), true);
+  assert.equal(looksLikeReturnList('Return than 2 from Bale 5801'), false, 'a worded line is the intent parser\'s');
+  assert.equal(looksLikeReturnList('Return 771 from Kafaya'), false);
+  assert.equal(looksLikeReturnList('returned goods from kafaya'), false);
+  assert.equal(looksLikeReturnList('Return the goods'), false);
+  assert.equal(looksLikeReturnList('sell 771'), false);
+});
+
+test('parseThanList strips the return verb and reads bare bales, thans and x-counts', () => {
+  const out = parseThanList('Return 771, 779, 6189/5, 6210/1+2, 700 x3');
+  assert.deepEqual(out.items, [
+    { packageNo: '771' }, { packageNo: '779' }, { packageNo: '6189', thans: [5] },
+    { packageNo: '6210', thans: [1, 2] }, { packageNo: '700', count: 3 },
+  ]);
+  assert.equal(out.warehouseHint, '');
+  assert.equal(parseThanList('Return 771 from Kafaya').warehouseHint, 'Kafaya', 'a trailing name surfaces so the flow can say it ignored it');
+});

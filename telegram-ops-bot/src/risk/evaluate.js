@@ -19,6 +19,9 @@ const WRITE_ACTIONS = [
   // several ticked thans of one bale). Tap-flow only: it is deliberately
   // absent from the intentParser enum (smoke S4 lints enum -> policy).
   'return_than', 'return_package', 'return_thans', 'revert_sale_bundle',
+  // RET-5 — the typed multi-bale return (one request, many bales, each
+  // than credited to its own buyer). Tap/typed-local only — not in the enum.
+  'return_bundle',
   'update_price',
   'add', 'add_stock',
   'record_payment',
@@ -77,6 +80,7 @@ const ALWAYS_APPROVAL_ACTIONS = [
   'sell_than', 'sell_package', 'sell_batch', 'sell_mixed', 'sell',
   // RET-4 — the multi-than return card (one request, several thans).
   'return_than', 'return_package', 'return_thans', 'revert_sale_bundle',
+  'return_bundle', // RET-5
   'record_payment', 'update_price', 'supply_request',
   // P2 — dual-admin gate for warehouse structural changes.
   'add_warehouse', 'rename_warehouse',
@@ -193,6 +197,7 @@ const DUAL_ADMIN_ACTIONS = [
   'give_sample',
   // RET-4 — the multi-than return card (one request, several thans).
   'return_than', 'return_package', 'return_thans', 'revert_sale_bundle',
+  'return_bundle', // RET-5
   'add', 'add_stock',
   'transfer_than', 'transfer_package', 'transfer_batch',
   'receive_goods', 'bulk_receive_goods',
@@ -300,7 +305,7 @@ async function evaluate(params) {
 function formatAction(action) {
   const map = {
     sell_than: 'sale', sell_package: 'sale', sell_batch: 'sale', sell_mixed: 'sale', sell: 'sale',
-    return_than: 'return', return_package: 'return', return_thans: 'return', revert_sale_bundle: 'sale revert',
+    return_than: 'return', return_package: 'return', return_thans: 'return', return_bundle: 'return', revert_sale_bundle: 'sale revert',
     update_price: 'price update', add: 'stock addition', add_stock: 'stock addition',
     record_payment: 'payment', add_customer: 'customer creation', add_contact: 'contact creation',
     transfer_than: 'transfer', transfer_package: 'transfer', transfer_batch: 'transfer',

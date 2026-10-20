@@ -8190,7 +8190,8 @@ async function runS54() {
     const retEmits = execBody.match(/erpEmitAsync\('return', \{[^\n]*\}\)/g) || [];
     // Both approved-return executors post through the propagating emitter and carry a rate.
     // RET-4 — a THIRD return executor (`return_thans`, the multi-than card).
-    const retAsync = retEmits.length === 3 && retEmits.every((e) => /pricePerYard: credit\.rate/.test(e));
+    // RET-5 — a FOURTH (`return_bundle`, the typed multi-bale return, one emit per buyer).
+    const retAsync = retEmits.length === 4 && retEmits.every((e) => /pricePerYard: credit\.rate/.test(e));
     // No approved return still fires the fire-and-forget emit (the ₦0 path).
     const retNoSilent = !/erpBus\.emit\('return'/.test(execBody);
     // Zero rate is reported, never swallowed.
@@ -8198,7 +8199,7 @@ async function runS54() {
     // The credit is stated on the approve reply.
     const retNoteShown = /result\.creditNote/.test(aeSrc);
     // The date slot reaches the movement row.
-    const retDated = (execBody.match(/on: aj\.returnedOn \|\| undefined/g) || []).length === 3;
+    const retDated = (execBody.match(/on: aj\.returnedOn \|\| undefined/g) || []).length === 4;
     const inv = require('../src/services/inventoryService');
     const rc = inv._internals && inv._internals.returnCreditFor;
     const rcMixed = rc && rc({}, [{ yards: 30, pricePerYard: 2500 }, { yards: 20, pricePerYard: 3000 }]);

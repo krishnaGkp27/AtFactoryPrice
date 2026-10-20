@@ -32,7 +32,7 @@
  */
 
 /** Words that may appear around the numbers and carry no meaning here. */
-const NOISE = /\b(sell|sale|than|thans|from|package|packages|bale|bales|pkg|no|number|to|in|at|of)\b/gi;
+const NOISE = /\b(sell|sale|return|returns|than|thans|from|package|packages|bale|bales|pkg|no|number|to|in|at|of)\b/gi;
 
 /**
  * True when the text looks like the sell shorthand (cheap pre-check so the
@@ -46,6 +46,20 @@ function looksLikeThanList(raw) {
   // At least one `<bale>/<than>` or `<bale> x<n>` token — a bare
   // "sell 1100" is left to the existing whole-bale typed path.
   return /\d+\s*\/\s*\d/.test(t) || /\d+\s*[xX]\s*\d+/.test(t);
+}
+
+/**
+ * RET-5 — a typed RETURN line: `Return 771, 779, 6189/5`. Unlike the sell
+ * line a bare-only list qualifies (every typed return goes through the
+ * review card — owner ruling R4, 20-Oct-2026), so the only requirement is
+ * the verb and at least one number.
+ */
+function looksLikeReturnList(raw) {
+  const t = String(raw || '').trim();
+  // Only the pure list: numbers, commas, `/`, `+`, `-`, `x`. A worded line
+  // ("Return than 2 from Bale 5801") stays with the intent parser, which
+  // redirects into the same card (R4).
+  return /^return\s+\d[\d\s,/+x-]*$/i.test(t);
 }
 
 function parseThanSpec(spec) {
@@ -103,7 +117,7 @@ function parseThanList(raw) {
   let commaThanHint = false;
   let ignoredDate = '';
 
-  const body = text.replace(/^sell\b/i, ' ');
+  const body = text.replace(/^(?:sell|return)\b/i, ' ');
   const segments = body.split(/,|\band\b/i).map((s) => s.trim()).filter(Boolean);
 
   for (const seg of segments) {
@@ -201,4 +215,4 @@ function parseThanList(raw) {
   return { items, warehouseHint, bad, commaThanHint, ignoredCustomer, ignoredDate };
 }
 
-module.exports = { parseThanList, looksLikeThanList, _internals: { parseThanSpec } };
+module.exports = { parseThanList, looksLikeThanList, looksLikeReturnList, _internals: { parseThanSpec } };

@@ -68,6 +68,7 @@ const ACTION_LABELS = {
   return_package: 'return bale',
   // RET-4 — the multi-than return card; the tile says ↩️ Return goods.
   return_thans: 'return goods',
+  return_bundle: 'return goods',
   transfer_package: 'transfer bale',
 };
 
@@ -585,6 +586,118 @@ async function buildReturnThansCard(aj) {
   return text;
 }
 
+/* ── RET-5 — the typed multi-bale return (`return_bundle`) ─────────────────
+ *
+ * ONE goods block shared by the flow's review / confirm cards and the admin
+ * card (the CART-PEEK principle: the seller and the signer read the same
+ * lines). Grouped by the BUYER the sale record names (a line may return
+ * several customers' goods — owner, 20-Oct-2026: "don't make it bound to
+ * return from single customer only"), then design → shade heading with its
+ * catalogue colour (CARD-6) → one line per whole bale or per than, every
+ * line serial-numbered across the card (CARD-7).
+ */
+const uniqInOrder = (arr) => [...new Set(arr)];
+const buyerKey = (it) => String(it.customerId || '').trim()
+  || String(it.customer || it.soldTo || '').trim().toUpperCase();
+
+/**
+ * @param {object} aj the `return_bundle` actionJSON (`items`, `groups`, `wholeBales`)
+ * @param {(s:string)=>string} [esc] escaper for the caller's parse mode (plain by default)
+ * @returns {Promise<string[]>} the goods lines, no trailing newline
+ */
+async function returnBundleLines(aj, esc = (s) => String(s)) {
+  const items = Array.isArray(aj && aj.items) ? aj.items : [];
+  if (!items.length) return [];
+  const groups = Array.isArray(aj.groups) && aj.groups.length
+    ? aj.groups
+    : uniqInOrder(items.map(buyerKey)).map((k) => {
+      const first = items.find((it) => buyerKey(it) === k) || {};
+      return { customer: first.customer || first.soldTo || '', customerId: first.customerId || '' };
+    });
+  const whole = new Set((Array.isArray(aj.wholeBales) ? aj.wholeBales : []).map(String));
+  const names = new Map();
+  for (const design of uniqInOrder(items.map((it) => String(it.design || '')))) {
+    const first = items.find((it) => String(it.design || '') === design) || {};
+    names.set(design, await shadeNamesFor(design, first.arrivalBatch));
+  }
+  const width = String(items.length).length;
+  let serial = 0;
+  const serialOf = () => `${String(++serial).padStart(width, ' ')}. `;
+  const yardsOf = (list) => list.reduce((s, it) => s + (Number(it.yards) || 0), 0);
+  const lines = [];
+  for (const g of groups) {
+    const gKey = buyerKey(g);
+    const mine = items.filter((it) => buyerKey(it) === gKey);
+    if (!mine.length) continue;
+    lines.push(`👤 ${esc(g.customer || '(no customer recorded)')}${g.qty ? ` · ${g.qty}` : ''} · ${fmtQty(yardsOf(mine))} yd`);
+    for (const design of uniqInOrder(mine.map((it) => String(it.design || '')))) {
+      lines.push(esc(design || '—'));
+      const dm = mine.filter((it) => String(it.design || '') === design);
+      for (const sh of uniqInOrder(dm.map((it) => String(it.shade || '')))) {
+        lines.push(` ${esc(shadeHeading(sh, names.get(design) || new Map()))}`);
+        const sm = dm.filter((it) => String(it.shade || '') === sh);
+        for (const pkg of uniqInOrder(sm.map((it) => String(it.packageNo)))) {
+          const pm = sm.filter((it) => String(it.packageNo) === pkg);
+          const allOfBale = items.filter((it) => String(it.packageNo) === pkg);
+          const isWhole = whole.has(pkg)
+            && allOfBale.every((it) => buyerKey(it) === gKey && String(it.shade || '') === sh);
+          if (isWhole) {
+            lines.push(`  ${serialOf()}${esc(pkg)} · ${fmtQty(yardsOf(pm))} yd`);
+          } else {
+            for (const it of pm) lines.push(`  ${serialOf()}${esc(pkg)}/${esc(it.thanNo)} · ${fmtQty(it.yards)} yd`);
+          }
+        }
+      }
+    }
+  }
+  return lines;
+}
+
+const RETURN_COND_SHORT = { good: '✅ Good', damaged: '⚠️ Damaged', cut: '⚠️ Cut / short', other: '⚠️ Condition noted' };
+
+/** The admin card for a `return_bundle` request (DM, inbox, hourly reminder). */
+async function buildReturnBundleCard(aj) {
+  const items = Array.isArray(aj.items) ? aj.items : [];
+  const groups = Array.isArray(aj.groups) ? aj.groups : [];
+  const stores = (Array.isArray(aj.stores) && aj.stores.length
+    ? aj.stores : uniqInOrder(items.map((it) => String(it.warehouse || '')))).filter(Boolean);
+  const yards = Number(aj.yards) || items.reduce((s, it) => s + (Number(it.yards) || 0), 0);
+  let text = `↩️ Return${stores.length ? ` · ${stores.join(' + ')}` : ''}${aj.qty ? ` · ${aj.qty}` : ''}`
+    + ` · ${fmtQty(yards)} yd${groups.length > 1 ? ` · ${groups.length} customers` : ''}`;
+  const facts = [
+    aj.returnedOn ? `📅 ${fmtDate(aj.returnedOn)}` : '',
+    RETURN_COND_SHORT[aj.condition] || '',
+    aj.return_photo_file_id ? '📎 Photo attached' : '',
+  ].filter(Boolean);
+  if (facts.length) text += `\n${facts.join(' · ')}`;
+  const lines = await returnBundleLines(aj);
+  if (lines.length) text += `\n\n${lines.join('\n')}`;
+  text += '\n';
+  for (const g of groups) {
+    const amount = Math.round(Number(g.amount) || 0);
+    const who = g.customer || 'the buyer';
+    if (amount > 0) {
+      let line = `\n💰 ${who} ${money.sale(amount)}`;
+      try {
+        const { outstandingAsOfToday } = await require('./accountingService').getCustomerLedger(g.customer);
+        const now = Number(outstandingAsOfToday);
+        if (Number.isFinite(now)) line += ` · outstanding ${money.sale(now)} → ${money.sale(now - amount)}`;
+      } catch (_) { /* the balance is omitted, never guessed */ }
+      if (Number(g.noRateThans) > 0) line += ` · ⚠️ ${g.noRateThans} than(s) without a rate — no credit for them`;
+      text += line;
+    } else {
+      text += `\n⚠️ ${who}: no rate on record — the stock comes back, but NO credit will post.`;
+    }
+  }
+  if (aj.condition && aj.condition !== 'good') {
+    text += `\n${RETURN_COND_SHORT[aj.condition] || '⚠️ Condition noted'}${aj.conditionNote ? ` — ${aj.conditionNote}` : ''}`;
+  }
+  const signed = Array.isArray(aj.approvals) ? aj.approvals.length : 0;
+  text += `\n🔏 Dual-admin return — ${signed} signed so far.`;
+  text += '\n⚠️ Reverses completed sales — verify the goods physically came back.';
+  return text;
+}
+
 /**
  * Card for a payment approval (dual-admin finance action) — shows the
  * customer's live outstanding balance and the before→after picture so the
@@ -1055,6 +1168,7 @@ async function buildCardFromActionJSON(aj, opts = {}) {
     // RET-4 — the second signer's inbox and the reminder sweep rebuild the
     // SAME card from the sheet row, than numbers and buyer included.
     if (aj.action === 'return_thans') return await buildReturnThansCard(aj);
+    if (aj.action === 'return_bundle') return await buildReturnBundleCard(aj); // RET-5
     if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj, opts);
     if (aj.action === 'supply_request') return buildSupplyRequestCard(aj);
     if (aj.action === 'add_contact') return buildAddContactCard(aj);
@@ -1177,6 +1291,10 @@ module.exports = {
   buildSellPackageCard,
   buildReturnCard,
   buildReturnThansCard,
+  returnBundleLines, // RET-5
+  shadeNamesFor,
+  shadeHeading,
+  buildReturnBundleCard,
   buildSaleBundleCard,
   buildAddContactCard,
   buildRemoveCustomerCard,

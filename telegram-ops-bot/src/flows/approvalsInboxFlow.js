@@ -91,7 +91,7 @@ const CATEGORIES = [
   { key: 'payments', label: '💳 Payments', actions: ['request_payment', 'register_payment_account'], dual: true },
   // RET-4 — `return_thans` (the multi-than return card) belongs here, not in
   // ❓ Other, and it is dual-admin like the rest of the family.
-  { key: 'returns', label: '↩️ Returns & reversals', actions: ['return_than', 'return_package', 'return_thans', 'revert_sale_bundle'], dual: true },
+  { key: 'returns', label: '↩️ Returns & reversals', actions: ['return_than', 'return_package', 'return_thans', 'return_bundle', 'revert_sale_bundle'], dual: true },
   { key: 'people', label: '👥 People & access', actions: ['add_user', 'deactivate_user', 'promote_admin'], dual: true },
   { key: 'warehouse', label: '🏭 Warehouse & labels', actions: ['add_warehouse', 'rename_warehouse', 'set_unit_display', 'set_design_category'], dual: true },
   { key: 'samples', label: '🧪 Samples & marketing', actions: ['give_sample', 'catalog_loan', 'catalog_return', 'register_marketer', 'design_asset_upload'] },

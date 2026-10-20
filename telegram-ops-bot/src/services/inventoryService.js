@@ -685,6 +685,105 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       returnedOn: aj.returnedOn || '', photo: !!aj.return_photo_file_id,
       customer: returnCust.name, customerId: returnCust.id,
     }, approvedBy);
+  } else if (aj.action === 'return_bundle') {
+    // RET-5 — the typed multi-bale return: every than on the request is
+    // re-checked against the LIVE sheet (still sold, still to the buyer the
+    // card named), flipped one by one through the one return primitive, then
+    // booked ONCE PER BUYER (a Transactions row + a ledger credit at the rate
+    // each than was charged). A than sold on since, or already back, is
+    // skipped by name — nothing flipped, nothing credited for it.
+    const items = Array.isArray(aj.items) ? aj.items : [];
+    if (!items.length) return { ok: false, message: 'No thans on this return request.' };
+    const { norm: normName } = require('./customerEntity')._internals;
+    const keyOf = (pkg, than, wh) => `${String(pkg || '').trim().toUpperCase()}|${String(than || '').trim()}|${String(wh || '').trim().toUpperCase()}`;
+    const live = await inventoryRepository.getAll(true).catch(() => []);
+    const byKey = new Map();
+    for (const r of live) {
+      const k = keyOf(r.packageNo, r.thanNo, r.warehouse);
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(r);
+    }
+    const idCache = new Map();
+    const idOf = async (spelling) => {
+      const s = String(spelling || '').trim();
+      if (!s) return '';
+      if (!idCache.has(s)) {
+        try {
+          const c = await require('./customerEntity').resolve({ name: s });
+          idCache.set(s, c ? String(c.customer_id || '') : '');
+        } catch (_) { idCache.set(s, ''); }
+      }
+      return idCache.get(s);
+    };
+    const skipped = []; // [{ tok, why }]
+    const flipped = []; // [{ it, r }]
+    for (const it of items) {
+      const tok = `${it.packageNo}/${it.thanNo}`;
+      const cands = (byKey.get(keyOf(it.packageNo, it.thanNo, it.warehouse)) || [])
+        .filter((r) => !it.baleUid || !r.baleUid || String(r.baleUid) === String(it.baleUid));
+      if (!cands.length) { skipped.push({ tok, why: 'not found' }); continue; }
+      if (cands.length > 1) { skipped.push({ tok, why: 'sits in two containers here — the container is not on the request' }); continue; }
+      const row = cands[0];
+      if (String(row.status || '').toLowerCase() !== 'sold') { skipped.push({ tok, why: 'not sold — nothing flipped' }); continue; }
+      const wantName = normName(it.soldTo || it.customer || '');
+      let mine = normName(row.soldTo || '') === wantName;
+      if (!mine && it.customerId) mine = (await idOf(row.soldTo)) === String(it.customerId);
+      if (!mine) { skipped.push({ tok, why: `now sold to ${row.soldTo || 'someone else'}` }); continue; }
+      const r = await stockEngine.returnThan(row.packageNo, row.thanNo,
+        { warehouse: row.warehouse, on: aj.returnedOn || undefined, baleUid: row.baleUid },
+        { event: 'return', approvalId: requestId, adminId: approvedBy });
+      if (r && normName(r.soldToPrior || '') === normName(row.soldTo || '')) flipped.push({ it, r });
+      else skipped.push({ tok, why: r ? 'buyer changed mid-flight' : 'not sold — nothing flipped' });
+    }
+    if (!flipped.length) {
+      return {
+        ok: false,
+        message: 'Nothing on this return is still sold to the customers it names'
+          + `${skipped.length ? ` (${skipped.map((sk) => `${sk.tok}: ${sk.why}`).join('; ')})` : ''}.`,
+      };
+    }
+    const byBuyer = new Map();
+    for (const f of flipped) {
+      const k = String(f.it.customerId || '') || normName(f.it.customer || f.r.soldToPrior || '');
+      if (!byBuyer.has(k)) byBuyer.set(k, { name: f.it.customer || f.r.soldToPrior || '', rows: [] });
+      byBuyer.get(k).rows.push(f.r);
+    }
+    const notes = [];
+    const booked = [];
+    let idx = 0;
+    const buyers = [...byBuyer.values()].sort((a, b) => String(a.name).localeCompare(String(b.name))); // the card's order
+    for (const g of buyers) {
+      idx += 1;
+      const returnCust = await resolveReturnCustomer(g.name);
+      const totalYards = g.rows.reduce((sum, t) => sum + (Number(t.yards) || 0), 0);
+      const credit = returnCreditFor({}, g.rows);
+      const pkgs = [...new Set(g.rows.map((t) => String(t.packageNo)))];
+      await transactionsRepository.append({
+        user: item.user, action: 'return_bundle', design: g.rows[0]?.design, color: g.rows[0]?.shade,
+        qty: totalYards, before: 'sold', after: 'available', status: 'approved',
+        warehouse: g.rows[0]?.warehouse || '', customerName: returnCust.name, customerId: returnCust.id,
+        saleRefId: requestId, pricePerYard: credit.rate || '', salesDate: aj.returnedOn || '',
+      });
+      try {
+        await erpEmitAsync('return', { type: 'return_bundle', packageNo: pkgs.join(', '), thanNos: g.rows.map((t) => t.thanNo), yards: totalYards, pricePerYard: credit.rate, design: g.rows[0]?.design, shade: g.rows[0]?.shade, warehouse: g.rows[0]?.warehouse, userId: item.user, txnId: `RB-${requestId}-${idx}`, customer: returnCust.name, customerId: returnCust.id });
+        if (credit.amount > 0) notes.push(`${returnCust.name || 'the buyer'} ${money.sale(credit.amount)} (${g.rows.length} than${g.rows.length === 1 ? '' : 's'}, ${totalYards} yd)`);
+        else {
+          await recordErpFailure('return credit (return_bundle)', new Error(`no rate on record for ${returnCust.name || g.name}: ${g.rows.map((t) => `${t.packageNo}/${t.thanNo}`).join(', ')} — stock returned, credit NOT posted; post it manually`));
+          notes.push(`${returnCust.name || 'the buyer'}: no rate on record — NO credit posted`);
+        }
+      } catch (e) { await recordErpFailure('return credit (return_bundle)', e); }
+      booked.push({ customer: returnCust.name, customerId: returnCust.id, thans: g.rows.length, yards: totalYards, amount: credit.amount, rate: credit.rate });
+    }
+    creditNote = `↩️ Credited ${notes.join(' · ')}.`;
+    if (skipped.length) {
+      creditNote += `\n⚠️ Skipped: ${skipped.map((sk) => `${sk.tok} (${sk.why})`).join(', ')} — nothing flipped, nothing credited for them.`;
+    }
+    await auditLogRepository.append('return_bundle', {
+      requestId, returned: flipped.map((f) => `${f.it.packageNo}/${f.it.thanNo}`), skipped,
+      yards: flipped.reduce((s, f) => s + (Number(f.r.yards) || 0), 0), byCustomer: booked,
+      condition: aj.condition || '', conditionNote: aj.conditionNote || '',
+      returnedOn: aj.returnedOn || '', photo: !!aj.return_photo_file_id,
+    }, approvedBy);
   } else if (aj.action === 'revert_sale_bundle') {
     // Two-admin-approved revert of a previously-approved sale_bundle.
     // Marks every Bale/than in the original sale available again and

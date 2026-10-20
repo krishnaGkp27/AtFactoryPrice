@@ -2371,178 +2371,11 @@ async function showReturnThanConfirm(bot, chatId, userId) {
   });
 }
 
-/* ─── RET-1 — typed-return confirm preview ──────────────────────────────
- * Typed "Return Bale X" used to queue the approval sight-unseen: a
- * mistyped bale number returned the WRONG bale and credited the wrong
- * customer's ledger. The preview shows exactly what will be reversed —
- * and WHO it was sold to — before anything queues. Naming a customer in
- * the command ("return Bale X from Benduku") is cross-checked against
- * the bale's actual buyer(s) and blocked on mismatch.
+/* RET-1's typed-return preview (`startTypedReturnPreview`, `rtx:*`) was retired
+ * 20-Oct-2026 by RET-5: every typed return line now opens the multi-bale
+ * review card (returnBundleFlow, `rb:`), which carries the date, condition
+ * and photo the old request never had.
  */
-async function startTypedReturnPreview(bot, chatId, userId, action, packageNo, thanNo, claimedCustomer, msgFrom, warehouse = null) {
-  const { mdEscape } = require('../utils/flowKit');
-  const pkg = String(packageNo || '').trim();
-  const pkgMd = mdEscape(pkg);
-  const rows = await inventoryRepository.findByPackage(pkg, { warehouse });
-  if (!rows.length) {
-    await bot.sendMessage(chatId, `⚠️ Bale *${pkgMd}* was not found in Inventory — check the bale number.`, { parse_mode: 'Markdown' });
-    return;
-  }
-  const sold = rows.filter((r) => r.status === 'sold'
-    && (action === 'return_package' || String(r.thanNo) === String(thanNo)));
-  if (!sold.length) {
-    await bot.sendMessage(chatId,
-      action === 'return_package'
-        ? `⚠️ Bale *${pkgMd}* has no sold thans — nothing to return.`
-        : `⚠️ Than *#${thanNo}* of Bale *${pkgMd}* is not marked sold — nothing to return.`,
-      { parse_mode: 'Markdown' });
-    return;
-  }
-
-  // TRF-INT4 — the printed number may have been sold in MORE than one
-  // warehouse (numbers recycle across intakes). A typed return cannot tell
-  // which physical bale came back, so ask — one tap, then the preview,
-  // queue and executor all stay pinned to that warehouse. Warehouses dedupe
-  // case-insensitively (one physical place, two spellings), and blank
-  // legacy warehouse cells never form a chip — with a named warehouse in
-  // play the blank rows are excluded outright; a number sold ONLY in
-  // blank-warehouse rows keeps the legacy unscoped path.
-  const namedWhs = [];
-  for (const r of sold) {
-    const w = String(r.warehouse || '').trim();
-    if (w && !namedWhs.some((x) => x.toUpperCase() === w.toUpperCase())) namedWhs.push(w);
-  }
-  const whRows = (w) => sold.filter((r) => String(r.warehouse || '').trim().toUpperCase() === String(w).trim().toUpperCase());
-  if (!warehouse && namedWhs.length > 1) {
-    const whOptions = namedWhs.map((w) => {
-      const inWh = whRows(w);
-      return { warehouse: w, thans: inWh.length, yards: inWh.reduce((s, r) => s + (r.yards || 0), 0) };
-    });
-    sessionStore.set(userId, {
-      type: 'return_confirm_flow', step: 'pick_wh', flowMessageId: null,
-      _retPend: {
-        action, packageNo: pkg, thanNo: thanNo || null, claimedCustomer: claimedCustomer || '',
-        fromName: (msgFrom && msgFrom.from && msgFrom.from.first_name) || '',
-      },
-      _whOptions: whOptions,
-    });
-    const chipRows = whOptions.map((o, i) => ([{
-      text: `🏭 ${o.warehouse} — ${o.thans} sold than${o.thans === 1 ? '' : 's'} · ${fmtQty(o.yards)} yds`,
-      callback_data: `rtx:wh:${i}`,
-    }]));
-    chipRows.push([{ text: '❌ Cancel', callback_data: 'rtx:no' }]);
-    const sentPick = await bot.sendMessage(chatId,
-      `↩️ Bale *${pkgMd}* was sold in *${namedWhs.length} warehouses* — which one is this return from?`,
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: chipRows } });
-    if (sentPick && sentPick.message_id) {
-      const sp = sessionStore.get(userId);
-      if (sp && sp.type === 'return_confirm_flow') { sp.flowMessageId = sentPick.message_id; sessionStore.set(userId, sp); }
-    }
-    return;
-  }
-  const retWarehouse = warehouse || namedWhs[0] || '';
-  // The preview must promise exactly what the scoped executor will flip:
-  // once a warehouse is pinned, blank-warehouse legacy rows (and any other
-  // spelling's rows) drop out of the totals and buyer set too.
-  const scopedSold = retWarehouse ? whRows(retWarehouse) : sold;
-  if (!scopedSold.length) {
-    await bot.sendMessage(chatId,
-      `⚠️ Bale *${pkgMd}* has no sold thans in *${mdEscape(retWarehouse)}* — nothing to return.`,
-      { parse_mode: 'Markdown' });
-    return;
-  }
-  const yards = scopedSold.reduce((s, r) => s + (r.yards || 0), 0);
-  const soldToNames = [...new Set(scopedSold.map((r) => String(r.soldTo || '').trim()).filter(Boolean))];
-
-  // A whole-bale return whose thans belong to DIFFERENT buyers cannot be
-  // credited to one account — the executor credits a single ledger. Force
-  // per-than returns instead of promising an impossible credit.
-  if (action === 'return_package' && soldToNames.length > 1) {
-    await bot.sendMessage(chatId,
-      `🚫 Bale *${pkgMd}* was sold to *${mdEscape(soldToNames.join(', '))}* — more than one buyer.\nA whole-bale return cannot credit one account. Return it than by than instead (↩️ Return Than, or "Return than N from Bale ${pkgMd}"). Nothing was queued.`,
-      { parse_mode: 'Markdown' });
-    return;
-  }
-
-  // Resolve buyers to canonical entities. Keys carry BOTH the entity id
-  // (when the row has one) and the normalized name, so an id-less
-  // hand-added row can never collapse to '' and false-match, and an
-  // unregistered spelling still compares by name.
-  const customerEntity = require('../services/customerEntity');
-  const buyerKeys = new Set();
-  let singleBuyer = null;
-  for (const n of soldToNames) {
-    buyerKeys.add(n.toLowerCase());
-    try {
-      const b = await customerEntity.resolve({ name: n });
-      if (b) {
-        if (b.customer_id) buyerKeys.add(b.customer_id);
-        buyerKeys.add(String(b.name || '').toLowerCase());
-        if (soldToNames.length === 1) singleBuyer = b;
-      }
-    } catch (_) { /* name key already added */ }
-  }
-  const buyerLabel = soldToNames.length
-    ? (singleBuyer ? singleBuyer.name : soldToNames.join(', '))
-    : '(no customer recorded on this bale)';
-
-  // Belongs-to check: a customer named in the command must be a buyer.
-  let unverifiedClaim = '';
-  if (claimedCustomer && soldToNames.length) {
-    const claimedKeys = new Set([String(claimedCustomer).trim().toLowerCase()]);
-    try {
-      const c = await customerEntity.resolve({ name: claimedCustomer });
-      if (c) {
-        if (c.customer_id) claimedKeys.add(c.customer_id);
-        claimedKeys.add(String(c.name || '').toLowerCase());
-      }
-    } catch (_) { /* raw name key already added */ }
-    const overlap = [...claimedKeys].some((k) => k && buyerKeys.has(k));
-    if (!overlap) {
-      await bot.sendMessage(chatId,
-        `🚫 *Bale ${pkgMd} was NOT sold to ${mdEscape(claimedCustomer)}.*\nIt was sold to *${mdEscape(buyerLabel)}*.\nCheck the bale number — a wrong return credits the wrong customer's account. Nothing was queued.`,
-        { parse_mode: 'Markdown' });
-      return;
-    }
-  } else if (claimedCustomer && !soldToNames.length) {
-    unverifiedClaim = `\n⚠️ You named *${mdEscape(claimedCustomer)}* but this bale records NO buyer — the claim could not be checked. Verify the bale number.`;
-  }
-
-  // A newer preview supersedes any older one: disarm the old card's
-  // buttons so a stale ✅ cannot queue a different bale than it shows.
-  const prev = sessionStore.get(userId);
-  if (prev && prev.type === 'return_confirm_flow' && prev.flowMessageId) {
-    await bot.editMessageReplyMarkup({ inline_keyboard: [] },
-      { chat_id: chatId, message_id: prev.flowMessageId }).catch(() => {});
-  }
-
-  sessionStore.set(userId, {
-    type: 'return_confirm_flow', step: 'confirm', flowMessageId: null,
-    ret: {
-      action, packageNo: pkg, thanNo: thanNo || null,
-      warehouse: retWarehouse,
-      soldTo: soldToNames.join(', '),
-      customerId: singleBuyer ? singleBuyer.customer_id : '',
-      design: scopedSold[0].design || '', thans: scopedSold.length, yards,
-      fromName: (msgFrom && msgFrom.from && msgFrom.from.first_name) || '',
-    },
-  });
-  const what = action === 'return_package' ? `Bale *${pkgMd}* (whole bale)` : `Bale *${pkgMd}* — Than *#${thanNo}*`;
-  const sent = await bot.sendMessage(chatId,
-    `↩️ *Confirm Return*\n\n${what}\nDesign: ${mdEscape(scopedSold[0].design || '—')}\n🏭 Warehouse: *${mdEscape(retWarehouse || '—')}*\n${scopedSold.length} sold than${scopedSold.length === 1 ? '' : 's'} · ${fmtQty(yards)} yds\n👤 Sold to: *${mdEscape(buyerLabel)}*${unverifiedClaim}\n\nApproving puts the stock back and credits this customer's account.\nQueues dual-admin approval.`,
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [
-      [
-        { text: '✅ Submit for approval', callback_data: 'rtx:ok' },
-        { text: '❌ Cancel', callback_data: 'rtx:no' },
-      ],
-      [{ text: '🏠 Menu', callback_data: 'act:__back__' }],
-    ] } });
-  if (sent && sent.message_id) {
-    const s = sessionStore.get(userId);
-    if (s && s.type === 'return_confirm_flow') { s.flowMessageId = sent.message_id; sessionStore.set(userId, s); }
-  }
-}
-
 /** Date-range picker shown when user taps the Sample Status button. */
 async function showSampleStatusDatePicker(bot, chatId, messageId = null) {
   const text = '🧪 *Sample Status*\n\nPick a time window:';
@@ -3637,6 +3470,12 @@ async function handleFileMessage(bot, msg) {
     const handled = await require('../flows/returnFlow').handlePhoto(bot, msg);
     if (handled) return;
   }
+  // RET-5 — the typed multi-bale return's photo, same rule.
+  if (session && session.type === 'return_bundle_flow' && session.step === 'photo'
+      && (msg.photo || (msg.document && /^image\//i.test(msg.document.mime_type || '')))) {
+    const handled = await require('../flows/returnBundleFlow').handlePhoto(bot, msg);
+    if (handled) return;
+  }
 
   // SELL-K1 — the Kano than sale now requires a sales bill before it queues;
   // route the photo/PDF to the flow while it is armed.
@@ -3951,6 +3790,11 @@ async function handleMessage(bot, msg) {
     const rnSession = sessionStore.get(userId);
     if (rnSession && rnSession.type === 'return_flow') {
       const handled = await require('../flows/returnFlow').handleText(bot, msg);
+      if (handled) return;
+    }
+    // RET-5 — ➕ Add more line, the condition note, a typed date.
+    if (rnSession && rnSession.type === 'return_bundle_flow') {
+      const handled = await require('../flows/returnBundleFlow').handleText(bot, msg);
       if (handled) return;
     }
   }
@@ -4314,6 +4158,19 @@ async function handleMessage(bot, msg) {
       }
     }
   }
+  // RET-5 (owner's Go, 20-Oct-2026) — "Return 771, 779, 6189/5": the same
+  // grammar, parsed locally, opens the multi-bale return review card. A
+  // bare-only line qualifies too (R4 — every typed return goes through it).
+  {
+    const { looksLikeReturnList, parseThanList } = require('../utils/thanListParser');
+    if (looksLikeReturnList(text)) {
+      const parsed = parseThanList(text);
+      if (parsed.items.length) {
+        const shown = await require('../flows/returnBundleFlow').startWithLine(bot, chatId, userId, parsed);
+        if (shown) return;
+      }
+    }
+  }
 
   // P3 — userId enables the per-user OpenAI rate limit inside the parser.
   const intent = await intentParser.parse(text, userId);
@@ -4440,15 +4297,22 @@ async function handleMessage(bot, msg) {
       case 'return_than': {
         if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which package? e.g. "Return than 2 from Bale 5801"'); return; }
         if (!intent.thanNo) { await bot.sendMessage(chatId, 'Which than number?'); return; }
-        // RET-1 — preview + buyer check first; queuing happens on rtx:ok.
-        await startTypedReturnPreview(bot, chatId, userId, 'return_than', intent.packageNo, intent.thanNo, intent.customer, msg);
+        // RET-5 (R4) — the old one-than line opens the multi-bale review
+        // card, so every typed return carries a date, condition and photo.
+        await require('../flows/returnBundleFlow').startWithLine(bot, chatId, userId, {
+          items: [{ packageNo: String(intent.packageNo), thans: [Number(intent.thanNo)] }],
+          bad: [], ignoredCustomer: intent.customer || '',
+        });
         return;
       }
 
       case 'return_package': {
         if (!intent.packageNo) { await bot.sendMessage(chatId, 'Which Bale? e.g. "Return Bale 5801"'); return; }
-        // RET-1 — preview + buyer check first; queuing happens on rtx:ok.
-        await startTypedReturnPreview(bot, chatId, userId, 'return_package', intent.packageNo, null, intent.customer, msg);
+        // RET-5 (R4) — as above: the whole bale, every than still sold.
+        await require('../flows/returnBundleFlow').startWithLine(bot, chatId, userId, {
+          items: [{ packageNo: String(intent.packageNo) }],
+          bad: [], ignoredCustomer: intent.customer || '',
+        });
         return;
       }
 
@@ -7502,6 +7366,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['sns:'], handle: (bot, cq) => require('../flows/snapSaleFlow').handleCallback(bot, cq) },
   // RET-4 — ↩️ Return goods (customer → bale → thans → date → condition → photo).
   { prefixes: ['rn:'], handle: (bot, cq) => require('../flows/returnFlow').handleCallback(bot, cq) },
+  // RET-5 — the typed multi-bale return (review → open bale → date → condition → photo → confirm).
+  { prefixes: ['rb:'], handle: (bot, cq) => require('../flows/returnBundleFlow').handleCallback(bot, cq) },
   // APR-2 — ⏰ reminder controls (per-dept toggles behind approval).
   { prefixes: ['rmn:'], handle: (bot, cq) => require('../flows/reminderConfigFlow').handleCallback(bot, cq) },
   // RPT-2 — 📈 sales/supplies browser (read-only drill-down).
@@ -8491,85 +8357,6 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     sessionStore.clear(uid);
 
   /* ─── TRANSFER PACKAGE TAP FLOW ─── */
-  } else if (data.startsWith('rtx:wh:')) {
-    // TRF-INT4 — warehouse pick for a typed return whose printed number was
-    // sold in more than one warehouse. Re-runs the preview scoped to the tap.
-    const uid = String(callbackQuery.from.id);
-    const rtxwChat = callbackQuery.message.chat.id;
-    const session = sessionStore.get(uid);
-    const bound = session && session.type === 'return_confirm_flow' && session.step === 'pick_wh'
-      && session._retPend && (!session.flowMessageId || session.flowMessageId === callbackQuery.message.message_id);
-    if (!bound) {
-      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Card expired — type the return command again.' });
-      return;
-    }
-    const opt = (session._whOptions || [])[parseInt(data.slice(7), 10)];
-    if (!opt) { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Expired — type the command again.' }); return; }
-    const pend = session._retPend;
-    sessionStore.clear(uid);
-    await bot.answerCallbackQuery(callbackQuery.id, { text: opt.warehouse || undefined });
-    await bot.editMessageText(`↩️ Return of Bale ${pend.packageNo}${pend.thanNo ? ` Than #${pend.thanNo}` : ''} — warehouse: ${opt.warehouse || '—'}. Preparing preview…`,
-      { chat_id: rtxwChat, message_id: callbackQuery.message.message_id }).catch(() => {});
-    await startTypedReturnPreview(bot, rtxwChat, uid, pend.action, pend.packageNo, pend.thanNo,
-      pend.claimedCustomer, pend.fromName ? { from: { first_name: pend.fromName } } : null, opt.warehouse);
-
-  } else if (data === 'rtx:ok' || data === 'rtx:no') {
-    const uid = String(callbackQuery.from.id);
-    const rtxChat = callbackQuery.message.chat.id;
-    const rtxMenuRow = { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] };
-    const session = sessionStore.get(uid);
-    // TRF-INT4 — ❌ on the warehouse-pick card cancels that pending preview.
-    // Bound to the pick card's own message so a stale confirm card's Cancel
-    // can never kill a NEWER pending pick.
-    if (data === 'rtx:no' && session && session.type === 'return_confirm_flow' && session.step === 'pick_wh'
-      && (!session.flowMessageId || session.flowMessageId === callbackQuery.message.message_id)) {
-      sessionStore.clear(uid);
-      await bot.answerCallbackQuery(callbackQuery.id);
-      await bot.editMessageText('❌ Return cancelled — nothing was queued.',
-        { chat_id: rtxChat, message_id: callbackQuery.message.message_id, reply_markup: rtxMenuRow }).catch(() => {});
-      return;
-    }
-    // The tap must come from THIS session's card: a newer preview
-    // supersedes older ones (their buttons are disarmed best-effort, but
-    // Telegram edits can fail) — without this check a stale ✅ would queue
-    // a DIFFERENT bale than the card shows.
-    const boundToCard = session && session.type === 'return_confirm_flow' && session.ret
-      && (!session.flowMessageId || session.flowMessageId === callbackQuery.message.message_id);
-    if (!boundToCard) {
-      await bot.answerCallbackQuery(callbackQuery.id, { text: 'Card expired.' });
-      await bot.editMessageText('This return card has expired or was replaced by a newer one — type the return command again.',
-        { chat_id: rtxChat, message_id: callbackQuery.message.message_id, reply_markup: rtxMenuRow }).catch(() => {});
-      return;
-    }
-    // Detach the session BEFORE the first await so a double-tap's second
-    // callback finds nothing and cannot double-queue the approval.
-    const ret = session.ret;
-    const rtxMsgId = session.flowMessageId || callbackQuery.message.message_id;
-    sessionStore.clear(uid);
-    await bot.answerCallbackQuery(callbackQuery.id);
-    if (data === 'rtx:no') {
-      await bot.editMessageText('❌ Return cancelled — nothing was queued.',
-        { chat_id: rtxChat, message_id: rtxMsgId, reply_markup: rtxMenuRow }).catch(() => {});
-      return;
-    }
-    // TRF-INT4 — ret.warehouse pins the executor (and the admin card) to the
-    // physical bale this return was previewed against.
-    const aj = { action: ret.action, packageNo: ret.packageNo, warehouse: ret.warehouse || '', soldTo: ret.soldTo, customerId: ret.customerId };
-    if (ret.action === 'return_than') aj.thanNo = ret.thanNo;
-    // Pseudo-msg keeps the requester's display name on the admin card for
-    // users without a Users-sheet row (requireApproval falls back to it).
-    const rtxMsg = ret.fromName ? { from: { first_name: ret.fromName } } : null;
-    const queued = await requireApproval(bot, rtxChat, rtxMsg, uid, ret.action, aj,
-      await require('../services/approvalCards').buildReturnCard({ packageNo: ret.packageNo, thanNo: ret.thanNo, warehouse: ret.warehouse }));
-    if (queued) {
-      await bot.editMessageText(
-        `⏳ Return of Bale ${ret.packageNo}${ret.thanNo ? ` Than #${ret.thanNo}` : ''} submitted for dual-admin approval.${ret.soldTo ? `\n👤 Credits: ${ret.soldTo}` : ''}`,
-        { chat_id: rtxChat, message_id: rtxMsgId, reply_markup: rtxMenuRow }).catch(() => {});
-    } else {
-      await bot.sendMessage(rtxChat, '⚠️ Could not queue the return — type the command again.');
-    }
-
-  /* ─── RETURN THAN TAP FLOW ─── */
   } else if (data.startsWith('rtcanc:')) {
     const uid = String(callbackQuery.from.id);
     const session = sessionStore.get(uid);
