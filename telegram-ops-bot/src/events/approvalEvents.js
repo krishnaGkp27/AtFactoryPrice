@@ -2159,6 +2159,20 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
 
       const isSupplyReq = item && item.actionJSON && item.actionJSON.action === 'supply_request';
       if (isSupplyReq) {
+        // SRF-6 — the requester (or an admin via ✎ Assign someone else) already
+        // named who will supply: assign them straight away, no picker. The
+        // picker remains for legacy rows, "let admin choose" and a person who
+        // has since left.
+        const want = item.actionJSON.requestedAssignee;
+        if (want && want.user_id) {
+          let u = null;
+          try { u = await usersRepository.findByUserId(String(want.user_id)); } catch (_) { u = null; }
+          if (u && (!u.status || String(u.status).toLowerCase() === 'active')) {
+            await assignSupply(bot, chatIdCb, requestId, item, requestingUser, String(want.user_id), adminId, { asRequested: !want.byAdmin });
+            return;
+          }
+          await bot.sendMessage(chatIdCb, `⚠️ ${want.name || want.user_id} is no longer an active user — pick someone else.`);
+        }
         await showWarehouseBoyPicker(bot, chatIdCb, requestId, item, requestingUser);
         return;
       }
@@ -2326,15 +2340,9 @@ async function showWarehouseBoyPicker(bot, chatId, requestId, item, requestingUs
   const aj = item?.actionJSON || {};
   const warehouse = aj.warehouse || '';
   const allUsers = await usersRepository.getAll();
-  const dispatchUsers = allUsers.filter((u) => {
-    if (u.status && u.status !== 'active') return false;
-    const inDispatch = usersRepository.inDepartment(u, 'Dispatch')
-      || usersRepository.inDepartment(u, 'Warehouse')
-      || usersRepository.inDepartment(u, 'Logistics');
-    if (!inDispatch) return false;
-    const whs = u.warehouses || [];
-    return !warehouse || whs.includes(warehouse);
-  });
+  // SRF-6 — ONE eligibility rule, shared with the requester's step and the
+  // reassign door (supplyAssign.eligibleFor).
+  const dispatchUsers = require('../services/supplyAssign').eligibleFor(allUsers, warehouse);
 
   const productTypesRepo = require('../repositories/productTypesRepository');
   // UX-2 — the shared cart block (utils/cartFormat); approver cards keep the category.
@@ -2398,6 +2406,15 @@ async function handleSupplyAssign(bot, callbackQuery) {
   // dispatch person Accepts. The admin's pick now records the
   // assignment + admin identity on actionJSON; final status flips
   // happen in handleSupplyAccept (or the request bounces on Decline).
+  await assignSupply(bot, chatId, requestId, item, requestingUser, assigneeId, adminId);
+}
+
+/**
+ * SRF-6 — assign a pending supply request to `assigneeId` and send them the
+ * Accept / Decline card. Called by the admin's picker tap (srf_assign:) and,
+ * when the requester already named the person, straight from ✅ Approve.
+ */
+async function assignSupply(bot, chatId, requestId, item, requestingUser, assigneeId, adminId, opts = {}) {
   const assignTs = new Date().toISOString();
   const assigneeUser = await usersRepository.findByUserId(assigneeId);
   await approvalQueueRepository.updateActionJSON(requestId, {
@@ -2419,7 +2436,9 @@ async function handleSupplyAssign(bot, callbackQuery) {
   intimation += `🧑 Salesperson: *${aj.salesperson || '-'}*\n`;
   intimation += `💳 Payment: *${aj.paymentMode || '-'}*\n`;
   intimation += `📅 Date: *${fmtDate(aj.salesDate)}*\n`;
-  intimation += `\n🔔 Assigned by admin. Please *Accept* (you'll prep the stock) or *Decline* (admin will reassign).`;
+  intimation += opts.asRequested
+    ? `\n🔔 Named by the requester and approved by admin. Please *Accept* (you'll prep the stock) or *Decline* (admin will reassign).`
+    : `\n🔔 Assigned by admin. Please *Accept* (you'll prep the stock) or *Decline* (admin will reassign).`;
 
   try {
     await bot.sendMessage(assigneeId, intimation, {
@@ -2438,9 +2457,84 @@ async function handleSupplyAssign(bot, callbackQuery) {
   }
 
   const assigneeName = (assigneeUser && assigneeUser.name) || assigneeId;
-  await bot.sendMessage(chatId, `✅ Supply request \`${requestId}\` assigned to *${assigneeName}*.\n\n⏳ Waiting for them to *Accept* before stock leaves the warehouse.`, { parse_mode: 'Markdown' });
+  await bot.sendMessage(chatId, `✅ Supply request \`${requestId}\` assigned to *${assigneeName}*${opts.asRequested ? ', as the requester asked' : ''}.\n\n⏳ Waiting for them to *Accept* before stock leaves the warehouse.`, { parse_mode: 'Markdown' });
   await notifyEmployee(bot, requestingUser, requestId,
     `✅ Your supply request \`${requestId}\` was approved and assigned to *${assigneeName}*.\n\n⏳ Waiting for ${assigneeName} to *Accept* the dispatch.`);
+}
+
+
+/**
+ * SRF-6 — ✎ Assign someone else (admin, BEFORE approval): `srf_rea:<id>`
+ * opens the eligible list for the request's store, `srf_reas:<id>|<user>`
+ * records the override as `requestedAssignee` (flagged byAdmin) so the next
+ * ✅ Approve assigns that person. `__keep__` leaves the current choice.
+ */
+async function handleSupplyReassign(bot, callbackQuery) {
+  const data = callbackQuery.data || '';
+  const adminId = String(callbackQuery.from.id);
+  const chatId = callbackQuery.message.chat.id;
+  if (!config.access.adminIds.includes(adminId)) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Admin only.' }).catch(() => {});
+    return;
+  }
+  const supplyAssign = require('../services/supplyAssign');
+  if (data.startsWith('srf_rea:')) {
+    const requestId = data.slice('srf_rea:'.length);
+    const { item } = await resolveRequest(requestId);
+    const aj = (item && item.actionJSON) || {};
+    if (!item || aj.action !== 'supply_request' || String(item.status || '').toLowerCase() !== 'pending'
+        || ['dispatch_acceptance', 'completed'].includes(String(aj.stage || ''))) {
+      await bot.answerCallbackQuery(callbackQuery.id, { text: 'This request can no longer be reassigned here.', show_alert: true }).catch(() => {});
+      return;
+    }
+    await bot.answerCallbackQuery(callbackQuery.id).catch(() => {});
+    const users = await usersRepository.getAll();
+    let list = supplyAssign.eligibleFor(users, aj.warehouse);
+    let note = '';
+    if (!list.length) { list = supplyAssign.dispatchStaff(users); note = `\n_Nobody in Dispatch is attached to ${aj.warehouse || 'this store'} — every dispatch person is listed._`; }
+    if (!list.length) { list = users.filter((u) => !u.status || String(u.status).toLowerCase() === 'active'); note = '\n_No dispatch staff on the Users sheet — every active user is listed._'; }
+    const current = aj.requestedAssignee && (aj.requestedAssignee.name || aj.requestedAssignee.user_id);
+    const rows = [];
+    for (let i = 0; i < list.length; i += 2) {
+      const row = [{ text: supplyAssign.chipLabel(list[i]), callback_data: `srf_reas:${requestId}|${list[i].user_id}` }];
+      if (list[i + 1]) row.push({ text: supplyAssign.chipLabel(list[i + 1]), callback_data: `srf_reas:${requestId}|${list[i + 1].user_id}` });
+      rows.push(row);
+    }
+    rows.push([{ text: current ? `↩️ Keep ${String(current).slice(0, 24)}` : '↩️ Keep: admin chooses at approval', callback_data: `srf_reas:${requestId}|__keep__` }]);
+    await bot.sendMessage(chatId,
+      `🚚 Who should supply ${shortRequestRef(requestId)}${current ? ` instead of *${current}*` : ''}? · 🏭 ${aj.warehouse || '—'}${note}`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+    return;
+  }
+  const [requestId, pick] = data.slice('srf_reas:'.length).split('|');
+  await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
+  if (pick === '__keep__') {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Kept.' }).catch(() => {});
+    await bot.sendMessage(chatId, `↩️ ${shortRequestRef(requestId)} — supplier unchanged.`);
+    return;
+  }
+  const { item } = await resolveRequest(requestId);
+  const aj = (item && item.actionJSON) || {};
+  if (!item || aj.action !== 'supply_request' || String(item.status || '').toLowerCase() !== 'pending'
+      || ['dispatch_acceptance', 'completed'].includes(String(aj.stage || ''))) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'This request can no longer be reassigned here.', show_alert: true }).catch(() => {});
+    return;
+  }
+  const u = await usersRepository.findByUserId(String(pick));
+  if (!u) {
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'That user is not on the Users sheet.', show_alert: true }).catch(() => {});
+    return;
+  }
+  await bot.answerCallbackQuery(callbackQuery.id, { text: `Supplier: ${u.name || u.user_id}` }).catch(() => {});
+  await approvalQueueRepository.updateActionJSON(requestId, {
+    requestedAssignee: { user_id: String(u.user_id), name: u.name || String(u.user_id), ts: new Date().toISOString(), byAdmin: adminId },
+  });
+  try {
+    await require('../repositories/auditLogRepository').append('supply_supplier_changed', { requestId, to: String(u.user_id), name: u.name || '' }, adminId);
+  } catch (_) { /* best-effort */ }
+  await bot.sendMessage(chatId,
+    `🚚 ${shortRequestRef(requestId)} will be supplied by *${u.name || u.user_id}* (changed by you). Tap ✅ Approve when ready.`,
+    { parse_mode: 'Markdown' });
 }
 
 async function handleNewCustomerApproval(bot, chatId, requestId, item, requestingUser, approved, adminId) {
@@ -3031,6 +3125,7 @@ module.exports = {
   handleEnrichmentMessage,
   handleEnrichmentCallback,
   handleSupplyAssign,
+  handleSupplyReassign, // SRF-6
   handleSupplyAccept,
   handleSupplyDecline,
   handleDispatchManagerCallback,

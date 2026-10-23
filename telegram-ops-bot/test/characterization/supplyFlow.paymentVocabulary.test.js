@@ -56,16 +56,23 @@ test('picking the salesperson lands on the payment picker: Cash · Not yet paid 
   seedAtSalesperson();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_sp:Musa'));
+  // SRF-6 — the supplier step sits between: with no Users sheet nobody is
+  // eligible, so the only door is 🛂 Let admin choose.
+  assert.equal(sessionStore.get(UID).step, 'supplier');
+  assert.match(lastText(bot), /Who will supply it\?/);
+  assert.deepEqual(lastRows(bot).flat().map((b) => b.callback_data), ['srf_su:__admin__', 'srf_back:salesperson']);
+  await controller.handleCallbackQuery(bot, cb('srf_su:__admin__'));
+  assert.equal(sessionStore.get(UID).supplier, null);
   assert.equal(sessionStore.get(UID).step, 'payment');
   assert.match(lastText(bot), /Select payment mode/);
   const rows = lastRows(bot);
   assert.deepEqual(rows.map((r) => r.map((b) => b.text)), [
     ['💵 Cash', '⏳ Not yet paid (credit)', '🏦 GTBank'],
     ['🏦 ZENITH BANK'],
-    ['⬅️ Back to salesperson'],
+    ['⬅️ Back to supplier'],
   ]);
   assert.deepEqual(rows.flat().map((b) => b.callback_data), [
-    'srf_pm:Cash', 'srf_pm:Not yet paid', 'srf_pm:GTBank', 'srf_pm:ZENITH BANK', 'srf_back:salesperson',
+    'srf_pm:Cash', 'srf_pm:Not yet paid', 'srf_pm:GTBank', 'srf_pm:ZENITH BANK', 'srf_back:supplier',
   ]);
   for (const b of rows.flat()) assert.ok(Buffer.byteLength(b.callback_data) <= 64, `${b.callback_data} fits Telegram's 64 bytes`);
   assert.ok(!rows.flat().some((b) => /credit/i.test(b.callback_data)), 'no chip carries a Credit VALUE');
@@ -77,9 +84,10 @@ test('no banks registered: just the two fixed chips on one row', async () => {
   seedAtSalesperson();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_sp:Musa'));
+  await controller.handleCallbackQuery(bot, cb('srf_su:__admin__')); // SRF-6 — nobody in Dispatch here
   assert.deepEqual(lastRows(bot).map((r) => r.map((b) => `${b.text}|${b.callback_data}`)), [
     ['💵 Cash|srf_pm:Cash', '⏳ Not yet paid (credit)|srf_pm:Not yet paid'],
-    ['⬅️ Back to salesperson|srf_back:salesperson'],
+    ['⬅️ Back to supplier|srf_back:supplier'],
   ]);
 });
 
@@ -87,6 +95,7 @@ test('tapping ⏳ Not yet paid (credit) stores the VALUE "Not yet paid" and move
   seedAtSalesperson();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_sp:Musa'));
+  await controller.handleCallbackQuery(bot, cb('srf_su:__admin__')); // SRF-6 — nobody in Dispatch here
   await controller.handleCallbackQuery(bot, cb('srf_pm:Not yet paid'));
   const s = sessionStore.get(UID);
   assert.equal(s.paymentMode, 'Not yet paid', 'the value, never the label');
@@ -100,6 +109,8 @@ test('Cash and a bank chip store their own value the same way', async () => {
     seedAtSalesperson();
     const bot = createFakeBot();
     await controller.handleCallbackQuery(bot, cb('srf_sp:Musa'));
+    await controller.handleCallbackQuery(bot, cb('srf_su:__admin__'));
+  await controller.handleCallbackQuery(bot, cb('srf_su:__admin__')); // SRF-6 — nobody in Dispatch here
     await controller.handleCallbackQuery(bot, cb(data));
     assert.equal(sessionStore.get(UID).paymentMode, value);
     assert.equal(sessionStore.get(UID).step, 'date');
@@ -110,6 +121,7 @@ test('Back to payment from the date card re-shows the same vocabulary', async ()
   seedAtSalesperson();
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_sp:Musa'));
+  await controller.handleCallbackQuery(bot, cb('srf_su:__admin__')); // SRF-6 — nobody in Dispatch here
   await controller.handleCallbackQuery(bot, cb('srf_pm:Not yet paid'));
   await controller.handleCallbackQuery(bot, cb('srf_back:payment'));
   assert.equal(sessionStore.get(UID).step, 'payment');

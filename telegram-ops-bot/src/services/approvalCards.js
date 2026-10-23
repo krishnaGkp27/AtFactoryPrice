@@ -969,6 +969,11 @@ function buildSupplyRequestCard(aj) {
   const productTypesRepo = require('../repositories/productTypesRepository');
   let text = `Supply Request · 🏭 ${aj.warehouse || '—'}\n👤 ${aj.customer || '—'}`;
   if (aj.salesperson) text += `\n🧑 ${aj.salesperson}`;
+  // SRF-6 — who will supply it (the requester's choice, an admin's change, or
+  // the assignment once made). Admin-eyes only: this builder feeds the inbox,
+  // the admin DM and the hourly reminder; the Dispatch-review card is separate.
+  const supplyAssign = require('./supplyAssign');
+  text += `\n${supplyAssign.supplierLine(aj)}`;
   if (aj.paymentMode) text += `\n💳 ${aj.paymentMode}`;
   if (aj.salesDate) text += `\n📅 ${fmtDate(aj.salesDate)}`;
   const cart = Array.isArray(aj.cart) ? aj.cart : [];
@@ -981,6 +986,9 @@ function buildSupplyRequestCard(aj) {
     text += `\n\n${cartFormat.formatCart(rows)}`;
   }
   if (aj.sale_doc_file_id) text += '\n📎 Bill attached';
+  // SRF-6 (R4) — where it sits and with whom (STS-1 gap G5).
+  const waiting = supplyAssign.waitingLine(aj);
+  if (waiting) text += `\n\n${waiting}`;
   return text;
 }
 

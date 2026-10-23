@@ -6860,6 +6860,38 @@ async function showSupplySalespersonPicker(bot, chatId, userId, showAll = false)
   });
 }
 
+/**
+ * SRF-6 — "🚚 Who will supply it?" The chips are the dispatch staff attached
+ * to the store (one rule with the admin picker: supplyAssign.eligibleFor);
+ * 📋 See all widens to every dispatch person; `🛂 Let admin choose` appears
+ * ONLY when nobody qualifies (R1). The choice rides the request row as
+ * `requestedAssignee` and is shown to admins alone.
+ */
+async function showSupplySupplierPicker(bot, chatId, userId, showAll = false) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'supply_req_flow') return;
+  const supplyAssign = require('../services/supplyAssign');
+  const users = await usersRepository.getAll();
+  const staff = supplyAssign.dispatchStaff(users);
+  const list = showAll ? staff : supplyAssign.eligibleFor(users, session.warehouse);
+  const store = String(session.warehouse || '').replace(/[*_`[\]]/g, '\\$&');
+  let text = `🚚 *Who will supply it?* · 🏭 ${store}\nPick the person who will prepare and hand over the goods.`;
+  const rows = [];
+  for (let i = 0; i < list.length; i += 2) {
+    const row = [{ text: supplyAssign.chipLabel(list[i]), callback_data: `srf_su:${list[i].user_id}` }];
+    if (list[i + 1]) row.push({ text: supplyAssign.chipLabel(list[i + 1]), callback_data: `srf_su:${list[i + 1].user_id}` });
+    rows.push(row);
+  }
+  if (!showAll && staff.length > list.length) rows.push([{ text: `📋 See all (${staff.length})`, callback_data: 'srf_su:__more__' }]);
+  if (!list.length) {
+    text += showAll
+      ? '\n\n_No dispatch person is on the Users sheet — an admin will choose._'
+      : `\n\n_No dispatch person is attached to ${store} — an admin will choose._`;
+    rows.push([{ text: '🛂 Let admin choose', callback_data: 'srf_su:__admin__' }]);
+  }
+  rows.push([{ text: '⬅️ Back to salesperson', callback_data: 'srf_back:salesperson' }]);
+  await editOrSendAnchored(bot, chatId, userId, text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
 async function showSupplyPaymentPicker(bot, chatId, userId) {
   const options = await salesFlow.getPaymentOptions();
   // SRF-PAY (owner, 11-Sep-2026) — the chip LABEL reads the concept
@@ -6879,7 +6911,7 @@ async function showSupplyPaymentPicker(bot, chatId, userId) {
     }
     rows.push(row);
   }
-  rows.push([{ text: '⬅️ Back to salesperson', callback_data: 'srf_back:salesperson' }]);
+  rows.push([{ text: '⬅️ Back to supplier', callback_data: 'srf_back:supplier' }]);
   await editOrSendAnchored(bot, chatId, userId, '💳 Select payment mode:', { reply_markup: { inline_keyboard: rows } });
 }
 
@@ -6912,6 +6944,7 @@ async function showSupplyConfirmation(bot, chatId, userId) {
   let text = `📦 *Supply request* · 🏭 ${session.warehouse}\n\n${block}\n`;
   text += `👤 ${session.customer}\n`;
   text += `🧑 ${session.salesperson}\n`;
+  text += `🚚 ${session.supplier ? session.supplier.name : 'Admin to choose'}\n`;
   text += `💳 ${session.paymentMode}\n`;
   text += `📅 ${fmtDate(session.supplyDate)}\n\n`;
   text += `📎 Receipt photo or PDF, or Skip.`;
@@ -6941,6 +6974,7 @@ async function finalizeSupplyRequest(bot, chatId, userId) {
   let text = `✅ *Confirm supply request* · 🏭 ${session.warehouse}\n\n${block}\n`;
   text += `👤 ${session.customer}\n`;
   text += `🧑 ${session.salesperson}\n`;
+  text += `🚚 ${session.supplier ? session.supplier.name : 'Admin to choose'}\n`;
   text += `💳 ${session.paymentMode}\n`;
   text += `📅 ${fmtDate(session.supplyDate)}\n`;
   if (session.docFileId) text += `📎 Document attached\n`;
@@ -7630,6 +7664,9 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'approve');
   } else if (data.startsWith('reject:')) {
     await approvalEvents.handleApprovalCallback(bot, callbackQuery, 'reject');
+  } else if (data.startsWith('srf_rea:') || data.startsWith('srf_reas:')) {
+    // SRF-6 — ✎ Assign someone else (admin, before approval).
+    await approvalEvents.handleSupplyReassign(bot, callbackQuery);
   } else if (data.startsWith('srf_assign:')) {
     await approvalEvents.handleSupplyAssign(bot, callbackQuery);
   } else if (data.startsWith('srf_acc:') || data.startsWith('srf_ack:')) {
@@ -10412,10 +10449,17 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       await showSupplyCustomerPicker(bot, chatId, uid);
     } else if (target === 'salesperson') {
       session.step = 'salesperson';
+      delete session.supplier;
       delete session.paymentMode;
       delete session.supplyDate;
       sessionStore.set(uid, session);
       await showSupplySalespersonPicker(bot, chatId, uid, false);
+    } else if (target === 'supplier') {
+      session.step = 'supplier';
+      delete session.paymentMode;
+      delete session.supplyDate;
+      sessionStore.set(uid, session);
+      await showSupplySupplierPicker(bot, chatId, uid, false);
     } else if (target === 'payment') {
       session.step = 'payment';
       delete session.supplyDate;
@@ -10830,6 +10874,29 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     }
 
     session.salesperson = val;
+    // SRF-6 — "Who will supply it?" sits between the salesperson and payment.
+    session.step = 'supplier';
+    sessionStore.set(uid, session);
+    await showSupplySupplierPicker(bot, chatId, uid, false);
+  /* ─── SUPPLY REQUEST FLOW: SUPPLIER (SRF-6) ─── */
+  } else if (data.startsWith('srf_su:')) {
+    const val = data.slice(7);
+    const chatId = callbackQuery.message.chat.id;
+    const uid = String(callbackQuery.from.id);
+    await bot.answerCallbackQuery(callbackQuery.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'supply_req_flow') return;
+    if (val === '__more__') {
+      await showSupplySupplierPicker(bot, chatId, uid, true);
+      return;
+    }
+    if (val === '__admin__') {
+      session.supplier = null;
+    } else {
+      const u = await usersRepository.findByUserId(val);
+      if (!u) { await showSupplySupplierPicker(bot, chatId, uid, false); return; }
+      session.supplier = { user_id: String(u.user_id), name: u.name || String(u.user_id) };
+    }
     session.step = 'payment';
     sessionStore.set(uid, session);
     await showSupplyPaymentPicker(bot, chatId, uid);
@@ -10953,6 +11020,10 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       // session; ride it onto the queue row like the enrichment path does.
       customerId: session.customerId || '',
       salesperson: session.salesperson,
+      // SRF-6 — the requester's pick of who will supply (null = admin chooses).
+      requestedAssignee: session.supplier
+        ? { user_id: String(session.supplier.user_id), name: session.supplier.name, ts: new Date().toISOString() }
+        : null,
       paymentMode: session.paymentMode,
       salesDate: session.supplyDate,
       sale_doc_file_id: docInfo.fileId || null,
@@ -10988,6 +11059,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     let summary = `Supply Request · 🏭 ${actionJSON.warehouse}\n\n${cartAdmin}\n`;
     summary += `👤 ${actionJSON.customer}\n`;
     summary += `🧑 ${actionJSON.salesperson}\n`;
+    summary += `${require('../services/supplyAssign').supplierLine(actionJSON)}\n`;
     summary += `💳 ${actionJSON.paymentMode}\n`;
     summary += `📅 ${fmtDate(actionJSON.salesDate)}`;
     if (actionJSON.sale_doc_file_id) summary += `\n📎 Document attached`;
@@ -11033,7 +11105,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       : 'Dispatch confirmation';
     // SJ-4 — seal the tapped confirm card into the submitted receipt instead
     // of stranding it above a fresh message with stale "Confirm?" text.
-    const submittedText = `✅ Supply request submitted\n🏭 ${actionJSON.warehouse}\n\n${cartPlain}\n👤 ${actionJSON.customer}\n🧑 ${actionJSON.salesperson}\n💳 ${actionJSON.paymentMode}\n📅 ${fmtDate(actionJSON.salesDate)}\n\n⏳ Waiting for ${waitingFor}.\nRef: ${shortRequestRef(requestId)}`;
+    const submittedText = `✅ Supply request submitted\n🏭 ${actionJSON.warehouse}\n\n${cartPlain}\n👤 ${actionJSON.customer}\n🧑 ${actionJSON.salesperson}\n🚚 ${actionJSON.requestedAssignee ? actionJSON.requestedAssignee.name : 'Admin to choose'}\n💳 ${actionJSON.paymentMode}\n📅 ${fmtDate(actionJSON.salesDate)}\n\n⏳ Waiting for ${waitingFor}.\nRef: ${shortRequestRef(requestId)}`;
     try {
       await bot.editMessageText(submittedText, {
         chat_id: chatId, message_id: callbackQuery.message.message_id, parse_mode: 'Markdown',

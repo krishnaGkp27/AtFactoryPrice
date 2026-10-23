@@ -1067,6 +1067,15 @@ async function renderItem(bot, chatId, userId, idx) {
   } catch (e) {
     logger.warn(`approvalsInbox: stock-gone button check failed for ${item.requestId}: ${e.message}`);
   }
+  // SRF-6 — an admin may override the requester's supplier BEFORE approving.
+  {
+    const ajSup = item.actionJSON || {};
+    const stageSup = String(ajSup.stage || '');
+    if (ajSup.action === 'supply_request' && String(item.status || '').toLowerCase() === 'pending'
+        && !['dispatch_acceptance', 'completed'].includes(stageSup)) {
+      decisionRows.push([{ text: '✎ Assign someone else', callback_data: `srf_rea:${item.requestId}` }]);
+    }
+  }
   await render(bot, chatId, userId,
     // SLC-1 — the age traffic-light left the chips, so it leaves the card
     // footer too: one vocabulary, and age is a plain fact here.

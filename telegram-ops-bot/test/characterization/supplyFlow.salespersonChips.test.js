@@ -92,9 +92,18 @@ test('admin picks a customer: Me · Owner first, Customer direct, Sales list, Wh
   await controller.handleCallbackQuery(bot, cb('srf_sp:Customer direct', '777'));
   const s = sessionStore.get('777');
   assert.equal(s.salesperson, 'Customer direct', 'stored value is exactly Customer direct');
-  assert.equal(s.step, 'payment');
+  // SRF-6 — "Who will supply it?" comes next. Bello is Dispatch but attached
+  // to no store, so Lagos offers nobody: 🛂 Let admin choose + 📋 See all (1).
+  assert.equal(s.step, 'supplier');
+  assert.match(lastText(bot), /Who will supply it\?/);
+  assert.deepEqual(cbs(bot), ['srf_su:__more__', 'srf_su:__admin__', 'srf_back:salesperson']);
+  await controller.handleCallbackQuery(bot, cb('srf_su:__more__', '777'));
+  assert.deepEqual(cbs(bot), ['srf_su:4343', 'srf_back:salesperson'], 'See all lists every dispatch person, no admin door');
+  await controller.handleCallbackQuery(bot, cb('srf_su:4343', '777'));
+  assert.deepEqual(sessionStore.get('777').supplier, { user_id: '4343', name: 'Bello' });
+  assert.equal(sessionStore.get('777').step, 'payment');
   assert.match(lastText(bot), /Select payment mode/);
-  assert.ok(cbs(bot).includes('srf_back:salesperson'));
+  assert.ok(cbs(bot).includes('srf_back:supplier'));
 });
 
 test('an admin with no Users row: Me · <id>', async () => {
@@ -114,6 +123,7 @@ test('a Sales-department submitter: Me · Musa first; admins and other sellers i
 
   await controller.handleCallbackQuery(bot, cb('srf_sp:Musa', '4242'));
   assert.equal(sessionStore.get('4242').salesperson, 'Musa', 'Me stores the name, like picking oneself from the list');
+  assert.equal(sessionStore.get('4242').step, 'supplier');
 });
 
 test('a Dispatch submitter: no Me chip, Customer direct is the first row', async () => {
@@ -194,6 +204,8 @@ test('new-customer approved: the continuation card is the same chip set (was eve
     // The card is live: Customer direct advances the resumed flow.
     await controller.handleCallbackQuery(bot, cb('srf_sp:Customer direct', '4242'));
     assert.equal(sessionStore.get('4242').salesperson, 'Customer direct');
+    assert.equal(sessionStore.get('4242').step, 'supplier');
+    await controller.handleCallbackQuery(bot, cb('srf_su:__admin__', '4242'));
     assert.equal(sessionStore.get('4242').step, 'payment');
   } finally {
     Object.assign(approvalQueueRepository, {
