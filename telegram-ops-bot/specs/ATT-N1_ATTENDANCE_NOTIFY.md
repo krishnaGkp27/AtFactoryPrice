@@ -69,6 +69,46 @@ after the employee's receipt (and after the admin's "Marked on Behalf" card):
   an employee's location+photo mark produces exactly one broadcast to the
   admin, in the receipt's words, and none to the employee.
 
+## ATT-N2 — the 📷 Show photo chip (owner go, 26-Oct-2026)
+
+> "I am not able to see the picture attached by the employee. Can you give me
+> a chip where I can tap, and it will show the image attached?" … "Go ahead
+> with the chip as recommended."
+
+When the mark carried a photo the card ends with one chip:
+
+```
+🕘 Attendance · Muhammad marked Present
+📍 Kano Office · 13:33 · 26-Oct-2026
+📡 Position verified · 21 m from site · 📷 Photo
+[📷 Show photo]
+```
+
+- `atn:p:<telegram_id>:<date>` — session-free and date-bound: it fetches
+  THAT day's row (`attendanceRepository.findByDateUser`) and sends the stored
+  Telegram file id, so it works for years and never confuses two marks.
+- The photo arrives as a reply under its card, captioned
+  `📷 Muhammad · Kano Office · 13:33 · 26-Oct-2026`, with `🗑 Hide photo`
+  (`atn:x`). Tapping Show again REPLACES the earlier picture
+  (`ephemeralDocs`, kind `attn`; the `DOC_VIEW_MINUTES` backstop also applies)
+  — a peek, never a chat resident (ATT-E1, 03-Aug-2026).
+- Who may tap: anyone the broadcast could reach — the Railway admin pool or
+  an id named in `ATTENDANCE_NOTIFY_IDS`. Others: `Admins only`.
+- No photo on record, or Telegram can no longer serve the file: a toast,
+  nothing sent. An admin's mark on behalf has no photo, so no chip.
+- Deliberately NO position chip: the 03-Aug ruling is distance only, never
+  coordinates, and a map pin is the coordinates.
+- Why not the existing `atd_adm:sel:` viewer: admin-only (the holder may
+  not be one), today's row only, and it seeds an admin session on every tap.
+- Wiring: one line in the controller's prefix table (`atn:` →
+  `attendanceNotify.handleCallback`).
+
+Tests: `attendanceNotify.test.js` (chip on both audiences, none without a
+photo; the tap's file id / caption / reply / Hide chip; replace-on-second-tap;
+Hide; audience gate incl. the holder; no-row and Telegram-failure toasts) and
+`attendanceVerify.test.js` (the real DM carries the chip; the tap delivers the
+stored file to the admin).
+
 ## Later (owner's call)
 
 - "Exceptions only" mode (late past the cutoff, unverified, on-behalf) if

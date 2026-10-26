@@ -7392,6 +7392,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['bgl:'], handle: (bot, cq) => require('../flows/businessGlanceFlow').handleCallback(bot, cq) },
   { prefixes: ['atd_rpt:'], handle: (bot, cq) => require('../flows/attendanceReportFlow').handleCallback(bot, cq) },
   { prefixes: ['atd_adm:'], handle: (bot, cq) => require('../flows/attendanceAdminFlow').handleCallback(bot, cq) },
+  // ATT-N2 (owner go 26-Oct-2026) — 📷 Show photo / 🗑 Hide on the attendance broadcast (session-free).
+  { prefixes: ['atn:'], handle: (bot, cq) => require('../services/attendanceNotify').handleCallback(bot, cq) },
   // CNET-1b — contact network (category → buyers → people, recursive).
   { prefixes: ['cn:'], handle: (bot, cq) => require('../flows/contactNetworkFlow').handleCallback(bot, cq) },
   // MORN-1 — morning digest settings (admin-only).

@@ -94,6 +94,18 @@ test('location+photo mode: inside the fence + fresh photo → marked with verifi
   assert.match(toAdmin[0].args.text, /📡 Position verified · \d+ m from site · 📷 Photo/);
   assert.ok(!bot.calls.some((c) => c.method === 'sendMessage' && String(c.args.chatId) === '4242'
     && /🕘 \*Attendance\*/.test(c.args.text)), 'the employee holds the receipt, not the broadcast');
+  // ATT-N2 — the card carries 📷 Show photo; the admin's tap delivers the
+  // stored file under the card, date-bound, session-free.
+  const chip = toAdmin[0].args.opts.reply_markup.inline_keyboard[0][0];
+  assert.equal(chip.text, '📷 Show photo');
+  assert.match(chip.callback_data, /^atn:p:4242:\d{4}-\d{2}-\d{2}$/);
+  const notify = require(path.join(SRC, 'services/attendanceNotify'));
+  await notify.handleCallback(bot, { id: 'q', data: chip.callback_data, from: { id: '777' }, message: { message_id: 5, chat: { id: '777' } } });
+  const ph = bot.calls.filter((c) => c.method === 'sendPhoto').pop();
+  assert.ok(ph, 'photo sent to the admin');
+  assert.equal(ph.args.photo, 'att-photo-1');
+  assert.equal(String(ph.args.chatId), '777');
+  assert.match(ph.args.opts.caption, /Kano Office/);
 });
 
 test('outside the fence → rejected with distance shown, nothing written', async () => {

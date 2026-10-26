@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 const settingsRepository = require('../../../src/repositories/settingsRepository');
 const usersRepository = require('../../../src/repositories/usersRepository');
 const adminFeed = require('../../../src/services/adminFeed');
+const attendanceRepository = require('../../../src/repositories/attendanceRepository');
 const svc = require('../../../src/services/attendanceNotify');
 
 let settings = {};
@@ -139,4 +140,85 @@ test('never throws: a Markdown failure retries plain, a dead chat is counted, a 
     const r2 = await svc.notifyMarked(bot2, { entry: ENTRY });
     assert.equal(r2.reason, 'admin_pool', 'a Settings error falls back to the pool, never throws');
   } finally { settingsRepository.getAll = origGet; settings = {}; }
+});
+
+/* ── ATT-N2: the 📷 Show photo chip ─────────────────────────────────── */
+
+const ROWS = new Map([[`2026-10-26|4242`, ENTRY]]);
+attendanceRepository.findByDateUser = async (date, tid) => ROWS.get(`${date}|${tid}`) || null;
+
+function query(data, from = '111', messageId = 50) {
+  return { id: 'q1', data, from: { id: from }, message: { message_id: messageId, chat: { id: from } } };
+}
+function photoBot() {
+  const calls = [];
+  const rec = (method) => async (...args) => { calls.push({ method, args }); return { message_id: 900 + calls.length }; };
+  return {
+    calls,
+    sendMessage: rec('sendMessage'), sendPhoto: rec('sendPhoto'),
+    deleteMessage: rec('deleteMessage'), answerCallbackQuery: rec('answerCallbackQuery'),
+    of: (m) => calls.filter((c) => c.method === m),
+  };
+}
+
+test('the card carries 📷 Show photo only when a photo was attached — on both audiences', async () => {
+  assert.equal(svc.keyboardFor({ ...ENTRY, photo_file_id: '' }), null);
+  assert.deepEqual(svc.keyboardFor(ENTRY), { inline_keyboard: [[{ text: '📷 Show photo', callback_data: 'atn:p:4242:2026-10-26' }]] });
+  settings = {};
+  let bot = recordingBot();
+  await svc.notifyMarked(bot, { entry: ENTRY });
+  assert.ok(bot.calls.every((c) => c.opts.reply_markup.inline_keyboard[0][0].callback_data === 'atn:p:4242:2026-10-26'), 'feed path carries the chip');
+  settings = { ATTENDANCE_NOTIFY_IDS: '555' };
+  bot = recordingBot();
+  await svc.notifyMarked(bot, { entry: ENTRY });
+  assert.equal(bot.calls[0].opts.reply_markup.inline_keyboard[0][0].text, '📷 Show photo', 'holder path carries the chip');
+  bot = recordingBot();
+  await svc.notifyMarked(bot, { entry: { ...ENTRY, photo_file_id: '' } });
+  assert.equal(bot.calls[0].opts.reply_markup, undefined, 'no photo → no chip');
+  settings = {};
+});
+
+test('tap: an admin gets that day\'s photo under the card, captioned, with 🗑 Hide; a second tap replaces it', async () => {
+  settings = {};
+  const bot = photoBot();
+  assert.equal(await svc.handleCallback(bot, query('atn:p:4242:2026-10-26')), true);
+  const [ph] = bot.of('sendPhoto');
+  assert.equal(ph.args[0], '111');
+  assert.equal(ph.args[1], 'f1', 'the stored Telegram file id, no re-download');
+  assert.equal(ph.args[2].caption, '📷 Abdul · Kano office · 08:42 · 26-Oct-2026');
+  assert.equal(ph.args[2].reply_to_message_id, 50, 'sits under its card');
+  assert.equal(ph.args[2].reply_markup.inline_keyboard[0][0].callback_data, 'atn:x');
+  assert.match(bot.of('answerCallbackQuery')[0].args[1].text, /Photo sent below/);
+  await svc.handleCallback(bot, query('atn:p:4242:2026-10-26'));
+  assert.equal(bot.of('sendPhoto').length, 2);
+  assert.equal(bot.of('deleteMessage').length, 1, 'the first picture was swept — a peek, not a resident');
+});
+
+test('tap: 🗑 Hide deletes the picture; a non-audience tapper is refused; a named holder is admitted', async () => {
+  settings = {};
+  let bot = photoBot();
+  await svc.handleCallback(bot, query('atn:x', '111', 77));
+  assert.deepEqual(bot.of('deleteMessage')[0].args, ['111', 77]);
+  bot = photoBot();
+  await svc.handleCallback(bot, query('atn:p:4242:2026-10-26', '999'));
+  assert.equal(bot.of('sendPhoto').length, 0);
+  assert.match(bot.of('answerCallbackQuery')[0].args[1].text, /Admins only/);
+  settings = { ATTENDANCE_NOTIFY_IDS: '999' };
+  bot = photoBot();
+  await svc.handleCallback(bot, query('atn:p:4242:2026-10-26', '999'));
+  assert.equal(bot.of('sendPhoto').length, 1, 'the holder named in Settings may view');
+  settings = {};
+});
+
+test('tap: no row or no photo → a plain toast; a Telegram failure → a toast, never a throw; foreign data ignored', async () => {
+  settings = {};
+  let bot = photoBot();
+  await svc.handleCallback(bot, query('atn:p:4242:2026-10-25'));
+  assert.equal(bot.of('sendPhoto').length, 0);
+  assert.match(bot.of('answerCallbackQuery')[0].args[1].text, /No photo on record/);
+  bot = photoBot();
+  bot.sendPhoto = async () => { throw new Error('wrong file_id'); };
+  await svc.handleCallback(bot, query('atn:p:4242:2026-10-26'));
+  assert.match(bot.of('answerCallbackQuery')[0].args[1].text, /could not return that photo/);
+  assert.equal(await svc.handleCallback(photoBot(), query('atd:home')), false, 'not ours');
 });

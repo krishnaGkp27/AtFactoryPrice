@@ -29,16 +29,32 @@
  * tapped is never told twice: they hold the receipt already.
  *
  * Never throws — a notification failure must not break a mark that saved.
+ *
+ * ATT-N2 (owner, 26-Oct-2026 — "I am not able to see the picture attached
+ * by the employee. Can you give me a chip where I can tap, and it will show
+ * the image attached?"): when the mark carried a photo the card ends with
+ * `📷 Show photo` (`atn:p:<telegram_id>:<date>` — session-free, date-bound,
+ * so it fetches THAT day's photo for years). The tap sends the photo under
+ * its card as a reply with a `🗑 Hide photo` chip; tapping Show again
+ * REPLACES the earlier picture (ephemeralDocs, kind 'attn' — a peek, never
+ * a chat resident, ATT-E1 03-Aug-2026). Anyone the broadcast could reach
+ * may tap: the admin pool or an ATTENDANCE_NOTIFY_IDS holder. No position
+ * chip, deliberately: the 03-Aug ruling is distance only, never coordinates.
  */
 
 const logger = require('../utils/logger');
 const settingsRepository = require('../repositories/settingsRepository');
 const usersRepository = require('../repositories/usersRepository');
 const adminFeed = require('./adminFeed');
+const attendanceRepository = require('../repositories/attendanceRepository');
+const ephemeralDocs = require('./ephemeralDocs');
+const auth = require('../middlewares/auth');
 const fmtDate = require('../utils/formatDate');
 const { mdEscape } = require('../utils/flowKit');
 
 const EVENT_TYPE = 'attendance.marked';
+const PREFIX = 'atn:';
+const PHOTO_KIND = 'attn';
 const DEFAULT_TZ = 'Africa/Lagos';
 
 function fmtTime(iso, timezone) {
@@ -106,16 +122,28 @@ function buildText({ entry, tz, markedByName }) {
   return lines.join('\n');
 }
 
-async function sendDirect(bot, ids, text, excludeUserId) {
+/**
+ * ATT-N2 — the card's keyboard: one `📷 Show photo` chip when the mark
+ * carried a photo, else nothing. Pure.
+ * @param {object} entry the saved attendance row
+ * @returns {object|null} Telegram reply_markup or null
+ */
+function keyboardFor(entry) {
+  const e = entry || {};
+  if (!e.photo_file_id || !e.telegram_id || !e.date) return null;
+  return { inline_keyboard: [[{ text: '📷 Show photo', callback_data: `${PREFIX}p:${e.telegram_id}:${e.date}` }]] };
+}
+
+async function sendDirect(bot, ids, text, excludeUserId, extraOpts = {}) {
   let sent = 0;
   let skipped = 0;
   for (const id of ids) {
     if (excludeUserId && String(id) === String(excludeUserId)) { skipped += 1; continue; }
     try {
-      await bot.sendMessage(id, text, { parse_mode: 'Markdown' });
+      await bot.sendMessage(id, text, { parse_mode: 'Markdown', ...extraOpts });
       sent += 1;
     } catch (_) {
-      try { await bot.sendMessage(id, text); sent += 1; } catch (e2) {
+      try { await bot.sendMessage(id, text, { ...extraOpts }); sent += 1; } catch (e2) {
         logger.warn(`attendanceNotify: send to ${id} failed: ${e2.message}`);
         skipped += 1;
       }
@@ -144,12 +172,14 @@ async function notifyMarked(bot, p = {}) {
       timezone(), p.markedById ? nameOf(p.markedById) : Promise.resolve(''),
     ]);
     const text = buildText({ entry: p.entry, tz, markedByName });
+    const kb = keyboardFor(p.entry);
+    const extra = kb ? { reply_markup: kb } : {};
     const ids = await overrideIds();
     if (ids.length) {
-      const r = await sendDirect(bot, ids, text, p.excludeUserId);
+      const r = await sendDirect(bot, ids, text, p.excludeUserId, extra);
       return { ...r, reason: 'override' };
     }
-    const r = await adminFeed.notify(bot, EVENT_TYPE, text, { parse_mode: 'Markdown' },
+    const r = await adminFeed.notify(bot, EVENT_TYPE, text, { parse_mode: 'Markdown', ...extra },
       p.excludeUserId ? { excludeUserId: p.excludeUserId } : {});
     return { sent: r.sent || 0, skipped: r.skipped || 0, reason: 'admin_pool' };
   } catch (e) {
@@ -158,9 +188,70 @@ async function notifyMarked(bot, p = {}) {
   }
 }
 
+/** True for anyone the broadcast could have reached (admin pool or a named holder). */
+async function mayView(userId) {
+  if (auth.isAdmin(userId)) return true;
+  const ids = await overrideIds();
+  return ids.includes(String(userId));
+}
+
+/**
+ * ATT-N2 — the `atn:*` taps. Session-free. Never throws.
+ *   atn:p:<telegram_id>:<date>  send that day's photo under the card
+ *   atn:x                        hide the photo the chip sits under
+ * @returns {Promise<boolean>} true when the tap was ours
+ */
+async function handleCallback(bot, query) {
+  const data = String((query && query.data) || '');
+  if (!data.startsWith(PREFIX)) return false;
+  const userId = String(query.from && query.from.id);
+  const msg = query.message || {};
+  const chatId = msg.chat && msg.chat.id;
+  const toast = (text, alert) => bot.answerCallbackQuery(query.id, { text, show_alert: !!alert }).catch(() => {});
+  try {
+    if (data === `${PREFIX}x`) {
+      try { await bot.deleteMessage(chatId, msg.message_id); } catch (_) { /* already gone */ }
+      await toast('Hidden');
+      return true;
+    }
+    const m = data.match(/^atn:p:([^:]+):(\d{4}-\d{2}-\d{2})$/);
+    if (!m) { await toast('Unknown tap'); return true; }
+    if (!(await mayView(userId))) { await toast('Admins only.', true); return true; }
+    let entry = null;
+    try { entry = await attendanceRepository.findByDateUser(m[2], m[1]); } catch (_) { entry = null; }
+    if (!entry || !entry.photo_file_id) { await toast('No photo on record for that mark.', true); return true; }
+    // A peek, never a resident: Show again REPLACES the earlier picture.
+    await ephemeralDocs.sweep(bot, userId, { kind: PHOTO_KIND });
+    const tz = await timezone();
+    const caption = `📷 ${String(entry.employee_name || entry.telegram_id).trim()} · ${entry.location || '—'}`
+      + ` · ${fmtTime(entry.logged_at, tz)} · ${fmtDate(entry.date)}`;
+    try {
+      const sent = await bot.sendPhoto(chatId, entry.photo_file_id, {
+        caption,
+        reply_to_message_id: msg.message_id,
+        allow_sending_without_reply: true,
+        reply_markup: { inline_keyboard: [[{ text: '🗑 Hide photo', callback_data: `${PREFIX}x` }]] },
+      });
+      if (sent && sent.message_id) ephemeralDocs.track(bot, userId, chatId, sent.message_id, PHOTO_KIND);
+      await toast('Photo sent below');
+    } catch (e) {
+      logger.warn(`attendanceNotify: photo send failed: ${e.message}`);
+      await toast('Telegram could not return that photo — the file may have expired.', true);
+    }
+    return true;
+  } catch (e) {
+    logger.warn(`attendanceNotify.handleCallback failed: ${e.message}`);
+    await toast('Could not open that photo right now.');
+    return true;
+  }
+}
+
 module.exports = {
   notifyMarked,
   buildText,
+  keyboardFor,
+  handleCallback,
   EVENT_TYPE,
-  _internals: { overrideIds, fmtTime },
+  PREFIX,
+  _internals: { overrideIds, fmtTime, mayView },
 };
