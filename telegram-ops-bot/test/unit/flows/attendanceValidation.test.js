@@ -193,7 +193,7 @@ test('an unverified write also reaches the admins', async () => {
   sessionStore.clear(EMP);
 });
 
-test('a healthy mark alerts nobody', async () => {
+test('a healthy mark alerts nobody — the admin hears the mark itself, once (ATT-N1)', async () => {
   const alerts = require(path.join(ROOT, 'src/services/attendanceAlerts'));
   alerts._reset();
   const bot = fakeBot();
@@ -205,6 +205,11 @@ test('a healthy mark alerts nobody', async () => {
   };
   stubService({ mark: async () => ({ ok: true, entry: ENTRY, alreadyLogged: false, verified: true }) });
   await tapLocation(bot);
-  assert.equal(dms.length, 0, 'no noise on the happy path');
+  // ATT-V2: no failure ALERT on the happy path. ATT-N1 (owner 26-Oct-2026):
+  // the admin pool is told about the mark itself — exactly one card, and
+  // nothing else reaches the admin.
+  assert.equal(dms.length, 1, 'one broadcast, no alert noise');
+  assert.match(dms[0], /🕘 \*Attendance\*/);
+  assert.ok(!/⚠️/.test(dms[0]), 'the broadcast is not an alert');
   sessionStore.clear(EMP);
 });
