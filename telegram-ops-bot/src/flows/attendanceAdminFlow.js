@@ -894,6 +894,11 @@ async function applyBehalf(bot, chatId, userId, location) {
       backRow(),
     ],
   );
+  // ATT-N1 — the other admins hear it too, with who marked it.
+  await require('../services/attendanceNotify').notifyMarked(bot, {
+    entry: result.entry, alreadyLogged: result.alreadyLogged, verified: result.verified,
+    markedById: userId, excludeUserId: userId,
+  });
 }
 
 // ---------------------------------------------------------------------------

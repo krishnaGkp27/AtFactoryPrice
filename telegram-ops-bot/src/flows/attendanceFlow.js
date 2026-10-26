@@ -436,6 +436,12 @@ async function finalizeMark(bot, chatId, userId) {
     [homeRow()],
   );
   sessionStore.clear(userId, 'completed');
+  // ATT-N1 (owner 26-Oct-2026) — the admins hear the mark the moment it
+  // saves. A repeat tap or an unconfirmed save sends nothing (see service).
+  await require('../services/attendanceNotify').notifyMarked(bot, {
+    entry: result.entry, alreadyLogged: result.alreadyLogged, verified: result.verified,
+    excludeUserId: userId,
+  });
 }
 
 // ---------------------------------------------------------------------------

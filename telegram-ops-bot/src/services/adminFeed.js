@@ -70,6 +70,12 @@ const CATALOG = Object.freeze([
   ['po.created',       'Procurement Order drafted',          'inventory', true ],
   ['po.received',      'Procurement Order fully received',   'inventory', true ],
   ['po.partial',       'Procurement Order partially received','inventory', false],
+
+  // ATT-N1 (owner, 26-Oct-2026): "broadcast to all the admins" — default-ON
+  // by the owner's word, unlike other T2-era additions. Each admin can still
+  // switch it off for their own phone; Settings ATTENDANCE_NOTIFY_IDS re-routes
+  // it to one holder and bypasses this feed entirely.
+  ['attendance.marked', 'Employee marked attendance',        'attendance', true ],
 ]);
 
 const DEFAULT_POLICY = Object.freeze(
@@ -81,6 +87,7 @@ const GROUP_META = Object.freeze({
   orders:    { icon: '🛒', label: 'Orders / Sales' },
   finance:   { icon: '💰', label: 'Finance' },
   inventory: { icon: '🏭', label: 'Inventory / Warehouses' },
+  attendance: { icon: '🕘', label: 'Attendance' },
 });
 
 // ---------------------------------------------------------------------------

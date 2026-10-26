@@ -142,6 +142,11 @@ const DEFAULTS = {
   DIGEST_ATTENDANCE: 1,
   // ATT-C3 master switch for the 09:00 employee nudge DM.
   ATTENDANCE_REMINDER_ENABLED: 1,
+  // ATT-N1 (owner 26-Oct-2026): who is told the moment an employee marks
+  // attendance. Blank = every admin in the Railway ADMIN_IDS pool (through
+  // the 🔔 Notifications feed, per-admin switchable). A CSV of Telegram ids
+  // = only those people — the owner's future "holder of this responsibility".
+  ATTENDANCE_NOTIFY_IDS: '',
   // SNAP-3 spend guard: max metered vision (OCR) calls per day.
   OCR_DAILY_CAP: 100,
   // TRM-1 (owner, 27-Aug-2026) — automatic task reminders. Master switch

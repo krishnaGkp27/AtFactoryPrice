@@ -83,6 +83,17 @@ test('location+photo mode: inside the fence + fresh photo → marked with verifi
   assert.match(bot.allText(), /Attendance Recorded/);
   assert.match(bot.allText(), /Position verified/);
   assert.ok(!sessionStore.get('4242'), 'session cleared');
+  // ATT-N1 — the admin pool hears the mark the moment it saves, in the
+  // same words as the employee's receipt; the employee is not told twice.
+  const toAdmin = bot.calls.filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === '777'
+    && /🕘 \*Attendance\*/.test(c.args.text));
+  assert.equal(toAdmin.length, 1, 'one broadcast to the admin');
+  // (this fixture's findByUserId answers `U<id>`, so the receipt name is U4242)
+  assert.match(toAdmin[0].args.text, /\*U4242\* marked Present/);
+  assert.match(toAdmin[0].args.text, /📍 Kano Office · \d\d:\d\d · \d\d-[A-Z][a-z]{2}-\d{4}/);
+  assert.match(toAdmin[0].args.text, /📡 Position verified · \d+ m from site · 📷 Photo/);
+  assert.ok(!bot.calls.some((c) => c.method === 'sendMessage' && String(c.args.chatId) === '4242'
+    && /🕘 \*Attendance\*/.test(c.args.text)), 'the employee holds the receipt, not the broadcast');
 });
 
 test('outside the fence → rejected with distance shown, nothing written', async () => {
