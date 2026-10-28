@@ -442,6 +442,8 @@ async function finalizeMark(bot, chatId, userId) {
     entry: result.entry, alreadyLogged: result.alreadyLogged, verified: result.verified,
     excludeUserId: userId,
   });
+  // ATT-R1 — a live chase card flips to ✅ and the person drops out.
+  await require('../services/attendanceChase').onMarked(bot, userId, { loggedAt: result.entry.logged_at });
 }
 
 // ---------------------------------------------------------------------------
@@ -455,6 +457,8 @@ async function handleCallback(bot, query) {
   const chatId = query.message.chat.id;
   await bot.answerCallbackQuery(query.id).catch(() => {});
 
+  // ATT-R1 — 📍 Mark now on a chase card (session-free entry).
+  if (data === 'atd:now') { await markNow(bot, chatId, userId, query.message.message_id); return true; }
   if (data === 'atd:home' || data === 'atd:cancel') {
     const s = sessionStore.get(userId);
     if (s && s.step === 'await_gps') {
@@ -485,6 +489,25 @@ async function handleCallback(bot, query) {
   }
 
   return false;
+}
+
+/**
+ * ATT-R1 — 📍 Mark now on a chase card. The card comes down (the person is
+ * acting on it), the mark flow opens as a fresh card, and with exactly ONE
+ * configured location the location step is skipped (a one-option step is
+ * navigation, not selection — §2). The verification steps that follow are
+ * untouched; the menu tile keeps its status-first screen (ATT-V1).
+ */
+async function markNow(bot, chatId, userId, messageId) {
+  if (messageId) { try { await bot.deleteMessage(chatId, messageId); } catch (_) { /* already gone */ } }
+  await start(bot, chatId, userId, null);
+  const s = sessionStore.get(userId);
+  if (!s || s.type !== 'attendance_flow' || s.step !== 'pick_location') return;
+  let cfg = null;
+  try { cfg = await attendanceService.getConfig(); } catch (_) { cfg = null; }
+  if (cfg && Array.isArray(cfg.locations) && cfg.locations.length === 1) {
+    await applyPick(bot, chatId, userId, cfg.locations[0]);
+  }
 }
 
 module.exports = {

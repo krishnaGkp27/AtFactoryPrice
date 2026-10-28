@@ -44,6 +44,8 @@ const auditLogRepo = require('../repositories/auditLogRepository');
 const logger = require('../utils/logger');
 const fmtDate = require('../utils/formatDate');
 const { isNotModified } = require('../utils/telegramUI');
+const attendanceChase = require('../services/attendanceChase');
+const { mdEscape: mdEsc } = require('../utils/flowKit');
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const TZ_RE = /^[A-Za-z_/+\-0-9]{2,64}$/;
@@ -598,7 +600,7 @@ async function renderToday(bot, chatId, userId) {
       return new Intl.DateTimeFormat('en-GB', {
         timeZone: cfg.timezone, hour: '2-digit', minute: '2-digit', hour12: false,
       }).format(new Date(iso));
-    } catch (_) { return iso.slice(11, 16); }
+    } catch (_) { return String(iso || '').slice(11, 16); }
   };
 
   // ATT-E1 — 📎 marks a row that carries evidence (a position fix and/or a
@@ -662,6 +664,18 @@ async function renderToday(bot, chatId, userId) {
   if (ghost.length) {
     kb.push([{ text: `🧹 Clean ${ghost.length} ghost ID${ghost.length > 1 ? 's' : ''} now`, callback_data: 'atd_adm:clean_ghosts' }]);
   }
+  // ATT-R1 — chase the missing: the audience's missing count (department
+  // members + the Required list, the 09:00 nudge's people) and any chase
+  // running right now.
+  let chaseMissing = 0;
+  try { chaseMissing = (await attendanceChase.missingNow()).length; } catch (_) { chaseMissing = 0; }
+  const chasesLive = attendanceChase.liveChases(date).map(attendanceChase.summary);
+  const chaseSection = chasesLive.length
+    ? '\n\n' + chasesLive.map((c) => `📣 Chasing *${mdEsc(c.scopeLabel)}* · ${c.pending.length} pending`
+      + (c.intervalMin ? ` · every ${c.intervalMin} min · next ${c.nextLabel}` : ' · once') + ` · until ${c.until}`).join('\n')
+    : '';
+  if (chaseMissing) kb.push([{ text: `📣 Chase the missing (${chaseMissing})`, callback_data: 'atd_adm:chase' }]);
+  if (chasesLive.length) kb.push([{ text: `📣 Chase status (${chasesLive.length} live)`, callback_data: 'atd_adm:chase:st' }]);
   kb.push([{ text: '🔁 Refresh', callback_data: 'atd_adm:today' }]);
   kb.push(backRow());
 
@@ -670,10 +684,185 @@ async function renderToday(bot, chatId, userId) {
     + `*Present (${present.length}/${required.length}):*\n${presentLines}\n\n`
     + `*Not yet logged (${missing.length}):*\n${missingLines}`
     + `${extrasSection}`
+    + `${chaseSection}`
     + `${ghostBanner}\n\n`
     + `_Live view — refresh by re-opening._`,
     kb,
   );
+}
+
+/* ── ATT-R1: chase the missing (owner, 28-Oct-2026) ─────────────────── */
+/**
+ * "the admin can give a constant alert … to the departments or employee
+ * group in a case where they don't mark the attendance … a button to mark
+ * it now". Four screens on the admin's own card: who (everyone · a
+ * department · picked people) → how often (once · every 30 · every 60
+ * minutes, until the 🕒 Cutoff) → the chase starts and its status card
+ * tracks marked / pending → ⏹ Stop. The cards, re-sends and ✅ flips live in
+ * services/attendanceChase.js; nothing here touches the sheet.
+ *
+ *   atd_adm:chase        who?            atd_adm:chase:all      everyone missing
+ *   atd_adm:chase:d:<i>  a department    atd_adm:chase:pp       pick people
+ *   atd_adm:chase:t:<i>  tick a person   atd_adm:chase:go       picked → cadence
+ *   atd_adm:chase:c:<n>  once (0) / 30 / 60 → start
+ *   atd_adm:chase:st     status          atd_adm:chase:x:<id>   stop that chase
+ */
+function chaseState(userId) {
+  const s = sessionStore.get(userId) || { type: 'attendance_admin_flow', step: null, flowMessageId: null };
+  if (!s.chase) s.chase = { missing: [], depts: [], pick: [], targets: [], label: '' };
+  return s;
+}
+const CHASE_END = {
+  all_marked: 'everyone marked', cutoff: 'cutoff reached', stopped: 'stopped by an admin',
+  superseded: 'replaced by a newer chase',
+};
+
+async function renderChaseScope(bot, chatId, userId) {
+  const s = chaseState(userId);
+  const cfg = await attendanceService.getConfig();
+  const { date } = await attendanceService.getTodayAll(cfg.timezone);
+  const missing = await attendanceChase.missingNow();
+  const byDept = new Map();
+  for (const m of missing) for (const d of m.departments) byDept.set(d, (byDept.get(d) || 0) + 1);
+  const depts = [...byDept.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([name, count]) => ({ name, count }));
+  s.chase = { missing, depts, pick: [], targets: [], label: '' };
+  sessionStore.set(userId, s);
+  if (!missing.length) {
+    await render(bot, chatId, userId,
+      `📣 *Chase — who?*\n\n_Everyone required has marked for ${fmtDate(date)} — nobody to chase._`,
+      [[{ text: '⬅ Today', callback_data: 'atd_adm:today' }], backRow()]);
+    return;
+  }
+  const kb = [[{ text: `👥 Everyone missing (${missing.length})`, callback_data: 'atd_adm:chase:all' }]];
+  for (let i = 0; i < depts.length; i += 2) {
+    const chip = (j) => ({ text: `🏭 ${depts[j].name} (${depts[j].count})`, callback_data: `atd_adm:chase:d:${j}` });
+    const row = [chip(i)];
+    if (depts[i + 1]) row.push(chip(i + 1));
+    kb.push(row);
+  }
+  kb.push([{ text: '👤 Pick people', callback_data: 'atd_adm:chase:pp' }]);
+  kb.push([{ text: '⬅ Today', callback_data: 'atd_adm:today' }]);
+  const names = missing.map((m) => `  ⏳ ${mdEsc(m.name)}`).join('\n');
+  await render(bot, chatId, userId,
+    `📣 *Chase — who?*\n⏳ ${missing.length} not marked · ${fmtDate(date)} · deadline was ${cfg.deadlineTime || '09:30'}\n\n${names}`,
+    kb);
+}
+
+async function renderChasePeople(bot, chatId, userId) {
+  const s = chaseState(userId);
+  const { missing, pick } = s.chase;
+  if (!missing.length) { await renderChaseScope(bot, chatId, userId); return; }
+  const kb = [];
+  for (let i = 0; i < missing.length; i += 2) {
+    const chip = (j) => ({ text: `${pick.includes(missing[j].id) ? '☑' : '☐'} ${missing[j].name}`, callback_data: `atd_adm:chase:t:${j}` });
+    const row = [chip(i)];
+    if (missing[i + 1]) row.push(chip(i + 1));
+    kb.push(row);
+  }
+  if (pick.length) kb.push([{ text: `✅ Continue (${pick.length})`, callback_data: 'atd_adm:chase:go' }]);
+  kb.push([{ text: '⬅ Back', callback_data: 'atd_adm:chase' }]);
+  await render(bot, chatId, userId,
+    `📣 *Chase — pick people*\nTap a name to tick it · ${pick.length} picked`, kb);
+}
+
+async function renderChaseCadence(bot, chatId, userId) {
+  const s = chaseState(userId);
+  const { targets, label } = s.chase;
+  if (!targets.length) { await renderChaseScope(bot, chatId, userId); return; }
+  const cfg = await attendanceService.getConfig();
+  const until = cfg.cutoffTime || '23:59';
+  const names = targets.map((t) => `  ⏳ ${mdEsc(t.name)}`).join('\n');
+  await render(bot, chatId, userId,
+    `📣 *Chase ${mdEsc(label)}* — how often?\n\n${names}\n\n_Each person holds one live card; it flips to ✅ the moment they mark._`,
+    [
+      [{ text: '🔔 Once, now', callback_data: 'atd_adm:chase:c:0' }],
+      [{ text: `🔁 Every 30 min until ${until}`, callback_data: 'atd_adm:chase:c:30' }],
+      [{ text: `🔁 Every 60 min until ${until}`, callback_data: 'atd_adm:chase:c:60' }],
+      [{ text: '⬅ Back', callback_data: 'atd_adm:chase' }],
+    ]);
+}
+
+async function renderChaseStatus(bot, chatId, userId, note = '') {
+  const cfg = await attendanceService.getConfig();
+  const { date } = await attendanceService.getTodayAll(cfg.timezone);
+  const live = attendanceChase.liveChases(date).map(attendanceChase.summary);
+  const shown = live.length ? live : [attendanceChase.summary(attendanceChase.lastEnded(date))].filter(Boolean);
+  const kb = [];
+  let text = `📣 *Chase — ${fmtDate(date)}*${note ? `\n${note}` : ''}\n`;
+  if (!shown.length) text += '\n_No chase today yet._';
+  for (const c of shown) {
+    const cadence = c.intervalMin ? `every ${c.intervalMin} min until ${c.until}` : 'once';
+    text += `\n${c.live ? '📣 *Chasing' : '🏁 *Chased'} ${mdEsc(c.scopeLabel)}* · ${c.total} people · ${cadence}`
+      + (c.auto ? ' · automatic' : '') + (c.live ? '' : ` · ended: ${CHASE_END[c.endedReason] || c.endedReason}`) + '\n';
+    for (const m of c.marked) text += `  ✅ ${mdEsc(m.name)} · marked ${m.at}\n`;
+    for (const p of c.pending) {
+      const nth = p.sent ? `${attendanceChase._internals.ordinal(p.sent)} reminder ${p.lastAt}` : 'not reached';
+      text += `  ⏳ ${mdEsc(p.name)} · ${nth}${p.failed ? ' · ⚠️ DM failed' : ''}\n`;
+    }
+    if (c.live && c.nextLabel && c.pending.length) text += `  Next at ${c.nextLabel}\n`;
+    if (c.live) kb.push([{ text: `⏹ Stop ${c.scopeLabel}`.slice(0, 60), callback_data: `atd_adm:chase:x:${c.id}` }]);
+  }
+  kb.push([{ text: '🔁 Refresh', callback_data: 'atd_adm:chase:st' }, { text: '⬅ Today', callback_data: 'atd_adm:today' }]);
+  await render(bot, chatId, userId, text.trimEnd(), kb);
+}
+
+async function handleChaseCallback(bot, chatId, userId, data) {
+  if (data === 'atd_adm:chase')    { await renderChaseScope(bot, chatId, userId); return true; }
+  if (data === 'atd_adm:chase:st') { await renderChaseStatus(bot, chatId, userId); return true; }
+  if (data === 'atd_adm:chase:pp') { await renderChasePeople(bot, chatId, userId); return true; }
+  const s = chaseState(userId);
+  if (data === 'atd_adm:chase:all') {
+    s.chase.targets = s.chase.missing.slice();
+    s.chase.label = `Everyone missing (${s.chase.targets.length})`;
+    sessionStore.set(userId, s);
+    await renderChaseCadence(bot, chatId, userId);
+    return true;
+  }
+  if (data.startsWith('atd_adm:chase:d:')) {
+    const d = s.chase.depts[Number(data.slice('atd_adm:chase:d:'.length))];
+    if (!d) { await renderChaseScope(bot, chatId, userId); return true; }
+    s.chase.targets = s.chase.missing.filter((m) => m.departments.includes(d.name));
+    s.chase.label = `${d.name} (${s.chase.targets.length})`;
+    sessionStore.set(userId, s);
+    await renderChaseCadence(bot, chatId, userId);
+    return true;
+  }
+  if (data.startsWith('atd_adm:chase:t:')) {
+    const m = s.chase.missing[Number(data.slice('atd_adm:chase:t:'.length))];
+    if (m) {
+      s.chase.pick = s.chase.pick.includes(m.id) ? s.chase.pick.filter((id) => id !== m.id) : [...s.chase.pick, m.id];
+      sessionStore.set(userId, s);
+    }
+    await renderChasePeople(bot, chatId, userId);
+    return true;
+  }
+  if (data === 'atd_adm:chase:go') {
+    s.chase.targets = s.chase.missing.filter((m) => s.chase.pick.includes(m.id));
+    const names = s.chase.targets.map((t) => t.name);
+    s.chase.label = names.length > 3 ? `${names.slice(0, 3).join(', ')} +${names.length - 3}` : names.join(', ');
+    sessionStore.set(userId, s);
+    await renderChaseCadence(bot, chatId, userId);
+    return true;
+  }
+  if (data.startsWith('atd_adm:chase:c:')) {
+    const intervalMin = Number(data.slice('atd_adm:chase:c:'.length)) || 0;
+    const r = await attendanceChase.startChase(bot, {
+      by: userId, targets: s.chase.targets, scopeLabel: s.chase.label, intervalMin,
+    });
+    s.chase = { missing: [], depts: [], pick: [], targets: [], label: '' };
+    sessionStore.set(userId, s);
+    const note = r.ok
+      ? `✅ Sent to ${r.chase.targets.size} — ${intervalMin ? `again every ${intervalMin} min until ${r.chase.until}` : 'once'}.`
+      : (r.reason === 'nobody_missing' ? '_Everyone in that group has marked already — nothing sent._' : '⚠️ _Could not start the chase — try again._');
+    await renderChaseStatus(bot, chatId, userId, note);
+    return true;
+  }
+  if (data.startsWith('atd_adm:chase:x:')) {
+    const stopped = attendanceChase.stopChase(data.slice('atd_adm:chase:x:'.length), userId);
+    await renderChaseStatus(bot, chatId, userId, stopped ? '⏹ _Chase stopped — pending people keep their last card._' : '');
+    return true;
+  }
+  return false;
 }
 
 /* ── ATT-E1: one person's evidence for today (owner, 03-Aug) ────────── */
@@ -899,6 +1088,7 @@ async function applyBehalf(bot, chatId, userId, location) {
     entry: result.entry, alreadyLogged: result.alreadyLogged, verified: result.verified,
     markedById: userId, excludeUserId: userId,
   });
+  await require('../services/attendanceChase').onMarked(bot, target.telegram_id, { loggedAt: result.entry.logged_at });
 }
 
 // ---------------------------------------------------------------------------
@@ -972,6 +1162,10 @@ async function handleCallback(bot, query) {
   if (data === 'atd_adm:loc')    { await renderLocationsEditor(bot, chatId, userId); return true; }
   if (data === 'atd_adm:days')   { await renderWorkingDays(bot, chatId, userId); return true; }
   if (data === 'atd_adm:today')  { await renderToday(bot, chatId, userId); return true; }
+  // ATT-R1 — chase the missing (who → how often → status → stop).
+  if (data === 'atd_adm:chase' || data.startsWith('atd_adm:chase:')) {
+    if (await handleChaseCallback(bot, chatId, userId, data)) return true;
+  }
   // ATT-E1 — per-person evidence + the selfie as an ephemeral view.
   if (data.startsWith('atd_adm:ev:')) {
     await renderEvidence(bot, chatId, userId, data.slice('atd_adm:ev:'.length));

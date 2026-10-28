@@ -147,6 +147,15 @@ const DEFAULTS = {
   // the 🔔 Notifications feed, per-admin switchable). A CSV of Telegram ids
   // = only those people — the owner's future "holder of this responsibility".
   ATTENDANCE_NOTIFY_IDS: '',
+  // ATT-R1 (owner 28-Oct-2026) — chase the missing. The consequence sentence
+  // on every chase card (blank = the default below); AUTO = 1 starts a chase
+  // for everyone missing at the deadline on working days without an admin
+  // tap (off at launch, owner's ruling); EVERY_MIN = the automatic interval.
+  // A manual chase picks 30 or 60 on screen; every chase ends at
+  // ATTENDANCE_CUTOFF_TIME.
+  ATTENDANCE_CHASE_TEXT: '',
+  ATTENDANCE_CHASE_AUTO: 0,
+  ATTENDANCE_CHASE_EVERY_MIN: 30,
   // SNAP-3 spend guard: max metered vision (OCR) calls per day.
   OCR_DAILY_CAP: 100,
   // TRM-1 (owner, 27-Aug-2026) — automatic task reminders. Master switch

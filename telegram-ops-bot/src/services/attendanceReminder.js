@@ -99,8 +99,14 @@ async function tick(bot, now = new Date()) {
 
 function start(bot) {
   if (_timer) return;
+  // ATT-R1 — the chase rides the same minute tick (re-sends, cutoff, auto).
+  const chase = require('./attendanceChase');
   tick(bot).catch(() => {});
-  _timer = setInterval(() => tick(bot).catch(() => {}), CHECK_INTERVAL_MS);
+  chase.tick(bot).catch(() => {});
+  _timer = setInterval(() => {
+    tick(bot).catch(() => {});
+    chase.tick(bot).catch(() => {});
+  }, CHECK_INTERVAL_MS);
   if (_timer.unref) _timer.unref();
   logger.info('attendanceReminder scheduler started (minute tick)');
 }
