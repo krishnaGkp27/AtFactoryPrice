@@ -986,6 +986,39 @@ being shown to the kano manager, not the other warehouses").
 
 Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
 
+## 19 · A customer belongs to the region of their stores; an employee sees only their own region
+
+**Locked 30-Oct-2026 (owner, CRM-R1).**
+
+> "a separate selection of chips from different regions … Lagos (Lagos +
+> Idumota) … Kano office … This separation of customers will take place in
+> all other regions." — "this bifurcation … shall always be done as and when
+> required … employees who belong to a certain region shall not be seen from
+> another region, only admin can see all of them at once." — "Prospect will
+> be given a region as and when they get added by employees … tagged
+> temporarily."
+
+- **Region = the city of a store** in the Locations register (LOC-1). A
+  customer belongs to the region(s) of the stores on their Customers row
+  (col N, CUS-3). Computed every time a screen opens — never tagged by hand,
+  never on a schedule; a newly registered city is a region at once.
+- **A buyer's store is stamped by the approved sale** (CUS-3). **A prospect's
+  store is stamped when they are added** — the adding employee's own store
+  (one store: silently; several, or an admin: a chip pick, or "place later")
+  — and is *provisional* until the first sale; the region's staff or an admin
+  may correct it on the customer's card (`🏙 Change store`).
+- **An employee sees only the region(s) of the stores on their own Users row**
+  (col I): 👤 Customer Details opens on their region; another region is
+  refused; the supply request's `🌐 All customers` is their region's. **Only
+  an admin sees every region, or everyone at once.** A blank stores cell
+  (`❔ Not placed yet`) is the admin's to place; it is offered to a store's
+  picker as CUS-3 always did.
+- Never a fraction of this: no customer is hidden from an admin, and the
+  `❔ Not placed yet` chip exists exactly so that nobody is lost.
+- Enforced: `src/services/customerRegion.js`; `telegramController`
+  (`cd:rg|pg|cs|css`, `acst:`, `srf_cu:__all__`); the `add_contact`
+  executor. Spec: `specs/CRM-R1_CUSTOMER_REGIONS.md`.
+
 ## Incident log (why these rules exist)
 
 | Date | Incident | Rule born |
@@ -1024,4 +1057,5 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
 | 26-Oct-2026 | Every attendance mark is BROADCAST the moment it saves — `🕘 Attendance · Abdul marked Present` / `📍 Kano office · 08:42 · 26-Oct-2026` / the verification facts — to the whole Railway `ADMIN_IDS` pool through the 🔔 Notifications feed (default ON, per-admin switchable). Owner: "all the marks from the employees will go to all the admins in the admin pool … Later, I will make a separate holder for this required responsibility" — that holder is Settings `ATTENDANCE_NOTIFY_IDS` (CSV of ids; set = only those people, the pool is silent; blank = the pool). A repeat tap or an unconfirmed save sends nothing (ATT-V2 covers failures). Same day, ATT-N2: a mark with a photo ends the card with `📷 Show photo` — the selfie lands under the card as a peek with `🗑 Hide` (ATT-E1 posture), for the pool or the named holder; no position chip (03-Aug: distance only). | ATT-N1/N2 (`src/services/attendanceNotify.js`; `specs/ATT-N1_ATTENDANCE_NOTIFY.md`) |
 | 28-Oct-2026 | The missing are CHASED, not just nudged: from 📊 Today an admin picks who (everyone missing · a department · picked people) and how often (once · every 30 · every 60 min, until the 🕒 Cutoff); each person holds ONE live card — `⏰ Attendance not marked · 2nd reminder` / the day and the deadline / `Unmarked days count against your transport allowance and your salary payment.` / `📍 Mark now` — the previous card deleted when the next is sent, rewritten to `✅ Marked at …` the moment they mark; nobody marked is ever chased; a redeploy ends a manual chase. The audience is the 09:00 nudge's (departments + the Required list). Automatic mode (`ATTENDANCE_CHASE_AUTO`) exists and is OFF at launch (owner). 📍 Mark now takes the card down and opens the mark flow; a single configured location skips the location step there (one-option navigation, §2) — the tile keeps its status-first screen. Owner: "the admin can give a constant alert … to the departments or employee group … a button to mark it now"; "Keep as you shown in example"; "Also per person pick"; "All other go as per recommendation". | ATT-R1 (`src/services/attendanceChase.js`; `specs/ATT-R1_ATTENDANCE_CHASE.md`) |
 | 29-Oct-2026 | The audit delta card reckons in THANS: a sealed bale is its OWN than count on the book (never a flat figure, never a fraction of a bale); a bale figure stands alone only when both sides are sealed bales; an opened bale is explained (`3 bales opened (6+5+5 = 16t) · 15t found`), an ambiguous one is a range, a sealed bale gone with nothing found loose is `missing`; one chip cycles thans → bales (each design in the form its record has) → both; "bundles" is not a unit (§6b) — `t`. Owner: "than is a lower unit, which will give us a guarantee in a reconciliation. In bales, it may cause confusion unless the store has supplied only in bales"; "Lock in the layout". | AUD-D1 (`src/services/auditDeltaViews.js`; `specs/AUD-D1_AUDIT_DELTA_VIEWS.md`) |
+| 30-Oct-2026 | Customers by REGION (§19): 👤 Customer Details opens on region chips (Lagos = Lagos + IDUMOTA, Kano = Kano office — from the Locations register; largest first), then a list paged eight a page with ◀ Back / Next ▶ (no See all); `🆕 Prospects`, `❔ Not placed yet` (until it empties), `🌐 All customers` for admins; an employee lands straight in their own region and can see no other; a prospect is tagged with the adding employee's store (provisional) at ➕ Add Contact and re-placed from the card; the supply request's `🌐 All customers` is the region for employees. Owner: "Go." | CRM-R1 (`src/services/customerRegion.js`; `specs/CRM-R1_CUSTOMER_REGIONS.md`) |
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

@@ -407,6 +407,8 @@ function buildAddContactCard(aj) {
   if (aj.payment_terms) trade.push(`📄 ${aj.payment_terms}`);
   if (trade.length) text += `\n${trade.join(' · ')}`;
   if (aj.notes) text += `\n📝 ${aj.notes}`;
+  // CRM-R1 — the provisional store the prospect is tagged with.
+  if (Array.isArray(aj.stores) && aj.stores.length) text += `\n🏙 ${aj.stores.join(' · ')} · provisional`;
   if (aj.destination) {
     // A second admin's reminder copy after a choice was already persisted.
     text += `\n\n➡️ Destination chosen: ${aj.destination}${aj.boss_name ? ` (under ${aj.boss_name})` : ''}`;

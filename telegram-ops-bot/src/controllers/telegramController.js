@@ -1026,9 +1026,8 @@ async function handleAddCustomerFlowText(bot, chatId, userId, text) {
 
   if (session.step === 'notes') {
     session.notes = trimmed;
-    session.step = 'confirm';
     sessionStore.set(userId, session);
-    await showAddCustomerConfirmation(bot, chatId, userId);
+    await showAddCustomerStoreStepOrConfirm(bot, chatId, userId); // CRM-R1
     return true;
   }
 
@@ -1227,9 +1226,9 @@ async function sendCustomerHistoryReport(bot, chatId, customerName, opts = {}) {
     const emptyKb = (opts.extraButtons && opts.extraButtons.length)
       ? { reply_markup: { inline_keyboard: opts.extraButtons } } : {};
     if (opts.editMessageId) {
-      await editOrSend(bot, chatId, opts.editMessageId, emptyText, emptyKb);
+      await editOrSend(bot, chatId, opts.editMessageId, opts.topLine ? `${opts.topLine}\n${emptyText}` : emptyText, emptyKb); // CRM-R1
     } else {
-      await bot.sendMessage(chatId, emptyText, emptyKb);
+      await bot.sendMessage(chatId, opts.topLine ? `${opts.topLine}\n${emptyText}` : emptyText, emptyKb); // CRM-R1
     }
     return;
   }
@@ -1265,6 +1264,7 @@ async function sendCustomerHistoryReport(bot, chatId, customerName, opts = {}) {
 
   // ─── Header: at-a-glance summary ─────────────────────────────────────────
   let out = `👤 *${customerName}*\n`;
+  if (opts.topLine) out += `${opts.topLine}\n`; // CRM-R1
   if (firstSoldDate && lastSoldDate) {
     out += `🗓 Active: ${fmtDate(firstSoldDate)} → ${fmtDate(lastSoldDate)}\n`;
   }
@@ -1389,9 +1389,9 @@ async function sendCustomerPatternReport(bot, chatId, customerName, opts = {}) {
     const emptyKb = (opts.extraButtons && opts.extraButtons.length)
       ? { reply_markup: { inline_keyboard: opts.extraButtons } } : {};
     if (opts.editMessageId) {
-      await editOrSend(bot, chatId, opts.editMessageId, emptyText, emptyKb);
+      await editOrSend(bot, chatId, opts.editMessageId, opts.topLine ? `${opts.topLine}\n${emptyText}` : emptyText, emptyKb); // CRM-R1
     } else {
-      await bot.sendMessage(chatId, emptyText, emptyKb);
+      await bot.sendMessage(chatId, opts.topLine ? `${opts.topLine}\n${emptyText}` : emptyText, emptyKb); // CRM-R1
     }
     return;
   }
@@ -1402,6 +1402,7 @@ async function sendCustomerPatternReport(bot, chatId, customerName, opts = {}) {
     : [...pattern.items].sort((a, b) => b.yards - a.yards);
 
   let out = `🔍 *Purchase Pattern — ${customerName}*\n`;
+  if (opts.topLine) out += `${opts.topLine}\n`; // CRM-R1
   out += buildReportLegend(['Bales · yds · share-of-total'], hasPrices);
   out += '\n';
   out += `📅 ${fmtDate(pattern.firstDate) || pattern.firstDate} → ${fmtDate(pattern.lastDate) || pattern.lastDate}\n`;
@@ -1461,15 +1462,16 @@ async function sendCustomerNotesReport(bot, chatId, customerName, opts = {}) {
     const emptyKb = (opts.extraButtons && opts.extraButtons.length)
       ? { reply_markup: { inline_keyboard: opts.extraButtons } } : {};
     if (opts.editMessageId) {
-      await editOrSend(bot, chatId, opts.editMessageId, emptyText, emptyKb);
+      await editOrSend(bot, chatId, opts.editMessageId, opts.topLine ? `${opts.topLine}\n${emptyText}` : emptyText, emptyKb); // CRM-R1
     } else {
-      await bot.sendMessage(chatId, emptyText, emptyKb);
+      await bot.sendMessage(chatId, opts.topLine ? `${opts.topLine}\n${emptyText}` : emptyText, emptyKb); // CRM-R1
     }
     return;
   }
   // Compact default: latest 5; expand-all reveals all (was 15).
   const LIMIT = expandAll ? notes.length : 5;
   let out = `📝 *Notes for ${customerName}* (${notes.length})\n\n`;
+  if (opts.topLine) out += `${opts.topLine}\n`; // CRM-R1
   const visible = notes.slice(-LIMIT).reverse(); // newest first
   for (const n of visible) {
     out += `• ${fmtDate(n.created_at) || '-'}: ${n.note}\n`;
@@ -1499,9 +1501,9 @@ async function sendCustomerRankingReport(bot, chatId, opts = {}) {
     const emptyKb = (opts.extraButtons && opts.extraButtons.length)
       ? { reply_markup: { inline_keyboard: opts.extraButtons } } : {};
     if (opts.editMessageId) {
-      await editOrSend(bot, chatId, opts.editMessageId, emptyText, emptyKb);
+      await editOrSend(bot, chatId, opts.editMessageId, opts.topLine ? `${opts.topLine}\n${emptyText}` : emptyText, emptyKb); // CRM-R1
     } else {
-      await bot.sendMessage(chatId, emptyText, emptyKb);
+      await bot.sendMessage(chatId, opts.topLine ? `${opts.topLine}\n${emptyText}` : emptyText, emptyKb); // CRM-R1
     }
     return;
   }
@@ -1870,6 +1872,8 @@ function _acHeader(session) {
   if (session.payment_terms) lines.push(`✓ Payment terms: *${session.payment_terms}*`);
   if (session.notes) lines.push(`✓ Notes: *${session.notes}*`);
   if (session.notes === '') lines.push(`✓ Notes: _skipped_`);
+  // CRM-R1 — the provisional store a prospect is tagged with.
+  if (Array.isArray(session.stores) && session.stores.length) lines.push(`✓ Store: *${session.stores.join(' · ')}* _(provisional)_`);
   return lines.join('\n');
 }
 
@@ -2065,6 +2069,36 @@ async function showAddCustomerNotesStep(bot, chatId, userId) {
   await _acRender(bot, chatId, userId, 'Add any *notes* (or tap Skip):', rows);
 }
 
+/**
+ * CRM-R1 — after the notes: a CUSTOMER gets a store. An employee with ONE
+ * store on their Users row is not asked (stamped silently); several stores,
+ * or an admin, pick from chips or place later. Other kinds skip straight on.
+ */
+async function showAddCustomerStoreStepOrConfirm(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  const goConfirm = async () => { session.step = 'confirm'; sessionStore.set(userId, session); await showAddCustomerConfirmation(bot, chatId, userId); };
+  if (!personTypeIsCustomer(session) || Array.isArray(session.stores)) { await goConfirm(); return; }
+  let mine = [];
+  if (!config.access.adminIds.includes(userId)) {
+    try { const u = await usersRepository.findByUserId(userId); mine = (u && Array.isArray(u.warehouses)) ? u.warehouses.filter(Boolean) : []; } catch (_) { mine = []; }
+  }
+  if (mine.length === 1) { session.stores = [mine[0]]; await goConfirm(); return; }
+  const places = mine.length ? mine : await _cdPlaces();
+  if (!places.length) { session.stores = []; await goConfirm(); return; }
+  session.step = 'store';
+  session._storeChoices = places;
+  sessionStore.set(userId, session);
+  const rows = [];
+  for (let i = 0; i < places.length; i += 2) {
+    const row = [{ text: `🏙 ${places[i]}`, callback_data: `acst:${i}` }];
+    if (places[i + 1]) row.push({ text: `🏙 ${places[i + 1]}`, callback_data: `acst:${i + 1}` });
+    rows.push(row);
+  }
+  rows.push([{ text: '❔ Place later', callback_data: 'acst:__later__' }]);
+  rows.push([{ text: '⬅️ Back', callback_data: 'acb:notes' }, { text: '❌ Cancel', callback_data: 'accanc:0' }]);
+  await _acRender(bot, chatId, userId, 'Which store does this customer belong to? _(provisional until their first sale)_', rows);
+}
 async function showAddCustomerConfirmation(bot, chatId, userId) {
   const rows = [
     [
@@ -2511,9 +2545,10 @@ async function showCustomerPickerForReport(bot, chatId, reportType, showAll = fa
  */
 
 /** Inline-keyboard row(s) shown under every section of the customer card. */
-function _cdTabFooter(customerName) {
+function _cdTabFooter(customerName, opts = {}) {
   const safe = customerName.slice(0, CB_NAME_MAX);
   return [
+    ...(opts.changeStore ? [[{ text: '🏙 Change store', callback_data: `cd:cs:${safe}` }]] : []),
     [
       { text: '📋 History',  callback_data: `cd:t:h:${safe}` },
       { text: '🔍 Pattern',  callback_data: `cd:t:p:${safe}` },
@@ -2529,62 +2564,153 @@ function _cdTabFooter(customerName) {
   ];
 }
 
-async function showCustomerDetailsPicker(bot, chatId, userId, messageId = null, showAll = false) {
-  const allCust = await customersRepo.getAll();
-  const active = allCust
-    .filter((c) => (c.status || 'Active').toLowerCase() === 'active' && c.name)
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  if (!active.length) {
-    const msg = 'No active customers found.';
-    const emptyOpts = { reply_markup: { inline_keyboard: [menuNav.backToMenuRow()] } };
-    if (messageId) {
-      await editOrSend(bot, chatId, messageId, msg, emptyOpts);
-    } else {
-      await bot.sendMessage(chatId, msg, emptyOpts);
-    }
-    return;
-  }
-
-  const MAX_VISIBLE = 8;
-  const visible = showAll ? active : active.slice(0, MAX_VISIBLE);
+/* ─── CRM-R1 (owner, 29/30-Oct-2026): customers by region ─────────────────
+ * "a separate selection of chips from different regions … Lagos (Lagos +
+ * Idumota) … Kano office"; "employees who belong to a certain region shall
+ * not be seen from another region, only admin can see all of them at once";
+ * "Instead of 'See all,' … a Next button and a Back button."
+ *
+ * A customer belongs to the region of their stores (Customers col N, CUS-3)
+ * via the Locations register (LOC-1) — computed every time a screen opens.
+ * Admin: region screen → paged list. Employee: straight into their own
+ * region (the stores on their Users row); a region outside it is refused.
+ *
+ *   cd:rg:<key>          a list: a region name · __p__ prospects ·
+ *                        __u__ not placed (admin) · __all__ everyone (admin)
+ *   cd:pg:<key>:<n>      page n of that list
+ *   cd:pk                back to where the viewer was (the page they left)
+ *   cd:pk:home           the region screen (or the employee's own list)
+ *   cd:cs:<name>         🏙 Change store on a prospect's card → store chips
+ *   cd:css:<i>:<name>    pick store i → rewrites col N alone
+ */
+async function showCustomerDetailsPicker(bot, chatId, userId, messageId = null) {
+  const region = require('../services/customerRegion');
+  const map = await region.regionMap();
+  const scope = await region.viewerRegions(userId, map.placeRegion);
+  if (scope === null) { await _cdRegionScreen(bot, chatId, userId, messageId, map, null); return; }
+  if (scope.length === 1) { await _cdList(bot, chatId, userId, messageId, scope[0], 0, map, scope); return; }
+  if (!scope.length) { await _cdList(bot, chatId, userId, messageId, '__p__', 0, map, scope); return; }
+  await _cdRegionScreen(bot, chatId, userId, messageId, map, scope);
+}
+async function _cdSend(bot, chatId, messageId, text, rows) {
+  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
+  if (messageId) await editOrSend(bot, chatId, messageId, text, opts);
+  else await bot.sendMessage(chatId, text, opts);
+}
+/** The region screen: one chip per region (largest first), then the buckets. */
+async function _cdRegionScreen(bot, chatId, userId, messageId, map, scope) {
+  const region = require('../services/customerRegion');
+  const k = region.classify(await customersRepo.getAll(), map);
   const rows = [];
-
-  // Admin-only shortcut to the global ranking, surfaced as the first row
-  // so the most senior insight is one tap away.
-  if (config.access.adminIds.includes(userId)) {
-    rows.push([{ text: '🏆 Customer Ranking (global)', callback_data: 'cd:rk' }]);
-  }
-
-  for (let i = 0; i < visible.length; i += 2) {
-    const row = [{ text: `👤 ${visible[i].name}`, callback_data: `cd:c:${visible[i].name.slice(0, CB_NAME_MAX)}` }];
-    if (visible[i + 1]) {
-      row.push({ text: `👤 ${visible[i + 1].name}`, callback_data: `cd:c:${visible[i + 1].name.slice(0, CB_NAME_MAX)}` });
-    }
+  if (config.access.adminIds.includes(userId)) rows.push([{ text: '🏆 Customer Ranking (global)', callback_data: 'cd:rk' }]);
+  const regions = scope ? k.regions.filter((r) => scope.includes(r.name)) : k.regions;
+  for (let i = 0; i < regions.length; i += 2) {
+    const chip = (r) => ({ text: `🏙 ${r.name} · ${r.count}`, callback_data: `cd:rg:${r.name.slice(0, CB_NAME_MAX)}` });
+    const row = [chip(regions[i])];
+    if (regions[i + 1]) row.push(chip(regions[i + 1]));
     rows.push(row);
   }
-  if (!showAll && active.length > MAX_VISIBLE) {
-    rows.push([{ text: `📋 See All (${active.length})`, callback_data: 'cd:pk:all' }]);
+  if (scope === null) {
+    const extra = [{ text: `🆕 Prospects · ${k.prospects.length}`, callback_data: 'cd:rg:__p__' }];
+    if (k.notPlaced.length) extra.push({ text: `❔ Not placed yet · ${k.notPlaced.length}`, callback_data: 'cd:rg:__u__' });
+    rows.push(extra);
+    rows.push([{ text: `🌐 All customers · ${k.all.length}`, callback_data: 'cd:rg:__all__' }]);
+  } else {
+    const mine = k.prospects.filter((c) => [...region.regionsOfStores(c.stores, map.placeRegion)].some((r) => scope.includes(r)));
+    rows.push([{ text: `🆕 Prospects · ${mine.length}`, callback_data: 'cd:rg:__p__' }]);
   }
   rows.push([{ text: '⬅ Back to menu', callback_data: 'act:__back__' }]);
-
-  const text = '👤 *Customer Details*\n\nPick a customer to see history, pattern, notes, or add a note — all from the same card.';
-  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } };
-  if (messageId) {
-    await editOrSend(bot, chatId, messageId, text, opts);
-  } else {
-    await bot.sendMessage(chatId, text, opts);
-  }
+  const text = regions.length
+    ? '👤 *Customer Details*\n\nPick a region, then a customer.'
+    : '👤 *Customer Details*\n\n_No region is registered yet — seed the Locations sheet (Lagos, IDUMOTA, Kano office)._';
+  await _cdSend(bot, chatId, messageId, text, rows);
 }
-
+/** One paged list: a region, the prospects, the not-placed, or everyone. */
+async function _cdList(bot, chatId, userId, messageId, key, pageNo, map, scope) {
+  const region = require('../services/customerRegion');
+  const customerScope = require('../services/customerScope');
+  const { mdEscape } = require('../utils/flowKit');
+  const k = region.classify(await customersRepo.getAll(), map);
+  const isAdm = scope === null;
+  const myProspects = () => k.prospects.filter((c) => [...region.regionsOfStores(c.stores, map.placeRegion)].some((r) => scope.includes(r)));
+  let list; let title; let sub;
+  if (key === '__p__') {
+    list = isAdm ? k.prospects : myProspects();
+    title = '🆕 Prospects'; sub = `🆕 Prospects — ${list.length} customers`;
+  } else if (key === '__u__' && isAdm) {
+    list = k.notPlaced; title = '❔ Not placed yet'; sub = `❔ Not placed yet — ${list.length} customers`;
+  } else if (key === '__all__' && isAdm) {
+    list = k.all; title = '🌐 All customers'; sub = `Every store — ${list.length} customers`;
+  } else if (k.byRegion.has(key) && (isAdm || scope.includes(key))) {
+    list = k.byRegion.get(key); title = `🏙 ${key}`;
+    const places = (map.regions.find((r) => r.name === key) || { places: [] }).places;
+    sub = `${mdEscape(places.join(' · ')) || mdEscape(key)} — ${list.length} customers`;
+  } else {
+    // Not theirs to see (an employee tapping another region, or a stale chip).
+    await showCustomerDetailsPicker(bot, chatId, userId, messageId);
+    return;
+  }
+  const pg = region.page(list, pageNo);
+  region.rememberNav(userId, { key, page: pg.page });
+  const rows = [];
+  for (let i = 0; i < pg.items.length; i += 2) {
+    const chip = (c) => ({ text: customerScope.chipLabel(c), callback_data: `cd:c:${c.name.slice(0, CB_NAME_MAX)}` });
+    const row = [chip(pg.items[i])];
+    if (pg.items[i + 1]) row.push(chip(pg.items[i + 1]));
+    rows.push(row);
+  }
+  if (pg.pages > 1) {
+    const nav = [];
+    if (pg.page > 0) nav.push({ text: '◀ Back', callback_data: `cd:pg:${key}:${pg.page - 1}` });
+    if (pg.page < pg.pages - 1) nav.push({ text: 'Next ▶', callback_data: `cd:pg:${key}:${pg.page + 1}` });
+    rows.push(nav);
+  }
+  const foot = [];
+  if (isAdm || (scope && scope.length > 1)) foot.push({ text: '🏙 Change region', callback_data: 'cd:pk:home' });
+  else if (scope && scope.length === 1 && key !== '__p__') foot.push({ text: `🆕 Prospects · ${myProspects().length}`, callback_data: 'cd:rg:__p__' });
+  else if (scope && scope.length === 1) foot.push({ text: `🏙 ${scope[0]}`, callback_data: `cd:rg:${scope[0].slice(0, CB_NAME_MAX)}` });
+  foot.push({ text: '🏠 Menu', callback_data: 'act:__back__' });
+  rows.push(foot);
+  const pageLine = pg.pages > 1 ? ` · page ${pg.page + 1} of ${pg.pages} · ${pg.range}` : '';
+  const empty = pg.total ? '' : '\n\n_No customers here yet._';
+  const hint = (scope && !scope.length) ? '\n\n_Your Users row names no store — ask an admin to attach one, then your region appears here._' : '';
+  await _cdSend(bot, chatId, messageId, `👤 Customer Details · ${title}\n${sub}${pageLine}${empty}${hint}`, rows);
+}
+/** 🏙 Change store — the places a prospect can be re-placed in (A–Z). */
+async function _cdPlaces() {
+  try {
+    const places = await require('../services/locationService').allPlaces();
+    return places.filter((p) => p.status !== 'closed').map((p) => p.name).sort((a, b) => a.localeCompare(b, 'en'));
+  } catch (_) { return []; }
+}
 /**
  * Render one tab of the customer-details card by editing the same message
  * in place. Delegates to the existing send*Report functions, which already
  * understand `editMessageId` + `extraButtons` (the per-tab footer).
  */
-async function renderCustomerCard(bot, chatId, messageId, customerName, tab = 'h') {
-  const footer = _cdTabFooter(customerName);
-  const baseOpts = { editMessageId: messageId, extraButtons: footer };
+async function renderCustomerCard(bot, chatId, messageId, customerName, tab = 'h', viewerId = null) {
+  // CRM-R1 — the 🏙 line (stores / provisional / not placed) and, for a
+  // prospect the viewer may re-place, the 🏙 Change store chip.
+  const viewer = String(viewerId || chatId);
+  let topLine = '';
+  let changeStore = false;
+  try {
+    const region = require('../services/customerRegion');
+    const c = await customersRepo.findByName(customerName);
+    if (c) {
+      topLine = region.storesLine(c);
+      if (!region.hasBought(c) && Array.isArray(c.stores) && c.stores.length) {
+        const who = await region.addedBy(c.name);
+        if (who) topLine += ` — added by ${who.by}${who.at ? `, ${fmtDate(who.at)}` : ''}`;
+        else if (c.created_at) topLine += ` — added ${fmtDate(c.created_at)}`;
+      }
+      const map = await region.regionMap();
+      const scope = await region.viewerRegions(viewer, map.placeRegion);
+      changeStore = !region.hasBought(c) && region.mayTouch(scope, c, map.placeRegion);
+    }
+  } catch (_) { topLine = ''; }
+  const footer = _cdTabFooter(customerName, { changeStore });
+  const baseOpts = { editMessageId: messageId, extraButtons: footer, topLine };
   if (tab === 'p') {
     await sendCustomerPatternReport(bot, chatId, customerName, baseOpts);
   } else if (tab === 'n') {
@@ -8078,11 +8204,23 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       await showAddPersonAfterAddress(bot, callbackQuery.message.chat.id, uid);
     } else if (field === 'notes') {
       session.notes = '';
-      session.step = 'confirm';
       sessionStore.set(uid, session);
-      await showAddCustomerConfirmation(bot, callbackQuery.message.chat.id, uid);
+      await showAddCustomerStoreStepOrConfirm(bot, callbackQuery.message.chat.id, uid); // CRM-R1
     }
 
+  } else if (data.startsWith('acst:')) {
+    // CRM-R1 — the store chip on the Add Contact door.
+    const uid = String(callbackQuery.from.id);
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== 'add_customer_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
+    await bot.answerCallbackQuery(callbackQuery.id);
+    const val = data.slice(5);
+    const choices = Array.isArray(session._storeChoices) ? session._storeChoices : [];
+    session.stores = val === '__later__' ? [] : (choices[parseInt(val, 10)] ? [choices[parseInt(val, 10)]] : []);
+    delete session._storeChoices;
+    session.step = 'confirm';
+    sessionStore.set(uid, session);
+    await showAddCustomerConfirmation(bot, callbackQuery.message.chat.id, uid);
   } else if (data.startsWith('accat:')) {
     const cat = data.slice(6);
     const uid = String(callbackQuery.from.id);
@@ -8164,6 +8302,8 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         // executor also binds this Telegram account in the identity
         // register, so "register then link" is one journey.
         ...(session.pendingTelegramId ? { pendingTelegramId: session.pendingTelegramId } : {}),
+        // CRM-R1 — the provisional store; the executor writes it on approval.
+        ...(Array.isArray(session.stores) && session.stores.length ? { stores: session.stores } : {}),
       },
       riskReason: 'New contact requires admin approval',
       status: 'pending',
@@ -8190,6 +8330,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
           + `Payment terms: ${custData.payment_terms}\n`
         : '')
       + `Notes: ${custData.notes || '—'}`
+      + (Array.isArray(session.stores) && session.stores.length ? `\nStore: ${session.stores.join(', ')} (provisional)` : '')
       + (session.pendingTelegramId
         ? `\nFrom Pending user ${session.pendingTelegramId} — account will be linked on approval`
         : '');
@@ -9458,9 +9599,66 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     await bot.answerCallbackQuery(callbackQuery.id);
 
     const rest = data.slice(3);
-
-    if (rest === 'pk' || rest === 'pk:all') {
-      await showCustomerDetailsPicker(bot, chatId, uid, messageId, rest === 'pk:all');
+    const region = require('../services/customerRegion');
+    const cdScope = async (map) => region.viewerRegions(uid, map.placeRegion);
+    if (rest === 'pk') {
+      // CRM-R1 — back to the page the viewer left, else the top.
+      const nav = region.navOf(uid);
+      if (nav) { const map = await region.regionMap(); await _cdList(bot, chatId, uid, messageId, nav.key, nav.page, map, await cdScope(map)); return; }
+      await showCustomerDetailsPicker(bot, chatId, uid, messageId);
+      return;
+    }
+    if (rest === 'pk:home') { await showCustomerDetailsPicker(bot, chatId, uid, messageId); return; }
+    if (rest === 'pk:all') { const map = await region.regionMap(); await _cdList(bot, chatId, uid, messageId, '__all__', 0, map, await cdScope(map)); return; }
+    if (rest.startsWith('rg:')) {
+      const map = await region.regionMap();
+      await _cdList(bot, chatId, uid, messageId, rest.slice(3), 0, map, await cdScope(map));
+      return;
+    }
+    if (rest.startsWith('pg:')) {
+      const body = rest.slice(3);
+      const at = body.lastIndexOf(':');
+      const key = at > 0 ? body.slice(0, at) : body;
+      const n = at > 0 ? parseInt(body.slice(at + 1), 10) || 0 : 0;
+      const map = await region.regionMap();
+      await _cdList(bot, chatId, uid, messageId, key, n, map, await cdScope(map));
+      return;
+    }
+    if (rest.startsWith('cs:') || rest.startsWith('css:')) {
+      // CRM-R1 — re-place a prospect: admins, or the staff of their region.
+      const isPick = rest.startsWith('css:');
+      let idx = -1; let payload = rest.slice(3);
+      if (isPick) { const b = rest.slice(4); const c1 = b.indexOf(':'); idx = parseInt(b.slice(0, c1), 10); payload = b.slice(c1 + 1); }
+      const customerName = await cbCustomerName(payload);
+      const c = await customersRepo.findByName(customerName);
+      const map = await region.regionMap();
+      const scope = await cdScope(map);
+      if (!c || region.hasBought(c) || !region.mayTouch(scope, c, map.placeRegion)) {
+        await renderCustomerCard(bot, chatId, messageId, customerName, 'h', uid);
+        return;
+      }
+      const places = await _cdPlaces();
+      if (!isPick) {
+        const rows = [];
+        for (let i = 0; i < places.length; i += 2) {
+          const chip = (j) => ({ text: `🏙 ${places[j]}`, callback_data: `cd:css:${j}:${customerName.slice(0, CB_NAME_MAX)}` });
+          const row = [chip(i)];
+          if (places[i + 1]) row.push(chip(i + 1));
+          rows.push(row);
+        }
+        rows.push([{ text: '⬅ Back to customer', callback_data: `cd:c:${customerName.slice(0, CB_NAME_MAX)}` }]);
+        await _cdSend(bot, chatId, messageId, `🏙 *Which store does ${customerName.replace(/[*_`]/g, '')} belong to?*\n_Provisional until their first sale confirms it._`, rows);
+        return;
+      }
+      const place = places[idx];
+      if (place) {
+        try {
+          await customersRepo.setStores(c.customer_id, [place]);
+          if (typeof customersRepo.invalidateCache === 'function') customersRepo.invalidateCache();
+          await auditLogRepository.append('customer_store_set', { customer_id: c.customer_id, name: c.name, store: place }, uid);
+        } catch (e) { logger.warn(`cd:css set store failed: ${e.message}`); }
+      }
+      await renderCustomerCard(bot, chatId, messageId, customerName, 'h', uid);
       return;
     }
 
@@ -9482,7 +9680,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
 
     if (rest.startsWith('c:')) {
       const customerName = await cbCustomerName(rest.slice(2));
-      await renderCustomerCard(bot, chatId, messageId, customerName, 'h');
+      await renderCustomerCard(bot, chatId, messageId, customerName, 'h', uid);
       return;
     }
 
@@ -9503,7 +9701,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
           ] } });
         return;
       }
-      await renderCustomerCard(bot, chatId, messageId, customerName, tab);
+      await renderCustomerCard(bot, chatId, messageId, customerName, tab, uid);
       return;
     }
 
@@ -10825,7 +11023,26 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       // 🆕); 🌐 All = every active customer, the door for an out-of-place sale.
       const customerScope = require('../services/customerScope');
       const everyone = val === '__all__';
-      const scoped = customerScope.forStore(await customersRepo.getAll(), everyone ? '' : (session.warehouse || ''));
+      // CRM-R1 — 🌐 All is EVERYONE only for an admin; an employee gets every
+      // customer of the store's REGION (blank-store customers included, as
+      // CUS-3 does — a walk-in's store is not known yet).
+      let scoped;
+      let allHeader = '👤 All customers, every store:';
+      if (everyone && !config.access.adminIds.includes(uid)) {
+        const regionSvc = require('../services/customerRegion');
+        const map = await regionSvc.regionMap();
+        const rName = map.placeRegion.get(String(session.warehouse || '').trim().toUpperCase()) || '';
+        const every = customerScope.forStore(await customersRepo.getAll(), '');
+        const inRegion = (c) => {
+          const stores = Array.isArray(c.stores) ? c.stores.filter(Boolean) : [];
+          if (!stores.length) return true;
+          return rName ? regionSvc.regionsOfStores(stores, map.placeRegion).has(rName) : customerScope.inStore(c, session.warehouse || '');
+        };
+        scoped = { all: every.all.filter(inRegion) };
+        allHeader = `👤 All customers of ${rName || session.warehouse || 'this store'}:`;
+      } else {
+        scoped = customerScope.forStore(await customersRepo.getAll(), everyone ? '' : (session.warehouse || ''));
+      }
       const cart = session.cart || [];
       const cartDesigns = [...new Set(cart.map((c) => c.design))];
       const topBuyers = await getTopBuyersForDesigns(cartDesigns);
@@ -10839,7 +11056,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       }
       if (!everyone && session.warehouse) rows.push([{ text: '🌐 All customers', callback_data: 'srf_cu:__all__' }]);
       rows.push([{ text: '⬅️ Back to top buyers', callback_data: 'srf_back:customer' }]);
-      await editOrSendAnchored(bot, chatId, uid, everyone ? '👤 All customers, every store:' : '👤 All other customers of this store:', {
+      await editOrSendAnchored(bot, chatId, uid, everyone ? allHeader : '👤 All other customers of this store:', {
         reply_markup: { inline_keyboard: rows },
       });
       return;

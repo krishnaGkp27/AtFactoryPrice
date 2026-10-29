@@ -981,8 +981,18 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const dest = aj.destination || (aj.type === 'customer' ? 'customer' : 'contact');
     if (dest === 'customer') {
       const crmService = require('./crmService');
+      // CRM-R1 — the prospect's provisional store: what the door recorded,
+      // else the requester's single store on their Users row, else none
+      // (→ ❔ Not placed yet until an admin places them).
+      let stores = Array.isArray(aj.stores) ? aj.stores.filter(Boolean) : [];
+      if (!stores.length && item && item.user) {
+        try {
+          const u = await require('../repositories/usersRepository').findByUserId(String(item.user));
+          if (u && Array.isArray(u.warehouses) && u.warehouses.length === 1) stores = [u.warehouses[0]];
+        } catch (_) { stores = []; }
+      }
       const addRes = await crmService.addCustomer({
-        name: aj.name, phone: aj.phone, address: aj.address, notes: aj.notes,
+        name: aj.name, phone: aj.phone, address: aj.address, notes: aj.notes, stores,
         // CON-1 — the sub-categories the flow collected for a customer.
         // Absent on a request raised as any other kind, and crmService
         // applies its own defaults then.

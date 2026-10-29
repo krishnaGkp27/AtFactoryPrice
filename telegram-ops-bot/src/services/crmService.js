@@ -11,13 +11,16 @@ const idGen = require('../utils/idGenerator');
 // no remaining callers; keeping it exported was one require away from
 // reintroducing the typo problem CUS-1 exists to end.
 
-async function addCustomer({ name, phone, address, category, credit_limit, payment_terms, notes }) {
+// CRM-R1 — `stores`: the provisional store(s) a prospect is tagged with at
+// creation (the adding employee's own store); confirmed by the first sale.
+async function addCustomer({ name, phone, address, category, credit_limit, payment_terms, notes, stores }) {
   // CUS-2 — the creation door enforces the entity invariant: no new ACTIVE
   // customer may collide with an existing canonical name OR alias.
   const customerEntity = require('./customerEntity');
   const free = await customerEntity.assertNameFree(name);
   if (!free.ok) return { status: 'exists', customer: free.existing };
   const cust = {
+    stores: Array.isArray(stores) ? stores.filter(Boolean) : [],
     customer_id: idGen.customer(),
     name, phone: phone || '', address: address || '',
     category: category || 'Retail', credit_limit: credit_limit || 0,
