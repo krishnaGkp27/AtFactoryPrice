@@ -462,11 +462,15 @@ async function reconcileDesign({ warehouse, location, design, bales, bundles, au
     }]);
     return { status: 'match_opened', d, openedBales: missingBales };
   }
+  // AUD-D1 — the sealed bales' sizes AS OF THE AUDIT ride the row's free-text
+  // note, so the admins' delta card can explain an opened bale (and compute
+  // the than net) even after a restart, when stock has moved on.
+  const { noteWithSizes } = require('../services/auditDeltaViews');
   if (state.mismatches >= 1) {
-    const [flagRow] = await stockTakesRepository.appendMany([{ ...base, result: 'flagged', note: `attempt ${state.mismatches + 1}` }]);
+    const [flagRow] = await stockTakesRepository.appendMany([{ ...base, result: 'flagged', note: noteWithSizes(`attempt ${state.mismatches + 1}`, d.closedBaleSizes) }]);
     return { status: 'flagged', d, flagRow };
   }
-  await stockTakesRepository.appendMany([{ ...base, result: 'mismatch', note: 'attempt 1' }]);
+  await stockTakesRepository.appendMany([{ ...base, result: 'mismatch', note: noteWithSizes('attempt 1', d.closedBaleSizes) }]);
   return { status: 'recount', d };
 }
 
@@ -849,6 +853,7 @@ async function handleBatchText(bot, msg) {
       deltas.push({
         design: e.design, status: out.status,
         bookB: out.d.fullBales, bookT: out.d.looseThans, cntB: e.bales, cntT: e.bundles,
+        sizes: (out.d.closedBaleSizes || []).slice(), // AUD-D1
       });
     }
   }
@@ -857,12 +862,18 @@ async function handleBatchText(bot, msg) {
   if (parsed.entries.length) {
     let who = String(userId);
     try { who = await require('../services/approvalCards').resolveUserLabel(userId, bot); } catch (_) { /* id fallback */ }
-    const report = buildDeltaReport({
-      warehouse: parsed.warehouse, auditorLabel: who, deltas,
+    // AUD-D1 — the card arrives in the THANS view with the one cycling chip;
+    // the batch is remembered for the chip and rebuilt from StockTakes after
+    // a restart. buildDeltaReport (the pre-D1 card) is kept for its pins.
+    const views = require('../services/auditDeltaViews');
+    const batch = {
+      warehouse: parsed.warehouse, auditorId: userId, auditorLabel: who, day: views.lagosDay(), deltas,
       matched: matched.length, unknown: unknown.length, locked: locked.length,
-    });
+    };
+    const key = views.remember(batch);
+    const report = views.buildCard('t', batch);
     for (const adminId of config.access.adminIds) {
-      try { await bot.sendMessage(adminId, report); } catch (e) {
+      try { await bot.sendMessage(adminId, report, { reply_markup: views.keyboard('t', key) }); } catch (e) {
         logger.warn(`audit delta report to ${adminId} failed: ${e.message}`);
       }
     }
@@ -1445,6 +1456,8 @@ async function handleCallback(bot, query) {
   // WAU-3 — flag-clear taps come from an admin's DM card, hours later,
   // with NO audit session. Handle before the session guard.
   if (data.startsWith('wai:aclr:')) return handleFlagClear(bot, query);
+  // AUD-D1 — the delta card's view chip: an admin's DM, no audit session.
+  if (data.startsWith('wai:dv:')) return require('../services/auditDeltaViews').handleViewTap(bot, query);
 
   const session = sessionStore.get(userId);
   if (!session || session.type !== SESSION_TYPE) {

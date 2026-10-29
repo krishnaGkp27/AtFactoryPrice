@@ -1,7 +1,8 @@
 # AUD-D1 — The audit delta card: net in thans, three views on one chip
 
-**Status: LAYOUT LOCKED 29-Oct-2026 — not built.** The owner is finalising a
-change to the warehouse audit view; both ship together.
+**Status: SHIPPED 29-Oct-2026** (owner: "Go ahead with implementation by the
+time I plan next feature release"). The owner's separate change to the
+warehouse audit view is still to be specified.
 
 ## The owner's words (28/29-Oct-2026)
 
@@ -114,7 +115,28 @@ Store: net 📉 5t · 📉 1B
 [🔁 Show in thans]
 ```
 
-## Build notes (for the implementation)
+## As built
+
+- `src/services/auditDeltaViews.js` — `analyse` (the arithmetic: opened /
+  extra sealed bales, the than totals and the net as `{min,max}`; a sealed
+  bale with no loose than found on either side is **missing**, not opened),
+  `buildCard(view, batch)`, `keyboard`, the note round trip
+  (`noteWithSizes` / `sizesFromNote`), `remember` / `recall` / `rebuild`,
+  `handleViewTap`.
+- `warehouseAuditFlow`: the mismatch and flagged rows' `note` now reads
+  `attempt 1 · sizes 6+5+5`; the batch path remembers the batch, sends the
+  THANS card with the chip, and `wai:dv:<view>:<key>` is handled before the
+  session guard (an admin's DM, no audit session). The pre-D1
+  `buildDeltaReport` stays for its pins. No controller change.
+- Extra sealed bales the book does not have stay in bales in every view
+  (`📈 2B over`, `counted 2t + 2B`): their sizes are unknown.
+- Tests: `test/unit/services/auditDeltaViews.test.js` (the four lines, the
+  sealed-only line, the range, the legacy row, the three views, the chip
+  cycle and key, the note round trip, the tap incl. the restart rebuild) and
+  the batch test in `auditFullSheet.test.js` (the admins' card, the chip, the
+  note sizes, the in-place redraw).
+
+## Build notes (as planned)
 
 - Views are rebuilt at tap time from the audit's StockTakes rows (warehouse ·
   day · auditor: `sheet_bales`, `sheet_bundles` = loose thans, `counted_*`),

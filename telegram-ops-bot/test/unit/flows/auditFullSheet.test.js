@@ -137,10 +137,31 @@ test('the batch sends admins a delta report — increases and decreases only —
   const toAuditor = msgs.filter((m) => m.to === AUDITOR).map((m) => m.text).join('\n');
 
   assert.match(toAdmin, /Audit delta — IDUMOTA · counted by Muhammad/);
-  assert.match(toAdmin, /9045: ↑2B \(book 1B → counted 3B\)/, `got:\n${toAdmin}`);
-  assert.match(toAdmin, /9060: ↓1B, ↑2 bundles \(book 1B → counted 0B\+2bd\)/, `got:\n${toAdmin}`);
-  assert.ok(!/9037:/.test(toAdmin), 'matches never get a delta line');
+  // AUD-D1 — the card arrives in THANS: the net per design, the book's own
+  // bale sizes, an opened bale explained, never the word "bundles".
+  assert.match(toAdmin, /Counted vs book · in thans/);
+  assert.match(toAdmin, /9045 · 📈 2B over\n {3}book 2t → counted 2t \+ 2B · recount asked/, `got:\n${toAdmin}`);
+  assert.match(toAdmin, /9060 · 📈 1t over\n {3}book 1t → counted 2t\n {3}1 bale opened \(1t\) · 2t found · recount asked/, `got:\n${toAdmin}`);
+  assert.match(toAdmin, /Store: 📈 1t over · 📈 2B over/);
+  assert.ok(!/bundle|bd\b/.test(toAdmin), 'bundle is not a unit (§6b)');
+  assert.ok(!/9037 ·/.test(toAdmin), 'matches never get a delta line');
   assert.match(toAdmin, /✅ 1 matched the book exactly/);
+  // The one cycling chip, naming the view it switches to.
+  const adminMsg = bot.calls.find((c) => c.method === 'sendMessage' && String(c.args.chatId) === ADMIN && /Audit delta/.test(c.args.text));
+  const chip = adminMsg.args.opts.reply_markup.inline_keyboard[0][0];
+  assert.equal(chip.text, '🔁 Show in bales');
+  assert.match(chip.callback_data, /^wai:dv:b:\d{8}:888:IDUMOTA$/);
+  // The mismatch row carries the sealed bale's size for the restart path.
+  const row9060 = appended.find((r) => r.design === '9060' && r.result === 'mismatch');
+  assert.equal(row9060.note, 'attempt 1 · sizes 1');
+  // Tapping the chip (an admin, no session) redraws the card in BALES form.
+  await flow.handleCallback(bot, { id: 'q', data: chip.callback_data, from: { id: ADMIN }, message: { chat: { id: ADMIN }, message_id: 31 } });
+  const edit = bot.calls.filter((c) => c.method === 'editMessageText').pop();
+  assert.ok(edit, 'card redrawn');
+  assert.match(edit.args.text, /sealed bales \+ loose thans, as counted/);
+  // A mixed design prints both parts on both sides — the opening shows itself.
+  assert.match(edit.args.text, /9060 · 📈 1t over\n {3}book 1B \+ 0t → counted 0B \+ 2t\n {3}1 bale opened \(1t\) · 2t found · recount asked/);
+  assert.equal(edit.args.opts.reply_markup.inline_keyboard[0][0].text, '🔁 Show both');
 
   // The auditor's reply stays blind: statuses only, no book numbers.
   assert.match(toAuditor, /Audit results — IDUMOTA/);
