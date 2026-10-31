@@ -62,6 +62,27 @@ function looksLikeReturnList(raw) {
   return /^return\s+\d[\d\s,/+x-]*$/i.test(t);
 }
 
+/**
+ * TRF-23 (owner's Go, 31-Oct-2026) — a typed TRANSFER line:
+ * `Transfer 832, 1186, 786 to kano` · `Move package 5804 to Lagos`.
+ *
+ * Until today this was the ONE typed door with no local reader: it rode
+ * the AI parser alone, so when the provider stopped answering (31-Oct —
+ * Abdul's four tries) the offline fallback, which knows no "transfer",
+ * bounced it as "Need more info" while sells and returns kept working.
+ * The verb opens the line (an optional please / pls / kindly in front) and
+ * at least one number follows; everything else — bale/package words, a
+ * `/than` suffix, the `to <store>` tail — is for
+ * transferFlow.parseTypedTransfer, and every number is resolved against
+ * live stock on the preload card (§2: the bot never picks bales).
+ * @param {string} raw
+ * @returns {boolean}
+ */
+function looksLikeTransferLine(raw) {
+  const t = String(raw || '').trim();
+  return /^(?:please\s+|pls\s+|kindly\s+)?(?:transfer|move)\b[^\n]*\d/i.test(t);
+}
+
 function parseThanSpec(spec) {
   const out = [];
   for (const part of String(spec).split('+')) {
@@ -215,4 +236,4 @@ function parseThanList(raw) {
   return { items, warehouseHint, bad, commaThanHint, ignoredCustomer, ignoredDate };
 }
 
-module.exports = { parseThanList, looksLikeThanList, looksLikeReturnList, _internals: { parseThanSpec } };
+module.exports = { parseThanList, looksLikeThanList, looksLikeReturnList, looksLikeTransferLine, _internals: { parseThanSpec } };

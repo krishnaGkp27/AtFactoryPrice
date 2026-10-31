@@ -6,6 +6,7 @@
 const OpenAI = require('openai');
 const config = require('../config');
 const { createLimiter } = require('../utils/rateLimiter');
+const logger = require('../utils/logger');
 
 const openai = config.openai.apiKey ? new OpenAI({ apiKey: config.openai.apiKey }) : null;
 
@@ -260,8 +261,15 @@ User: "Order ORD-20260221-001 done" → {"action":"mark_order_delivered","orderI
  *   rate limit (P3). Omitted (internal/test callers) = no limit applied.
  * @returns {Promise<object>} Normalized intent object.
  */
+let _noKeyWarned = false;
+
 async function parse(userMessage, userId = null) {
-  if (!openai) return fallbackParse(userMessage);
+  if (!openai) {
+    // TRF-23 — say it once per boot, so a blank OPENAI_API_KEY on Railway
+    // is readable in the log instead of guessed from "Need more info".
+    if (!_noKeyWarned) { _noKeyWarned = true; logger.warn('intentParser: no OPENAI_API_KEY — typed sentences use the offline fallback'); }
+    return fallbackParse(userMessage);
+  }
   if (userId != null && !openaiLimiter.allow(String(userId))) return fallbackParse(userMessage);
   try {
     const completion = await openai.chat.completions.create({
@@ -275,7 +283,11 @@ async function parse(userMessage, userId = null) {
     });
     const text = completion.choices[0]?.message?.content?.trim() || '';
     return normalize(extractJSON(text));
-  } catch {
+  } catch (e) {
+    // TRF-23 — the failure used to vanish without a trace (31-Oct-2026:
+    // four "Need more info" replies and not one log line). Name the cause
+    // so the Railway log answers "is OpenAI down for the bot?" at a glance.
+    logger.warn(`intentParser: OpenAI parse failed, offline fallback used — ${(e && e.message) || e}`);
     return fallbackParse(userMessage);
   }
 }
@@ -345,6 +357,10 @@ function fallbackParse(msg) {
   if (/\bsell\s+than\b/.test(m)) action = 'sell_than';
   else if (/\bsell\s+package\b|\bsell\s+pkg\b|\bsell\s+bale\b/.test(m)) action = 'sell_package';
   else if (/\b(sell|deduct|sold)\b/.test(m)) action = 'sell_package';
+  // TRF-23 — a transfer sentence with a number in it lands on the Transfer
+  // Stock preload card even offline (the controller re-reads the raw text;
+  // the card resolves every number against live stock and waits for a tap).
+  else if (/\b(transfer|move)\b/.test(m) && /\d/.test(m)) action = 'transfer_batch';
   else if (/\b(add|restock|received)\b/.test(m)) action = 'add';
   else if (/\b(analyze|report|trend|revenue|who bought)\b/.test(m)) action = 'analyze';
   else if (/\blist\s+package|\bshow\s+package|\bpackages\s+for\b|\blist\s+bale|\bshow\s+bale|\bbales\s+for\b/.test(m)) action = 'list_packages';
@@ -363,7 +379,8 @@ function fallbackParse(msg) {
     customer: null,
     warehouse: null,
     confidence: 0.5,
-    clarification: 'Please provide more details (Bale number, than number, customer name, etc.).',
+    // A transfer needs no clarification: the preload card is the question.
+    clarification: action === 'transfer_batch' ? null : 'Please provide more details (Bale number, than number, customer name, etc.).',
   };
 }
 

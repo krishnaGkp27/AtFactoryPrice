@@ -2918,25 +2918,36 @@ const SKIP_LIST_MAX = 12;
  * number before a trailing "to <words>" is a bale number; the non-numeric
  * tail after the final "to" is the destination hint.
  * @param {string} text raw message text
- * @returns {{numbers: string[], destHint: string|null, truncated: number}}
+ * @returns {{numbers: string[], destHint: string|null, truncated: number, thanSuffixes: number}}
  *   `numbers` deduped in typed order (capped); `truncated` = how many
- *   typed numbers fell over the cap.
+ *   typed numbers fell over the cap; `thanSuffixes` = how many numbers
+ *   carried a than part that was set aside (whole bales move).
  */
 function parseTypedTransfer(text) {
   const t = String(text || '');
   let numbersPart = t;
   let destHint = null;
   const m = t.match(/\bto\s+([^\d]+?)\s*$/i);
-  if (m) { destHint = m[1].trim(); numbersPart = t.slice(0, m.index); }
+  if (m) { destHint = m[1].replace(/[.!?,;:]+$/, '').trim(); numbersPart = t.slice(0, m.index); }
+  // TRF-23 — transfers move WHOLE bales, and the sell grammar comes out of
+  // habit: `6189/5` is bale 6189 (its than part set aside, never read as a
+  // second bale), `771 x3` is bale 771, a worded "than 3 from package 5801"
+  // is bale 5801. Without this the `5` and the `3` would be looked up as
+  // bale numbers and match whatever ends in that digit.
+  let thanSuffixes = 0;
+  const cleaned = numbersPart
+    .replace(/(\d+)\s*\/\s*\d+(?:\s*[+-]\s*\d+)*/g, (_, bale) => { thanSuffixes += 1; return bale; })
+    .replace(/\bthans?\s+\d+(?:\s*(?:,|and|\+)\s*\d+)*/gi, () => { thanSuffixes += 1; return ' '; })
+    .replace(/(\d+)\s*[xX]\s*\d+/g, '$1');
   const seen = new Set();
   const numbers = [];
-  for (const raw of numbersPart.match(/\d+/g) || []) {
+  for (const raw of cleaned.match(/\d+/g) || []) {
     if (seen.has(raw)) continue;
     seen.add(raw);
     numbers.push(raw);
   }
   const truncated = Math.max(0, numbers.length - TYPED_BALES_MAX);
-  return { numbers: numbers.slice(0, TYPED_BALES_MAX), destHint, truncated };
+  return { numbers: numbers.slice(0, TYPED_BALES_MAX), destHint, truncated, thanSuffixes };
 }
 
 /** All bales grouped per (warehouse, packageNo) with availability + buyer. */
@@ -2968,7 +2979,7 @@ async function typedBaleMap() {
  */
 async function startFromText(bot, chatId, userId, rawText) {
   if (!auth.isAllowed(String(userId))) return false;
-  const { numbers, destHint, truncated } = parseTypedTransfer(rawText);
+  const { numbers, destHint, truncated, thanSuffixes } = parseTypedTransfer(rawText);
   if (!numbers.length) return false;
 
   const bales = await typedBaleMap();
@@ -3054,6 +3065,8 @@ async function startFromText(bot, chatId, userId, rawText) {
   const typedTotal = numbers.length + truncated;
   const skipLines = skipped.slice(0, SKIP_LIST_MAX).map((x) => `  ⚠️ ${x.no} — ${x.reason} (skipped)`);
   if (skipped.length > SKIP_LIST_MAX) skipLines.push(`  ⚠️ …and ${skipped.length - SKIP_LIST_MAX} more skipped`);
+  // TRF-23 — say so when a `/than` part was set aside, never silently.
+  if (thanSuffixes) skipLines.push(`  ℹ️ Whole bales move — the than part of ${thanSuffixes} number(s) was ignored`);
   const destNote = dest ? `\n📍 Destination: *${dest}* (from your message)` : '';
   await render(bot, chatId, userId,
     `🚚 *Transfer Stock — preloaded ${loaded.length} of ${typedTotal} typed bale(s)*\nFrom *${source}*\n\n`

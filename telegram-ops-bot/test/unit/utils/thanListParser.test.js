@@ -132,3 +132,30 @@ test('parseThanList strips the return verb and reads bare bales, thans and x-cou
   assert.equal(out.warehouseHint, '');
   assert.equal(parseThanList('Return 771 from Kafaya').warehouseHint, 'Kafaya', 'a trailing name surfaces so the flow can say it ignored it');
 });
+
+// ── TRF-23 — the typed transfer line is read locally (owner's Go, 31-Oct-2026)
+const { looksLikeTransferLine } = require('../../../src/utils/thanListParser');
+
+test('looksLikeTransferLine: Abdul’s four real lines of 31-Oct all qualify', () => {
+  assert.equal(looksLikeTransferLine('Transfer package 832,1186,786,812,828,1193,1202,802,1191,822,1111,1328 to kano'), true);
+  assert.equal(looksLikeTransferLine('Transfer 832,1186,786,812,828,1193,1202,802,1191,822,1111,1328 to kano'), true);
+  assert.equal(looksLikeTransferLine('Transfer 832, 1186, 786, 812, 828, 1193, 1202, 802, 1191, 822, 1111, 1328 to kano'), true);
+  assert.equal(looksLikeTransferLine('Transfer package 832, 1186, 786, 812, 828, 1193, 1202, 802, 1191, 822, 1111, 1328 to kano'), true);
+});
+
+test('looksLikeTransferLine: the verb opens the line, a number follows', () => {
+  assert.equal(looksLikeTransferLine('Move package 5804 to Lagos warehouse'), true);
+  assert.equal(looksLikeTransferLine('please transfer 5801 to kano'), true);
+  assert.equal(looksLikeTransferLine('Transfer than 3 from package 5801 to Kano'), true);
+  assert.equal(looksLikeTransferLine('transfer 6189/5, 6210/5 to kano'), true);
+  // No number → not a bale line: the AI (or the wizard) keeps it.
+  assert.equal(looksLikeTransferLine('Transfer stock'), false);
+  assert.equal(looksLikeTransferLine('Move Stock'), false);
+  // The verb is not at the front → the AI reads the sentence.
+  assert.equal(looksLikeTransferLine('Can you transfer 5801 to kano'), false);
+  // Other doors are never hijacked.
+  assert.equal(looksLikeTransferLine('sell 1100/1, 1091/1 kano'), false);
+  assert.equal(looksLikeTransferLine('Return 771, 779'), false);
+  assert.equal(looksLikeTransferLine(''), false);
+  assert.equal(looksLikeTransferLine(null), false);
+});

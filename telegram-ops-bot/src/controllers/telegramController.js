@@ -4297,6 +4297,18 @@ async function handleMessage(bot, msg) {
       }
     }
   }
+  // TRF-23 (owner's Go, 31-Oct-2026) — "Transfer 832, 1186, 786 to kano":
+  // the typed transfer line is read LOCALLY like the sell and return lines,
+  // so it opens the preload card with no AI round trip and keeps working
+  // when the provider is down (31-Oct: four tries bounced as "Need more
+  // info" because this was the one typed door still depending on OpenAI).
+  {
+    const { looksLikeTransferLine } = require('../utils/thanListParser');
+    if (looksLikeTransferLine(text)) {
+      const shown = await require('../flows/transferFlow').startFromText(bot, chatId, userId, text);
+      if (shown) return;
+    }
+  }
 
   // P3 — userId enables the per-user OpenAI rate limit inside the parser.
   const intent = await intentParser.parse(text, userId);
