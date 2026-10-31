@@ -8,7 +8,8 @@ Usage (regenerate after any wording change in the flow):
       --print-to-pdf=docs/TRF_TRANSFER_REQUEST_GUIDE.pdf docs/TRF_TRANSFER_REQUEST_GUIDE.html
 
 Every card body / button below is copied from the shipped code
-(src/flows/transferFlow.js as of 31-Oct-2026 — TRF-8b typed preload, TRF-14
+(src/flows/transferFlow.js as of 31-Oct-2026 — TRF-8b typed preload, TRF-23
+local read of the typed line (no AI), TRF-14
 pinned numbers, TRF-19 waiting lines, TRF-20 one load, TRF-21/22 receipt),
 with Telegram Markdown resolved the way the phone shows it.
 Worked example: 3 bales of 9006 · Shade 3 from Lagos to Kano office,
@@ -95,10 +96,10 @@ P.append(f"""
 </div>
 
 <div class="two">
-  <div class="box"><div class="btitle">Three ways to raise it</div>
-    <p><b>A · Type the bale numbers</b> — one line in the chat. Fastest when you have the numbers.</p>
-    <p><b>B · Tap through</b> — 🔁 Move Stock → 🚚 Transfer Stock. Store → design → shade → how many → where to.</p>
-    <p><b>C · Say it in words</b> — "Transfer package 5801 to Kano". The bot reads it and lands you on the same screens as A.</p>
+  <div class="box"><div class="btitle">Two ways to raise it — neither needs the AI</div>
+    <p><b>A · Type the bale numbers</b> — one line in the chat, starting with the word <b>Transfer</b>. Fastest when you have the numbers. The bot reads this line itself, so it works even when its AI reader is offline.</p>
+    <p><b>B · Tap through</b> — 🔁 Move Stock → 🚚 Transfer Stock. Store → design → shade → how many → where to. Pure taps.</p>
+    <p class="small">Any other wording ("Can you shift these to Kano?") goes through the AI reader. If the bot ever answers <i>Need more info</i>, retype it as A: <b>Transfer</b> first, the numbers, then <b>to</b> and the store.</p>
   </div>
   <div class="box"><div class="btitle">Before you start</div>
     <ul>
@@ -132,9 +133,9 @@ C_REVIEW = card(TYPED_REVIEW, [["➡ Continue"], NAV, ["🏠 Back to menu"]])
 P.append(f"""
 <div class="page">
 <div class="ph">Method A — type the bale numbers (fastest)</div>
-<p class="lead">One message. Numbers separated by commas or spaces, then <b>to</b> and the destination store. Up to 50 numbers. The bot finds every bale on the shelf, groups them by design and shade, and pins your numbers to the order.</p>
+<p class="lead">One message. Numbers separated by commas or spaces, then <b>to</b> and the destination store. Up to 50 numbers. The bot finds every bale on the shelf, groups them by design and shade, and pins your numbers to the order. No AI is involved: the line is read by the bot itself.</p>
 {step(1, "Type the line",
-      "Any of these work. The word <b>Transfer</b> (or Move / Send) at the front tells the bot what you mean; the numbers are the bales; everything after the last <b>to</b> is the destination.",
+      "Any of these work. The word <b>Transfer</b> (or <b>Move</b>) must be the FIRST word; the numbers are the bales (the words package / bale are optional); everything after the last <b>to</b> is the destination. Whole bales move — a than suffix like <b>6189/5</b> is read as bale 6189 and the card says so.",
       C_TYPED,
       tip="You do not type the source. The bot reads where the bales sit. If they sit in two stores it loads the first store's bales and lists the others as <i>in IDUMOTA, not Lagos — start a separate transfer</i>.")}
 {step(2, "Check the preload card",
@@ -194,6 +195,7 @@ P.append(f"""
     <li><b>The dispatcher sent different bales</b> — allowed. Physical truth wins; the confirm screen told him in words which ordered number he replaced.</li>
     <li><b>Only some bales arrived</b> — the receiver ticks the ones that came (📦 Only some arrived); the rest stay on the road and the row reads 6/10B until the last bale.</li>
     <li><b>I want to cancel</b> — there is no cancel after Send. The dispatcher taps ❌ Decline, which returns the bales to the source.</li>
+    <li><b>The bot answers "Need more info"</b> — the line did not start with Transfer / Move, or had no number, so it went to the AI reader and the reader did not answer. Retype it as Method A, e.g. <b>Transfer 832, 1186, 786 to kano</b>. Sell and Return lines are read the same way, with no AI.</li>
   </ul>
 </div>
 </div>
