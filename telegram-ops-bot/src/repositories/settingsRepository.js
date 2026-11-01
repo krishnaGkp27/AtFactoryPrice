@@ -113,6 +113,11 @@ const DEFAULTS = {
   // for one admin's ✅ before the bales flip to available; 0 = the receipt
   // applies at once, as before (an emergency valve, not a feature).
   TRANSFER_RECEIPT_REVIEW: 1,
+  // TXT-1 (owner, 01-Nov-2026) — may the AI read a typed sentence for the
+  // sheet? 0 = never: the three local script lines (sell / return /
+  // transfer) or the chips card, OpenAI is not called; `reads` = the AI
+  // may answer a question but never drive a write; 1 = the old behaviour.
+  AI_TEXT_PARSER: 0,
   // PAY-2 §2 H — hours after an approval (or the last finance card /
   // reminder) before an approved-but-unpaid payment re-sends the finance
   // card to the finance seat. 0 disables the nudge.

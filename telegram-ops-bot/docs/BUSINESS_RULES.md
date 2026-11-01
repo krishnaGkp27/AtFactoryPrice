@@ -1019,6 +1019,36 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
   (`cd:rg|pg|cs|css`, `acst:`, `srf_cu:__all__`); the `add_contact`
   executor. Spec: `specs/CRM-R1_CUSTOMER_REGIONS.md`.
 
+## 20 · Typed words never reach the AI for the sheet
+
+**Locked 01-Nov-2026 (owner, TXT-1).**
+
+> "I would like to make all sheet read and write prohibited through AI
+> model API. It would either get through [the script lines] or get message
+> to open chips." — "Go with switch."
+
+- **No sheet read or write is ever driven by an AI model's reading of a
+  typed sentence.** A typed message is either one of the local script
+  lines the bot reads itself — `Sell 1100/1, 1091/1 kano` (SELL-T3),
+  `Return 771, 779, 6189/5` (RET-5), `Transfer 832, 1186, 786 to kano`
+  (TRF-23), every number resolved against live stock, a tap still
+  required — or it gets the chips card (`👋 I work with the chips, not
+  sentences.` + the three lines + `🏠 Menu`). OpenAI is not called for text.
+- **The switch is the owner's:** Settings `AI_TEXT_PARSER` — `0` (default)
+  as above; `reads` = the AI may answer a QUESTION about the sheet, and an
+  action it names that would change the sheet is refused
+  (`✋ Typed words never change the sheet.`) — "read" is an explicit list,
+  anything else is a write; `1` = the behaviour before 01-Nov-2026. No
+  deploy either way.
+- **Photo reading is not this rule:** the bill check on a sale card, the
+  bale-label and task-note OCR read pictures, not the sheet, and a person
+  confirms every figure on chips before anything is written.
+- A typed line the bot cannot read is never guessed at: it gets the card,
+  never "Need more info", never a half-understood action.
+- Enforced: `src/utils/typedRouter.js` (`mode`, `isRead`, `READ_ACTIONS`,
+  `sendChipsCard`); `telegramController` at the former intent-parser call.
+  Spec: `specs/TXT-1_NO_AI_TEXT.md`.
+
 ## Incident log (why these rules exist)
 
 | Date | Incident | Rule born |
@@ -1058,4 +1088,5 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
 | 28-Oct-2026 | The missing are CHASED, not just nudged: from 📊 Today an admin picks who (everyone missing · a department · picked people) and how often (once · every 30 · every 60 min, until the 🕒 Cutoff); each person holds ONE live card — `⏰ Attendance not marked · 2nd reminder` / the day and the deadline / `Unmarked days count against your transport allowance and your salary payment.` / `📍 Mark now` — the previous card deleted when the next is sent, rewritten to `✅ Marked at …` the moment they mark; nobody marked is ever chased; a redeploy ends a manual chase. The audience is the 09:00 nudge's (departments + the Required list). Automatic mode (`ATTENDANCE_CHASE_AUTO`) exists and is OFF at launch (owner). 📍 Mark now takes the card down and opens the mark flow; a single configured location skips the location step there (one-option navigation, §2) — the tile keeps its status-first screen. Owner: "the admin can give a constant alert … to the departments or employee group … a button to mark it now"; "Keep as you shown in example"; "Also per person pick"; "All other go as per recommendation". | ATT-R1 (`src/services/attendanceChase.js`; `specs/ATT-R1_ATTENDANCE_CHASE.md`) |
 | 29-Oct-2026 | The audit delta card reckons in THANS: a sealed bale is its OWN than count on the book (never a flat figure, never a fraction of a bale); a bale figure stands alone only when both sides are sealed bales; an opened bale is explained (`3 bales opened (6+5+5 = 16t) · 15t found`), an ambiguous one is a range, a sealed bale gone with nothing found loose is `missing`; one chip cycles thans → bales (each design in the form its record has) → both; "bundles" is not a unit (§6b) — `t`. Owner: "than is a lower unit, which will give us a guarantee in a reconciliation. In bales, it may cause confusion unless the store has supplied only in bales"; "Lock in the layout". | AUD-D1 (`src/services/auditDeltaViews.js`; `specs/AUD-D1_AUDIT_DELTA_VIEWS.md`) |
 | 30-Oct-2026 | Customers by REGION (§19): 👤 Customer Details opens on region chips (Lagos = Lagos + IDUMOTA, Kano = Kano office — from the Locations register; largest first), then a list paged eight a page with ◀ Back / Next ▶ (no See all); `🆕 Prospects`, `❔ Not placed yet` (until it empties), `🌐 All customers` for admins; an employee lands straight in their own region and can see no other; a prospect is tagged with the adding employee's store (provisional) at ➕ Add Contact and re-placed from the card; the supply request's `🌐 All customers` is the region for employees. Owner: "Go." | CRM-R1 (`src/services/customerRegion.js`; `specs/CRM-R1_CUSTOMER_REGIONS.md`) |
+| 31-Oct-2026 | Abdul's typed transfer line bounced four times as "Need more info" — the intent parser's OFFLINE fallback, OpenAI had stopped answering, the failure swallowed with no log; the typed transfer line was the one typed door still riding the provider (TRF-23 read it locally the same day). Owner, 01-Nov: no sheet read or write through the AI model at all — script lines or the chips card | §20 (TXT-1: `src/utils/typedRouter.js`; `specs/TXT-1_NO_AI_TEXT.md`) |
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

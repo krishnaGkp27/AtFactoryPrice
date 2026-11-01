@@ -67,7 +67,12 @@ function installFakeIntent(fn) {
       ip[key] = async (text, ctx) => fn(text, ctx);
     }
   }
-  return () => Object.assign(ip, original);
+  // TXT-1 — since 01-Nov-2026 the AI is OFF by default (Settings
+  // AI_TEXT_PARSER = 0). A test that installs a fake parser is exercising
+  // the AI path on purpose, so pin the old mode here; a test of the switch
+  // itself calls typedRouter.forceMode('0' | 'reads') after this.
+  src('utils/typedRouter').forceMode('1');
+  return () => { Object.assign(ip, original); src('utils/typedRouter').forceMode(null); };
 }
 
 /** Require the controller (after fakes are installed by the caller). */

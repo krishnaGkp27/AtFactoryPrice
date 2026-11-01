@@ -4310,10 +4310,26 @@ async function handleMessage(bot, msg) {
     }
   }
 
+  // TXT-1 (owner, 01-Nov-2026) — the AI never reads a typed sentence for the
+  // sheet. Settings AI_TEXT_PARSER: 0 (default) = the local script lines
+  // above or the chips card, OpenAI is never called; `reads` = the AI may
+  // answer a question but an action that would change the sheet is refused
+  // with the same card; 1 = the old behaviour.
+  const typedRouter = require('../utils/typedRouter');
+  const aiMode = await typedRouter.mode();
+  if (aiMode === '0') {
+    usageTracker.track({ userId, surface: 'nlp', feature: 'chips_card', event: 'nlp_off', meta: {} });
+    await typedRouter.sendChipsCard(bot, chatId);
+    return;
+  }
   // P3 — userId enables the per-user OpenAI rate limit inside the parser.
   const intent = await intentParser.parse(text, userId);
   // ANL-1 — typed-command usage (surface=nlp); no-op until analytics enabled.
   usageTracker.track({ userId, surface: 'nlp', feature: (intent && intent.action) || 'unknown', event: 'nlp_intent', meta: { confidence: intent && intent.confidence } });
+  if (aiMode === 'reads' && !typedRouter.isRead(intent.action)) {
+    await typedRouter.sendChipsCard(bot, chatId, { blockedWrite: intent.action });
+    return;
+  }
 
   // TCSI-2: 'add' starts a tappable wizard that collects every detail
   // itself (warehouse, then CSV). Bypass the clarification gate so the
