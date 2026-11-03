@@ -4330,7 +4330,7 @@ async function handleMessage(bot, msg) {
   // P3 — userId enables the per-user OpenAI rate limit inside the parser.
   const intent = localIntent || await intentParser.parse(text, userId);
   // ANL-1 — typed-command usage (surface=nlp); no-op until analytics enabled.
-  usageTracker.track({ userId, surface: 'nlp', feature: (intent && intent.action) || 'unknown', event: localIntent ? 'nlp_local' : 'nlp_intent', meta: { confidence: intent && intent.confidence } });
+  usageTracker.track({ userId, surface: 'nlp', feature: (intent && intent.action) || 'unknown', event: 'nlp_intent', meta: { confidence: intent && intent.confidence, local: !!localIntent } });
   if (aiMode === 'reads' && (intent.fallback || !typedRouter.isRead(intent.action))) {
     // TXT-2 — in `reads` mode an UNANSWERED AI call (the offline fallback)
     // gets the chips card as well: "Need more info" was a dead end with no
