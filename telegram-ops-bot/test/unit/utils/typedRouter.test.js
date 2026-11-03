@@ -54,3 +54,30 @@ test('the chips card names the three script lines and nothing technical', () => 
   const b = typedRouter.chipsCardText({ blockedWrite: 'sell_package' });
   assert.match(b, /^✋ Typed words never change the sheet\./);
 });
+
+// ── TXT-2 (owner, 03-Nov-2026) — the local bale-card line
+test('localReadIntent: Abdul’s four lines and the bare number open the bale card', () => {
+  for (const line of ['Bale details of 1111', 'Details for package 1112', '1112', 'Bale 1112', 'bale 1112 details',
+    'show me bale 1112', 'package 1112 status', 'pkg 1112', 'What is in bale 1112?', 'Details of Bale 5801.']) {
+    const out = typedRouter.localReadIntent(line);
+    assert.ok(out, line);
+    assert.equal(out.action, 'package_detail', line);
+    assert.equal(out.clarification, null, line);
+    assert.equal(out.local, true, line);
+  }
+  assert.equal(typedRouter.localReadIntent('Bale details of 1111').packageNo, '1111');
+  assert.equal(typedRouter.localReadIntent('Details for package 1112').packageNo, '1112');
+});
+
+test('localReadIntent: any other word, a second number, or a design code is not claimed', () => {
+  for (const line of ['Sell 1112', 'Transfer 1112 to kano', 'Return 1112', '1112 to Ibrahim', 'bale 1112 black',
+    'Details for 1111 and 1112', '1112/3', '9043-B', 'hi', 'stock summary', '', null, '5', '12345678']) {
+    assert.equal(typedRouter.localReadIntent(line), null, String(line));
+  }
+});
+
+test('the chips card now names the bale line first', () => {
+  const t = typedRouter.chipsCardText();
+  assert.match(t, /Four lines I do read/);
+  assert.match(t, /1112 or Bale 1112 — the bale card/);
+});

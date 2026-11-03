@@ -40,6 +40,41 @@ const READ_ACTIONS = Object.freeze([
 
 const MODES = Object.freeze(['0', 'reads', '1']);
 
+/**
+ * TXT-2 (owner, 03-Nov-2026: Abdul typed "Bale details of 1111" four times
+ * and got "Need more info" — "Yes is asking for bale card"). The words that
+ * may surround ONE bale number for the line to mean "show me that bale".
+ * Any other word — a verb like sell / transfer, a name, a colour — and the
+ * line is not claimed. Deterministic, no AI, in every mode.
+ */
+const BALE_QUERY_WORDS = new Set([
+  'bale', 'bales', 'package', 'packages', 'pkg', 'pkgs',
+  'detail', 'details', 'info', 'information', 'status', 'card', 'view',
+  'of', 'for', 'on', 'about', 'in', 'is', 'what', 'where',
+  'show', 'check', 'see', 'open', 'give', 'get', 'me', 'the', 'a', 'this', 'that',
+  'please', 'pls', 'kindly', 'no', 'number', 'num',
+]);
+
+/**
+ * The local READ lines the bot answers itself. Today: the bale card —
+ * `1112` · `Bale 1112` · `Bale details of 1112` · `Details for package 1112`
+ * · `show me bale 1112`. Returns an intent the controller's existing
+ * `package_detail` branch renders, or null when the line is not claimed.
+ * @param {string} raw
+ * @returns {{action:'package_detail', packageNo:string, confidence:number, clarification:null, local:true}|null}
+ */
+function localReadIntent(raw) {
+  const t = String(raw || '').trim();
+  if (!t || t.length > 80) return null;
+  const nums = t.match(/\d+/g) || [];
+  if (nums.length !== 1) return null;            // one number, or it is not a bale line
+  const n = nums[0];
+  if (n.length < 2 || n.length > 7) return null;
+  const words = t.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\d+/g, ' ').split(/\s+/).filter(Boolean);
+  if (words.some((w) => !BALE_QUERY_WORDS.has(w))) return null;
+  return { action: 'package_detail', packageNo: n, confidence: 1, clarification: null, local: true };
+}
+
 let _forced = null;
 
 /**
@@ -74,7 +109,8 @@ function chipsCardText({ blockedWrite = null } = {}) {
   lines.push(
     '👋 I work with the chips, not sentences.',
     '',
-    'Three lines I do read:',
+    'Four lines I do read:',
+    '  • 1112 or Bale 1112 — the bale card',
     '  • Sell 1100/1, 1091/1 kano',
     '  • Return 771, 779, 6189/5',
     '  • Transfer 832, 1186, 786 to kano',
@@ -107,4 +143,4 @@ function forceMode(m) {
   _forced = m == null ? null : parseMode(m);
 }
 
-module.exports = { mode, parseMode, isRead, chipsCardText, sendChipsCard, forceMode, READ_ACTIONS, MODES };
+module.exports = { mode, parseMode, isRead, localReadIntent, chipsCardText, sendChipsCard, forceMode, READ_ACTIONS, MODES, BALE_QUERY_WORDS };

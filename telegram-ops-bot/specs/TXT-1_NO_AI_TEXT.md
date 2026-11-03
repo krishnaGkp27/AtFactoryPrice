@@ -99,3 +99,31 @@ written. Untouched by this change.
 4. Settings → `AI_TEXT_PARSER` = `reads` → within a minute "What's in
    Lagos?" answers, "Sell package 832 to Ibrahim" gets the ✋ card.
 5. Back to `0`.
+
+## 7. TXT-2 — the first local READ line: the bale card (03-Nov-2026)
+
+Owner, 03-Nov-2026, on Abdul's screenshot ("Bale details of 1111" four
+times → "Need more info", OpenAI still not answering): "Yes is asking for
+bale card."
+
+- `typedRouter.localReadIntent(text)`: a line with exactly ONE number of
+  2–7 digits and nothing but bale-query words around it (`bale`, `package`,
+  `pkg`, `details`, `info`, `status`, `show`, `check`, `of`, `for`, `me`,
+  `please`, …) is the bale card — `1112` · `Bale 1112` · `Bale details of
+  1112` · `Details for package 1112` · `show me bale 1112`. Any other word
+  (a verb, a name, a colour), a second number, a than token `1112/3` or a
+  design code `9043-B` is not claimed. Read locally, in EVERY mode, before
+  the AI; it lands on the controller's existing `package_detail` branch, so
+  the card is byte-identical to the one the AI path drew.
+- The chips card now lists four lines, the bale line first.
+- `reads` mode: an UNANSWERED AI call (the offline fallback, now flagged
+  `fallback: true`) gets the chips card instead of the button-less "Need
+  more info" — the dead end in the owner's screenshot. Mode `1` keeps the
+  old reply.
+- Tests: `typedRouter.test.js` (claimed / not claimed lines),
+  `typedTextNoAi.test.js` (the card in mode 0 and `reads` with zero AI
+  calls, an unknown bale, the fallback → chips card).
+
+Next local read lines come from the census (§ above, step 1): stock of a
+design, bales of a design, a customer's ledger — each the same shape: one
+detector, the existing branch, a test, a line on the card.

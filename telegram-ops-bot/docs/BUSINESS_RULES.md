@@ -1032,8 +1032,11 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
   lines the bot reads itself — `Sell 1100/1, 1091/1 kano` (SELL-T3),
   `Return 771, 779, 6189/5` (RET-5), `Transfer 832, 1186, 786 to kano`
   (TRF-23), every number resolved against live stock, a tap still
-  required — or it gets the chips card (`👋 I work with the chips, not
-  sentences.` + the three lines + `🏠 Menu`). OpenAI is not called for text.
+  required; and since 03-Nov-2026 (TXT-2) the bale card for `1112` /
+  `Bale details of 1112` — or it gets the chips card (`👋 I work with the
+  chips, not sentences.` + the lines it reads + `🏠 Menu`). OpenAI is not
+  called for text. New local lines are added from the typed-text census,
+  one detector + the existing branch + a test each.
 - **The switch is the owner's:** Settings `AI_TEXT_PARSER` — `0` (default)
   as above; `reads` = the AI may answer a QUESTION about the sheet, and an
   action it names that would change the sheet is refused

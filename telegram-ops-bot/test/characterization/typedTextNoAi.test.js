@@ -136,3 +136,36 @@ test('mode 1: the old behaviour — the AI drives the sale door', async () => {
   assert.match(lastText(bot), /Which package\?/);
   typedRouter.forceMode(null);
 });
+
+// ── TXT-2 (owner, 03-Nov-2026): "Yes is asking for bale card" ──────────────
+test('mode 0: "Bale details of 832" opens the bale card with NO AI call', async () => {
+  typedRouter.forceMode('0');
+  for (const line of ['Bale details of 832', 'Details for package 832', '832', 'show me bale 832']) {
+    const bot = await send(line);
+    assert.equal(intentCalls, 0, line);
+    assert.match(lastText(bot), /📦 \*Bale 832\*/, line);
+    assert.match(lastText(bot), /Design: 9006/, line);
+    assert.doesNotMatch(lastText(bot), /I work with the chips/, line);
+  }
+});
+
+test('mode 0: a bale number the sheet does not know says so, still with no AI call', async () => {
+  typedRouter.forceMode('0');
+  const bot = await send('Bale details of 999');
+  assert.equal(intentCalls, 0);
+  assert.match(lastText(bot), /Bale 999 not found/);
+});
+
+test('mode reads: the bale line is still local, and an unanswered AI call gets the chips card, not "Need more info"', async () => {
+  typedRouter.forceMode('reads');
+  const bot = await send('Details for package 832');
+  assert.equal(intentCalls, 0);
+  assert.match(lastText(bot), /📦 \*Bale 832\*/);
+  // The offline fallback shape (OpenAI did not answer) — the incident of 03-Nov.
+  intent = { action: 'check', confidence: 0.5, clarification: 'Please provide more details (Bale number, than number, customer name, etc.).', fallback: true };
+  const bot2 = await send('Bale details of 1111 please tell me');
+  assert.equal(intentCalls, 1);
+  assert.doesNotMatch(lastText(bot2), /Need more info/);
+  assert.match(lastText(bot2), /I work with the chips/);
+  typedRouter.forceMode(null);
+});

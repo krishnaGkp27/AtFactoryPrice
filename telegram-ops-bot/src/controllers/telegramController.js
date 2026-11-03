@@ -4316,18 +4316,26 @@ async function handleMessage(bot, msg) {
   // answer a question but an action that would change the sheet is refused
   // with the same card; 1 = the old behaviour.
   const typedRouter = require('../utils/typedRouter');
-  const aiMode = await typedRouter.mode();
+  // TXT-2 (owner, 03-Nov-2026: "Yes is asking for bale card") — a bale
+  // number with nothing but bale-query words around it ("Bale details of
+  // 1111", "Details for package 1112", "1112") is read locally and lands on
+  // the package_detail branch below — no AI, in every mode.
+  const localIntent = typedRouter.localReadIntent(text);
+  const aiMode = localIntent ? null : await typedRouter.mode();
   if (aiMode === '0') {
     usageTracker.track({ userId, surface: 'nlp', feature: 'chips_card', event: 'nlp_off', meta: {} });
     await typedRouter.sendChipsCard(bot, chatId);
     return;
   }
   // P3 — userId enables the per-user OpenAI rate limit inside the parser.
-  const intent = await intentParser.parse(text, userId);
+  const intent = localIntent || await intentParser.parse(text, userId);
   // ANL-1 — typed-command usage (surface=nlp); no-op until analytics enabled.
-  usageTracker.track({ userId, surface: 'nlp', feature: (intent && intent.action) || 'unknown', event: 'nlp_intent', meta: { confidence: intent && intent.confidence } });
-  if (aiMode === 'reads' && !typedRouter.isRead(intent.action)) {
-    await typedRouter.sendChipsCard(bot, chatId, { blockedWrite: intent.action });
+  usageTracker.track({ userId, surface: 'nlp', feature: (intent && intent.action) || 'unknown', event: localIntent ? 'nlp_local' : 'nlp_intent', meta: { confidence: intent && intent.confidence } });
+  if (aiMode === 'reads' && (intent.fallback || !typedRouter.isRead(intent.action))) {
+    // TXT-2 — in `reads` mode an UNANSWERED AI call (the offline fallback)
+    // gets the chips card as well: "Need more info" was a dead end with no
+    // button (owner's screenshot, 03-Nov-2026).
+    await typedRouter.sendChipsCard(bot, chatId, intent.fallback ? {} : { blockedWrite: intent.action });
     return;
   }
 

@@ -381,6 +381,9 @@ function fallbackParse(msg) {
     confidence: 0.5,
     // A transfer needs no clarification: the preload card is the question.
     clarification: action === 'transfer_batch' ? null : 'Please provide more details (Bale number, than number, customer name, etc.).',
+    // TXT-2 — the controller's `reads` mode turns an unanswered AI call
+    // into the chips card instead of a button-less "Need more info".
+    fallback: true,
   };
 }
 
