@@ -93,7 +93,9 @@ test('mode 0: a greeting is still greeted (the existing door, before the router)
 
 test('mode 0: a would-be sale, payment or price sentence gets the chips card', async () => {
   typedRouter.forceMode('0');
-  for (const line of ['Sell package 832 to Ibrahim', 'Record payment 50000 from Ibrahim via bank', 'Update price of 9006 to 1500']) {
+  // (A bare-only "Sell 832 to Ibrahim" is read locally since SELL-T3d; the
+  // worded than form is not, so it is the sale sentence that reaches here.)
+  for (const line of ['Sell than 1 from package 832 to Ibrahim', 'Record payment 50000 from Ibrahim via bank', 'Update price of 9006 to 1500']) {
     const bot = await send(line);
     assert.equal(intentCalls, 0, line);
     assert.match(lastText(bot), /I work with the chips/, line);
@@ -118,8 +120,8 @@ test('mode reads: the AI may answer a question', async () => {
 
 test('mode reads: an AI-named write is refused with the ✋ card — no sale flow, no queue', async () => {
   typedRouter.forceMode('reads');
-  intent = { action: 'sell_package', packageNo: '832', customer: 'Ibrahim', confidence: 0.95, clarification: null };
-  const bot = await send('Sell package 832 to Ibrahim');
+  intent = { action: 'sell_than', packageNo: '832', thanNo: 1, customer: 'Ibrahim', confidence: 0.95, clarification: null };
+  const bot = await send('Sell than 1 from package 832 to Ibrahim');
   assert.equal(intentCalls, 1);
   assert.match(lastText(bot), /^✋ Typed words never change the sheet\./);
   assert.ok(!sessionStore.get('4242'), 'no sale session may open');
@@ -131,7 +133,7 @@ test('mode reads: an AI-named write is refused with the ✋ card — no sale flo
 test('mode 1: the old behaviour — the AI drives the sale door', async () => {
   typedRouter.forceMode('1');
   intent = { action: 'sell_package', packageNo: null, customer: null, confidence: 0.95, clarification: null };
-  const bot = await send('Sell package to Ibrahim');
+  const bot = await send('Sell package to Ibrahim');  // no number — not a local line
   assert.equal(intentCalls, 1);
   assert.match(lastText(bot), /Which package\?/);
   typedRouter.forceMode(null);

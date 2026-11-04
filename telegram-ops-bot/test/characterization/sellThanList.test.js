@@ -345,3 +345,19 @@ test('bales split across stores: the bot asks instead of choosing one', async ()
   assert.match(lastText(bot), /different stores/i);
   assert.ok(!sessionStore.get('4242'), 'no session started on an ambiguous store');
 });
+
+// ── SELL-T3d (owner's Go, 04-Nov-2026): "Sell 1111,1112 to Abba" got the
+// chips card — a bare-only list is read locally now, every bale whole.
+test('SELL-T3d: a bare-only sell line opens the review card locally — whole bales, buyer noted, no AI', async () => {
+  sessionStore.clear('4242');
+  intentCalls = 0;
+  const bot = createFakeBot();
+  await controller.handleMessage(bot, msg('Sell 1100,1091 to Abba'));
+  const text = lastText(bot);
+  assert.equal(intentCalls, 0, 'the AI must not be consulted');
+  assert.doesNotMatch(text, /I work with the chips/);
+  assert.match(text, /1100/);
+  assert.match(text, /1091/);
+  assert.match(text, /Loaded whole/);
+  assert.match(text, /Abba/);
+});

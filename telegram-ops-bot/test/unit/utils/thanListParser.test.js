@@ -19,8 +19,18 @@ test('looksLikeThanList: only claims text it can actually parse', () => {
   assert.equal(looksLikeThanList('sell 1100/1, 1091/1 kano'), true);
   assert.equal(looksLikeThanList('sell 1100 x3'), true);
   assert.equal(looksLikeThanList('Sell 1100/2'), true);
-  // Whole-bale typed sales keep their existing path.
-  assert.equal(looksLikeThanList('sell bale 1100 to Adamu'), false);
+  // SELL-T3d (04-Nov-2026) — a bare-only list is read locally too.
+  assert.equal(looksLikeThanList('sell bale 1100 to Adamu'), true);
+  assert.equal(looksLikeThanList('Sell 1111,1112 to Abba'), true);
+  assert.equal(looksLikeThanList('Sell 1111, 1112 and 1113 to Abba'), true);
+  assert.equal(looksLikeThanList('sell 1111 1112 kano'), true);
+  assert.equal(looksLikeThanList('Sell packages 5801, 5802 to Ibrahim, sold by Yarima'), true);
+  // The worded than form is not the list grammar — its 3 is a than.
+  assert.equal(looksLikeThanList('Sell than 3 from package 5801 to Ibrahim'), false);
+  // A count, not a bale number.
+  assert.equal(looksLikeThanList('Sell 5 bales of 9006 to Abba'), false);
+  assert.equal(looksLikeThanList('sell'), false);
+  assert.equal(looksLikeThanList('sell to Abba'), false);
   assert.equal(looksLikeThanList('transfer 1100 to kano'), false);
   assert.equal(looksLikeThanList(''), false);
 });
@@ -158,4 +168,15 @@ test('looksLikeTransferLine: the verb opens the line, a number follows', () => {
   assert.equal(looksLikeTransferLine('Return 771, 779'), false);
   assert.equal(looksLikeTransferLine(''), false);
   assert.equal(looksLikeTransferLine(null), false);
+});
+
+// ── SELL-T3d (owner's Go, 04-Nov-2026) — the bare-only sell line, parsed
+test('bare-only sell line: every number is a whole bale, the buyer rides the tail', () => {
+  const out = parseThanList('Sell 1111,1112 to Abba');
+  assert.deepEqual(out.items, [{ packageNo: '1111' }, { packageNo: '1112' }]);
+  assert.equal(out.ignoredCustomer, 'Abba');
+  assert.deepEqual(out.bad, []);
+  const two = parseThanList('sell bale 1100 to Adamu');
+  assert.deepEqual(two.items, [{ packageNo: '1100' }]);
+  assert.equal(two.ignoredCustomer, 'Adamu');
 });

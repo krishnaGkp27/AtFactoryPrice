@@ -1029,7 +1029,8 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
 
 - **No sheet read or write is ever driven by an AI model's reading of a
   typed sentence.** A typed message is either one of the local script
-  lines the bot reads itself — `Sell 1100/1, 1091/1 kano` (SELL-T3),
+  lines the bot reads itself — `Sell 1100/1, 1091/1 kano` or the bare
+  `Sell 1111, 1112 to Abba` (SELL-T3 / T3d),
   `Return 771, 779, 6189/5` (RET-5), `Transfer 832, 1186, 786 to kano`
   (TRF-23), every number resolved against live stock, a tap still
   required; and since 03-Nov-2026 (TXT-2) the bale card for `1112` /

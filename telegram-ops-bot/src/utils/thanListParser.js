@@ -43,9 +43,16 @@ const NOISE = /\b(sell|sale|return|returns|than|thans|from|package|packages|bale
 function looksLikeThanList(raw) {
   const t = String(raw || '').trim();
   if (!/^sell\b/i.test(t)) return false;
-  // At least one `<bale>/<than>` or `<bale> x<n>` token — a bare
-  // "sell 1100" is left to the existing whole-bale typed path.
-  return /\d+\s*\/\s*\d/.test(t) || /\d+\s*[xX]\s*\d+/.test(t);
+  // The shorthand: at least one `<bale>/<than>` or `<bale> x<n>` token.
+  if (/\d+\s*\/\s*\d/.test(t) || /\d+\s*[xX]\s*\d+/.test(t)) return true;
+  // SELL-T3d (owner's Go, 04-Nov-2026 — "Sell 1111,1112 to Abba" got the
+  // chips card): a BARE-ONLY list is read locally as well — the numbers
+  // come straight after the verb (an optional package / bale word before
+  // them), each of two digits or more, joined by commas, "and" or spaces,
+  // then whatever tail (the buyer, a store). Every bare bale loads WHOLE
+  // (SELL-T3c) on the review card. The worded form "Sell than 3 from
+  // package 5801 …" is NOT claimed: its 3 is a than, not a bale.
+  return /^sell\s+(?:(?:packages?|bales?|pkgs?|no\.?|numbers?)\s+)?\d{2,}(?:\s*(?:,|\band\b|\s)\s*\d{2,})*(?:\s|$|,)/i.test(t);
 }
 
 /**

@@ -111,7 +111,7 @@ function chipsCardText({ blockedWrite = null } = {}) {
     '',
     'Four lines I do read:',
     '  • 1112 or Bale 1112 — the bale card',
-    '  • Sell 1100/1, 1091/1 kano',
+    '  • Sell 1111, 1112 to Abba',
     '  • Return 771, 779, 6189/5',
     '  • Transfer 832, 1186, 786 to kano',
     '',

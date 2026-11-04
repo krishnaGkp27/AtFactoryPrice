@@ -94,8 +94,9 @@ written. Untouched by this change.
 
 1. Type "What's in Lagos?" → the chips card, 🏠 Menu turns it into the menu.
 2. Type `Transfer 832, 1186, 786 to kano` → the preload card as before.
-3. Type "Sell package 832 to Ibrahim" → the chips card (the typed sell
-   line `Sell 832 to Ibrahim` still opens the review card).
+3. Type `Sell 832, 1186 to Ibrahim` → the sell review card, both bales
+   whole, no AI (SELL-T3d). A worded sentence such as "Sell than 1 from
+   package 832 to Ibrahim" → the chips card.
 4. Settings → `AI_TEXT_PARSER` = `reads` → within a minute "What's in
    Lagos?" answers, "Sell package 832 to Ibrahim" gets the ✋ card.
 5. Back to `0`.

@@ -255,3 +255,24 @@ Not built; each needs the owner's word.
 - The 08-Aug "approved but could not be completed" failure
   (`3a9c9a05-…`) is UNRELATED and still undiagnosed — the admin-side
   `⚠️ Approved but execution failed: <reason>` line is needed.
+
+## SELL-T3d — a bare-only sell line is read locally (owner's Go, 04-Nov-2026)
+
+Owner's screenshot: `Sell 1111,1112 to Abba` → the chips card. Since TXT-1
+the AI is off, and a bare-only list was the one sell form still left to the
+AI door (SELL-T3c kept "bare-only lines through the local parser" aside).
+
+- `looksLikeThanList` now also claims a line whose numbers come straight
+  after `sell` (an optional package / bale word before them), each of two
+  digits or more, joined by commas, "and" or spaces, with any tail:
+  `Sell 1111,1112 to Abba` · `sell bale 1100 to Adamu` · `sell 1111 1112
+  kano`. Every bare bale loads WHOLE on the review card (SELL-T3c), the
+  typed buyer is noted on the card for the admin to confirm at approval
+  (DSP-1), nothing is guessed.
+- Not claimed: the worded than form `Sell than 3 from package 5801 to
+  Ibrahim` (its 3 is a than, not a bale) and a count `Sell 5 bales of 9006`
+  (one digit). Those go the AI way, or the chips card when the AI is off.
+- The chips card's sell example is now `Sell 1111, 1112 to Abba`.
+- Tests: `thanListParser.test.js` (claimed / not claimed, the parse),
+  `sellThanList.test.js` (the review card through the real controller,
+  zero AI calls).

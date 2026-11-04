@@ -47,7 +47,7 @@ test('isRead: reads are an explicit list; every write — and anything new — i
 test('the chips card names the three script lines and nothing technical', () => {
   const t = typedRouter.chipsCardText();
   assert.match(t, /I work with the chips/);
-  assert.match(t, /Sell 1100\/1, 1091\/1 kano/);
+  assert.match(t, /Sell 1111, 1112 to Abba/);
   assert.match(t, /Return 771, 779, 6189\/5/);
   assert.match(t, /Transfer 832, 1186, 786 to kano/);
   assert.doesNotMatch(t, /✋/);
