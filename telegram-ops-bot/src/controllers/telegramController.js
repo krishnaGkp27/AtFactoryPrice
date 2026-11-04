@@ -4320,10 +4320,39 @@ async function handleMessage(bot, msg) {
   // number with nothing but bale-query words around it ("Bale details of
   // 1111", "Details for package 1112", "1112") is read locally and lands on
   // the package_detail branch below — no AI, in every mode.
-  const localIntent = typedRouter.localReadIntent(text);
-  const aiMode = localIntent ? null : await typedRouter.mode();
-  if (aiMode === '0') {
-    usageTracker.track({ userId, surface: 'nlp', feature: 'chips_card', event: 'nlp_off', meta: {} });
+  // TXT-3 (owner's final go, 04-Nov-2026) — the whole script: a known first
+  // word is read deterministically and lands on its branch below; a known
+  // verb with a bad body gets ITS line back; `help` / `/help` the chips card.
+  let localIntent = typedRouter.localReadIntent(text) || typedRouter.localIntent(text);
+  const aiMode = await typedRouter.mode();
+  // In `reads` / `1` the switch promises the old behaviour, so only the
+  // script's READ lines (and the bale card) stay local there; its hints,
+  // one-button doors and write verbs yield to the AI's richer parse.
+  if (localIntent && aiMode !== '0') {
+    const a = localIntent.action;
+    if (a === '__hint__' || a === '__tile__' || (a !== '__help__' && !typedRouter.isRead(a))) localIntent = null;
+  }
+  if (localIntent && localIntent.action === '__help__') {
+    usageTracker.track({ userId, surface: 'nlp', feature: 'help', event: 'nlp_help', meta: {} });
+    await typedRouter.sendChipsCard(bot, chatId);
+    return;
+  }
+  if (localIntent && localIntent.action === '__hint__') {
+    usageTracker.track({ userId, surface: 'nlp', feature: localIntent.verb, event: 'nlp_hint', meta: { head: text.slice(0, 40) } });
+    await typedRouter.sendHintCard(bot, chatId, localIntent);
+    return;
+  }
+  if (localIntent && localIntent.action === '__tile__') {
+    usageTracker.track({ userId, surface: 'nlp', feature: localIntent.callback, event: 'nlp_tile', meta: {} });
+    await bot.sendMessage(chatId, localIntent.text, {
+      reply_markup: { inline_keyboard: [[{ text: localIntent.label, callback_data: localIntent.callback }]] },
+    });
+    return;
+  }
+  if (!localIntent && aiMode === '0') {
+    // `head` = the first 40 characters, so the owner can see what staff typed
+    // that the script does not know yet (the feedback loop for new verbs).
+    usageTracker.track({ userId, surface: 'nlp', feature: 'chips_card', event: 'nlp_off', meta: { head: text.slice(0, 40) } });
     await typedRouter.sendChipsCard(bot, chatId);
     return;
   }

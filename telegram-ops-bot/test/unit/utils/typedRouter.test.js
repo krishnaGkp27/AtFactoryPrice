@@ -78,6 +78,6 @@ test('localReadIntent: any other word, a second number, or a design code is not 
 
 test('the chips card now names the bale line first', () => {
   const t = typedRouter.chipsCardText();
-  assert.match(t, /Four lines I do read/);
+  assert.match(t, /Lines I do read/);
   assert.match(t, /1112 or Bale 1112 — the bale card/);
 });

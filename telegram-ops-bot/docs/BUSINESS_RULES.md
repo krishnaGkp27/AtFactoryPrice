@@ -1052,6 +1052,12 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
 - Enforced: `src/utils/typedRouter.js` (`mode`, `isRead`, `READ_ACTIONS`,
   `sendChipsCard`); `telegramController` at the former intent-parser call.
   Spec: `specs/TXT-1_NO_AI_TEXT.md`.
+- **TXT-3 (04-Nov-2026, owner's final go):** the whole typed script is a CONSTANT
+  syntax — first word = verb, body read deterministically (`typedRouter.localIntent`),
+  every line landing on its existing branch so every write still opens its approval
+  card; a known verb with a bad body gets its own line back; `help` shows the script;
+  an unknown first word gets the chips card and is counted (`nlp_off`, first 40
+  characters). No typed payment line (01-Nov ruling stands). Spec §8.
 
 ## Incident log (why these rules exist)
 

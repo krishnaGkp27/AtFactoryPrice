@@ -95,7 +95,8 @@ test('mode 0: a would-be sale, payment or price sentence gets the chips card', a
   typedRouter.forceMode('0');
   // (A bare-only "Sell 832 to Ibrahim" is read locally since SELL-T3d; the
   // worded than form is not, so it is the sale sentence that reaches here.)
-  for (const line of ['Sell than 1 from package 832 to Ibrahim', 'Record payment 50000 from Ibrahim via bank', 'Update price of 9006 to 1500']) {
+  // TXT-3 — a known verb with a bad body gets ITS line back; an unknown first word the chips card.
+  for (const line of ['Record payment 50000 from Ibrahim via bank', 'Update price of 9006 to 1500']) {
     const bot = await send(line);
     assert.equal(intentCalls, 0, line);
     assert.match(lastText(bot), /I work with the chips/, line);
@@ -165,7 +166,9 @@ test('mode reads: the bale line is still local, and an unanswered AI call gets t
   assert.match(lastText(bot), /📦 \*Bale 832\*/);
   // The offline fallback shape (OpenAI did not answer) — the incident of 03-Nov.
   intent = { action: 'check', confidence: 0.5, clarification: 'Please provide more details (Bale number, than number, customer name, etc.).', fallback: true };
-  const bot2 = await send('Bale details of 1111 please tell me');
+  // TXT-3 — "Bale … 1111 …" is now the bale card in every mode (the script's
+  // `bale` verb); a sentence with no script verb is what still reaches the AI.
+  const bot2 = await send('Where is 1111 kept these days');
   assert.equal(intentCalls, 1);
   assert.doesNotMatch(lastText(bot2), /Need more info/);
   assert.match(lastText(bot2), /I work with the chips/);

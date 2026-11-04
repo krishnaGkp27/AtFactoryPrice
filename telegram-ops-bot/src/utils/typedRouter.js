@@ -102,18 +102,172 @@ function isRead(action) {
   return READ_ACTIONS.includes(String(action || ''));
 }
 
-/** The chips card: what the bot does read, and the one way to everything else. */
+/* ── TXT-3 (owner's final go, 04-Nov-2026) — the WHOLE script ────────────
+ *
+ * "Let me know exactly how many of them will not go through without this
+ * OpenAI API, so that you can code them directly, making a constant script
+ * like a syntax without any further failure." The first word is the verb;
+ * the body is read deterministically; a recognised verb with a bad body gets
+ * ITS line back (never the generic card); an unknown first word gets the
+ * chips card. Every intent produced here lands on the controller's existing
+ * branch, so every write still opens its approval card — typed words never
+ * change the sheet (§20). The owner's 01-Nov ruling stands: no typed payment
+ * line — `Payment …` points at the tap door.
+ */
+const SYNTAX = Object.freeze({
+  sell: 'Sell 771, 779, 6189/5 to Abba',
+  return: 'Return 771, 779, 6189/5',
+  transfer: 'Transfer 832, 1186, 786 to kano',
+  bale: 'Bale 1112',
+  stock: 'Stock 9006 black · Stock at Lagos',
+  balance: 'Balance Abba',
+  ledger: 'Ledger Abba',
+  price: 'Price 9006 black 1500',
+  delivered: 'Delivered ORD-20260221-001',
+  receive: 'Receive',
+  customer: 'Customer Abba',
+});
+const VERBS = Object.freeze({
+  sell: 'sell', sale: 'sell', sold: 'sell',
+  return: 'return', returned: 'return',
+  transfer: 'transfer', move: 'transfer', send: 'transfer',
+  stock: 'stock', check: 'stock',
+  bale: 'bale', package: 'bale', pkg: 'bale',
+  balance: 'balance', outstanding: 'balance',
+  ledger: 'ledger', statement: 'ledger',
+  price: 'price',
+  receive: 'receive', restock: 'receive', addstock: 'receive', add: 'add',
+  order: 'order', orders: 'orders',
+  task: 'task', tasks: 'tasks', done: 'done',
+  delivered: 'delivered',
+  report: 'report', reports: 'report',
+  contact: 'contact', contacts: 'contacts', customer: 'customer', customers: 'contacts',
+  user: 'user', employee: 'user',
+  bank: 'banks', banks: 'banks',
+  menu: 'menu', help: 'help', payment: 'payment', paid: 'payment', pay: 'payment',
+});
+const STOP = new Set(['the', 'a', 'an', 'of', 'for', 'me', 'please', 'pls', 'kindly', 'my', 'all', 'show']);
+
+const intent = (action, fields = {}) => ({ action, ...fields, confidence: 1, clarification: null, local: true });
+const hint = (verb, note = '') => ({ action: '__hint__', verb, syntax: SYNTAX[verb] || '', note });
+const tile = (label, callback, text) => ({ action: '__tile__', label, callback, text });
+
+/**
+ * The script: the first word decides, the body is read deterministically.
+ * @param {string} raw
+ * @returns {object|null} an intent for the controller's switch, `__hint__`
+ *   (a known verb, bad body), `__tile__` (one button to a door), `__help__`,
+ *   or null when the first word is not in the script.
+ */
+function localIntent(raw) {
+  let t = String(raw || '').trim().replace(/^\/+/, '').replace(/^(?:please|pls|kindly)\s+/i, '').trim();
+  if (!t || t.length > 160) return null;
+  const words = t.split(/\s+/);
+  const first = words[0].toLowerCase().replace(/[^a-z]/g, '');
+  const verb = VERBS[first];
+  if (!verb) return null;
+  const rest = words.slice(1).join(' ').trim();
+  const restWords = rest ? rest.split(/\s+/) : [];
+  const restLc = rest.toLowerCase();
+  switch (verb) {
+    case 'help': return { action: '__help__' };
+    case 'menu': return tile('🏠 Menu', 'act:__back__', '🏠 The menu is one tap away.');
+    case 'sell': case 'return': case 'transfer':
+      // The local doors in front of the router claim every line with numbers;
+      // reaching here means there were none.
+      return hint(verb, verb === 'transfer' ? 'Bale numbers, then the store it goes to.' : 'Bale numbers, a than as 6189/5.');
+    case 'bale': {
+      const nums = rest.match(/\d+/g) || [];
+      if (nums.length !== 1) return hint('bale', 'One bale number.');
+      return intent('package_detail', { packageNo: nums[0] });
+    }
+    case 'stock': {
+      const f = {};
+      const at = rest.match(/\b(?:at|in|from)\s+(.+)$/i);
+      let body = rest;
+      if (at) { f.warehouse = at[1].trim(); body = rest.slice(0, at.index).trim(); }
+      const toks = body.split(/\s+/).filter((w) => w && !STOP.has(w.toLowerCase()));
+      const di = toks.findIndex((w) => /\d/.test(w));
+      if (di >= 0) { f.design = toks[di]; toks.splice(di, 1); }
+      if (toks.length) f.shade = toks.join(' ');
+      if (f.shade && !f.design) return hint('stock', 'The design number first, then the shade.');
+      return intent('check', f);
+    }
+    case 'balance': return rest ? intent('check_balance', { customer: rest }) : hint('balance', 'The customer\'s name.');
+    case 'ledger': return rest ? intent('show_ledger', { customer: rest }) : hint('ledger', 'The customer\'s name.');
+    case 'customer': return rest ? intent('check_customer', { customer: rest }) : tile('👥 CRM', 'act:__hub__:crm', '👥 Customers live in CRM.');
+    case 'price': {
+      const toks = restWords.slice();
+      const last = toks.length ? toks[toks.length - 1].replace(/,/g, '') : '';
+      const price = /^\d+(?:\.\d+)?$/.test(last) ? Number(last) : NaN;
+      if (toks.length < 2 || !Number.isFinite(price) || price <= 0) return hint('price', 'Design, shade (optional), then the new rate.');
+      toks.pop();
+      return intent('update_price', { design: toks[0], shade: toks.slice(1).join(' ') || null, price });
+    }
+    case 'receive': return intent('add');
+    case 'add': {
+      if (/^(stock|bales?|goods|container)\b/i.test(restLc)) return intent('add');
+      if (/^(contact|customer|person|marketer|prospect)\b/i.test(restLc)) return tile('➕ Add Contact', 'act:add_customer', '➕ Adding a person is tap-only — Add Contact asks the kind first.');
+      if (/^(user|employee|staff)\b/i.test(restLc)) return tile('➕ Add Employee', 'act:add_user', '➕ Adding an employee is tap-only.');
+      return hint('receive', 'Receive opens Add Stock; "Add contact" or "Add employee" open their doors.');
+    }
+    case 'order': return intent('create_order');
+    case 'orders': return intent('my_orders');
+    case 'task': return intent('assign_task');
+    case 'tasks': return intent('my_tasks');
+    case 'done': return intent('mark_task_done');
+    case 'delivered': {
+      const id = restWords[0];
+      return id ? intent('mark_order_delivered', { orderId: id }) : hint('delivered', 'The order id from the order card.');
+    }
+    case 'report': {
+      if (/^(sales?|sold)\b/.test(restLc)) return intent('report_sold');
+      if (/^(stock|supply|designs?)\b/.test(restLc)) return intent('report_supply_by_design');
+      if (/^(last|recent|transactions?)\b/.test(restLc)) return intent('report_last_transactions');
+      return tile('📊 Reporting', 'act:__hub__:reporting', '📊 Every report is a tap away.');
+    }
+    case 'contact': return tile('➕ Add Contact', 'act:add_customer', '➕ Adding a person is tap-only — Add Contact asks the kind first.');
+    case 'contacts': return intent('list_contacts');
+    case 'user': return tile('➕ Add Employee', 'act:add_user', '➕ Adding an employee is tap-only.');
+    case 'banks': return intent('list_banks');
+    case 'payment': return hint('payment', 'Payments are recorded by tap, never by a typed line (owner, 01-Nov-2026): 💰 Finance → 💳 Payments.');
+    default: return null;
+  }
+}
+
+/** The one-line answer to a known verb typed with a bad body. */
+function hintCardText({ verb, syntax, note } = {}) {
+  const name = verb ? verb[0].toUpperCase() + verb.slice(1) : 'That line';
+  const lines = [`✍️ ${name}${syntax ? ' needs its line:' : ':'}`];
+  if (syntax) lines.push(`  ${syntax}`);
+  if (note) lines.push('', note);
+  return lines.join('\n');
+}
+
+async function sendHintCard(bot, chatId, h) {
+  await bot.sendMessage(chatId, hintCardText(h), {
+    reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] },
+  });
+}
+
+/** The chips card: the whole script, and the one way to everything else. */
 function chipsCardText({ blockedWrite = null } = {}) {
   const lines = [];
   if (blockedWrite) lines.push('✋ Typed words never change the sheet.', '');
   lines.push(
     '👋 I work with the chips, not sentences.',
     '',
-    'Four lines I do read:',
+    'Lines I do read:',
     '  • 1112 or Bale 1112 — the bale card',
     '  • Sell 1111, 1112 to Abba',
     '  • Return 771, 779, 6189/5',
     '  • Transfer 832, 1186, 786 to kano',
+    '  • Stock 9006 black · Stock at Lagos',
+    '  • Balance Abba · Ledger Abba (admins)',
+    '  • Price 9006 black 1500 (admins)',
+    '  • Receive · Order · Task · Delivered ORD-…',
+    '  • Tasks · Orders · Contacts · Banks · Report sales',
+    '  • Help — this card',
     '',
     'Tap 🏠 Menu for everything else.',
   );
@@ -143,4 +297,7 @@ function forceMode(m) {
   _forced = m == null ? null : parseMode(m);
 }
 
-module.exports = { mode, parseMode, isRead, localReadIntent, chipsCardText, sendChipsCard, forceMode, READ_ACTIONS, MODES, BALE_QUERY_WORDS };
+module.exports = {
+  mode, parseMode, isRead, localReadIntent, localIntent, chipsCardText, sendChipsCard, hintCardText, sendHintCard, forceMode,
+  READ_ACTIONS, MODES, BALE_QUERY_WORDS, SYNTAX, VERBS,
+};

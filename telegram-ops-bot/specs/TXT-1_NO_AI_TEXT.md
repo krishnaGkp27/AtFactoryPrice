@@ -128,3 +128,46 @@ bale card."
 Next local read lines come from the census (§ above, step 1): stock of a
 design, bales of a design, a customer's ledger — each the same shape: one
 detector, the existing branch, a test, a line on the card.
+
+## 8. TXT-3 — the whole script (04-Nov-2026, owner's final go)
+
+Owner: "Let me know exactly how many of them will not go through without this
+OpenAI API, so that you can code them directly, making a constant script like
+a syntax without any further failure." Of the parser's 38 typed intents, 35
+answered "Need more info" without the key (TXT-1 had already turned that into
+the chips card). Now every one has a deterministic line or a one-button door.
+
+**The script** — the first word is the verb (case, a leading `/` and
+please/pls/kindly ignored); the body is read without any model; every
+intent lands on the controller's existing branch, so each write still opens
+its approval card (§20 holds).
+
+| Line | Door |
+|---|---|
+| `Sell 771, 779, 6189/5 to Abba` · `Return 771, 6189/5` · `Transfer 832, 1186, 786 to kano` | the three review cards (SELL-T3d, RET-5, TRF-23) |
+| `1112` · `Bale 1112` | the bale card (TXT-2) |
+| `Stock 9006` · `Stock 9006 black` · `Stock at Lagos` · `Check 44200 BLACK in Kano office` | Check Stock |
+| `Balance Abba` · `Ledger Abba` · `Customer Abba` | statement / ledger / customer card (the admin gates stay) |
+| `Price 9006 black 1500` | Update Price (admins; dual-admin request) |
+| `Receive` · `Add stock` | Add Stock flow |
+| `Order` · `Orders` · `Task` · `Tasks` · `Done` · `Delivered ORD-…` | create order · my orders · assign task · my tasks · My Tasks (mark done) · mark delivered |
+| `Report sales` · `Report stock` · `Report last` · `Report` | the three reports · one button to 📊 Reporting |
+| `Contact` · `Add contact` · `User` · `Add employee` · `Customer` · `Menu` | one button to ➕ Add Contact · ➕ Add Employee · 👥 CRM · 🏠 Menu |
+| `Contacts` · `Banks` | the lists |
+| `Help` · `/help` | the chips card, now the whole script |
+| `Payment …` | NOT a typed line (owner, 01-Nov) — the card points at 💰 Finance → 💳 Payments |
+
+A known verb with a bad body gets ITS line back (`✍️ Transfer needs its
+line: Transfer 832, 1186, 786 to kano`), never the generic card. An unknown
+first word gets the chips card and is counted in the usage log (`nlp_off`,
+`meta.head` = the first 40 characters) — the feedback loop for the next verb.
+In modes `reads` and `1` a worded sell / return / transfer sentence stays the
+AI's, as the switch promises; every other script line is read locally in
+every mode.
+
+Build: `typedRouter.localIntent`, `SYNTAX`, `VERBS`, `hintCardText`,
+`sendHintCard`; the controller's TXT block runs the script before the mode
+switch. Tests: `test/unit/utils/typedScript.test.js`,
+`test/characterization/typedScript.test.js`; the TXT-1/2 pins re-pinned
+where the script now answers first. The staff cheat sheet is a one-page doc
+(chat, 04-Nov-2026).
