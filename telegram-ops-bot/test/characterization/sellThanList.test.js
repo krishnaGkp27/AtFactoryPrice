@@ -361,3 +361,94 @@ test('SELL-T3d: a bare-only sell line opens the review card locally — whole ba
   assert.match(text, /Loaded whole/);
   assert.match(text, /Abba/);
 });
+
+// ── SELL-T3e (owner's go, 04-Nov-2026) — a whole bale is ONE line on the card ──
+
+const usersRepository = require(path.join(SRC, 'repositories/usersRepository'));
+const approvalQueueRepository = require(path.join(SRC, 'repositories/approvalQueueRepository'));
+usersRepository.getAll = async () => ([{ user_id: '4242', name: 'Abdul', status: 'active' }]);
+usersRepository.findByUserId = async (id) => (String(id) === '4242' ? { user_id: '4242', name: 'Abdul', status: 'active' } : null);
+let queued = [];
+approvalQueueRepository.append = async (row) => { queued.push(row); return row; };
+approvalQueueRepository.appendOnce = async (row) => {
+  const existing = queued.find((q) => String(q.requestId) === String(row.requestId));
+  if (existing) return { created: false, existing };
+  queued.push(row);
+  return { created: true, existing: null };
+};
+const cbq = (data, uid = '4242') => ({ id: `cb-${data}`, data, from: { id: uid }, message: { chat: { id: uid }, message_id: 1 } });
+const todayIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
+async function walkToQueue(bot) {
+  await controller.handleCallbackQuery(bot, cbq('bs:proceed'));
+  await controller.handleCallbackQuery(bot, cbq('bs:sp:0'));
+  await controller.handleCallbackQuery(bot, cbq(`bs:dd:${todayIso()}`));
+  await controller.handleCallbackQuery(bot, cbq('bs:fin'));
+  await controller.handleFileMessage(bot, { from: { id: '4242' }, chat: { id: '4242' }, photo: [{ file_id: 'bill-file-9' }] });
+  await controller.handleCallbackQuery(bot, cbq('bs:submit'));
+}
+const adminCopy = (bot) => bot.calls
+  .filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === '777')
+  .map((c) => c.args.text).join('\n').replace(/\\/g, '');
+
+test('SELL-T3e: bales typed bare reach the admin as ONE line each, counted in bales', async () => {
+  sessionStore.clear('4242');
+  queued = [];
+  const bot = createFakeBot();
+  await controller.handleMessage(bot, msg('Sell 1100, 1091 to Abba'));
+  await walkToQueue(bot);
+  assert.equal(queued.length, 1, 'one request queued');
+  const aj = queued[0].actionJSON;
+  assert.equal(aj.items.length, 5, 'the request still carries every than for the executor');
+  assert.deepEqual(aj.wholeBales, ['1100', '1091']);
+  const text = adminCopy(bot);
+  assert.match(text, /🧾 Sale · Kano office · 2B · 150 yd\n/, `tally in bales:\n${text}`);
+  // Designs sort by number (9043-B before 77014); each is one bale, one line.
+  assert.match(text, /\n9043-B · 1B · 60 yd\n Shade 4\n {2}1\. 1091 · 60 yd\n/, `one line for 1091:\n${text}`);
+  assert.match(text, /\n77014 · 1B · 90 yd\n Shade 11\n {2}2\. 1100 · 90 yd\n/, `one line for 1100:\n${text}`);
+  assert.ok(!/1100\/|1091\//.test(text), 'no than lines for a whole bale');
+  // The seller's own receipt speaks the same grammar.
+  const mine = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method)
+    && String(c.args.chatId || (c.args.opts && c.args.opts.chat_id)) === '4242')
+    .map((c) => String(c.args.text || '')).join('\n');
+  assert.match(mine, /Items: \*2B · 150 yd\*/, `seller receipt:\n${mine}`);
+});
+
+test('SELL-T3e: a than dropped on the bale card un-wholes it — than by than and counted in thans; taking it whole again re-wholes it', async () => {
+  sessionStore.clear('4242');
+  queued = [];
+  const bot = createFakeBot();
+  const flow = require(path.join(SRC, 'flows/bundleSaleFlow'));
+  await controller.handleMessage(bot, msg('sell 1100, 1082/1 kano'));
+  await flow.handleCallback(bot, cbq('bs:pl:open:1100'));
+  const drop = lastKb(bot).filter((b) => (b.callback_data || '').startsWith('bs:than:')).find((c) => /#2/.test(c.text));
+  await flow.handleCallback(bot, cbq(drop.callback_data));
+  await flow.handleCallback(bot, cbq('bs:back'));
+  await walkToQueue(bot);
+  assert.equal(queued.length, 1);
+  assert.ok(!('wholeBales' in queued[0].actionJSON), 'nothing whole: 1100 lost a than, 1082/1 was typed as a than');
+  const text = adminCopy(bot);
+  assert.match(text, /🧾 Sale · Kano office · 3t · 90 yd\n/, `tally in thans:\n${text}`);
+  assert.match(text, /1100\/1 · 30 yd/);
+  assert.match(text, /1100\/3 · 30 yd/);
+  assert.match(text, /1082\/1 · 30 yd/);
+  assert.ok(!/ 1100 · /.test(text), 'the un-wholed bale is not folded');
+
+  // Round two: open the bale, take it whole again, submit — whole once more.
+  sessionStore.clear('4242');
+  queued = [];
+  const bot2 = createFakeBot();
+  await controller.handleMessage(bot2, msg('sell 1100, 1082/1 kano'));
+  await flow.handleCallback(bot2, cbq('bs:pl:open:1100'));
+  const drop2 = lastKb(bot2).filter((b) => (b.callback_data || '').startsWith('bs:than:')).find((c) => /#2/.test(c.text));
+  await flow.handleCallback(bot2, cbq(drop2.callback_data));
+  const takeAll = lastKb(bot2).find((b) => (b.callback_data || '').startsWith('bs:take_all:'));
+  assert.ok(takeAll, '📦 Take whole bale offered once a than is dropped');
+  await flow.handleCallback(bot2, cbq(takeAll.callback_data));
+  await flow.handleCallback(bot2, cbq('bs:back'));
+  await walkToQueue(bot2);
+  assert.deepEqual(queued[0].actionJSON.wholeBales, ['1100']);
+  const text2 = adminCopy(bot2);
+  assert.match(text2, /🧾 Sale · Kano office · 1B \+ 1t · 120 yd\n/, `mixed tally:\n${text2}`);
+  assert.match(text2, / 1100 · 90 yd/);
+  assert.match(text2, /1082\/1 · 30 yd/);
+});

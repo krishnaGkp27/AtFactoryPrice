@@ -250,6 +250,27 @@ async function reconcileWithLive(cart) {
  * @param {object}  sale  — { customer, salesDate, salesPerson, paymentMode, pricePerYard, designSummary }
  * @param {object}  user  — Telegram user that initiated the sale
  */
+/**
+ * SELL-T3e — the bales still WHOLE in the cart: every available than that
+ * was loaded (`sizes[pkg]`, recorded when the bale was taken whole) is
+ * still there. A than dropped on its card un-wholes the bale; taking it
+ * whole again re-wholes it. Bales never taken whole are never listed.
+ * @param {object} cart
+ * @param {Object<string, number>} sizes  packageNo → available than count at load
+ * @returns {string[]} package numbers, in cart order
+ */
+function wholeBalesInCart(cart, sizes) {
+  const sz = sizes && typeof sizes === 'object' ? sizes : {};
+  const counts = new Map();
+  const order = [];
+  for (const l of (cart && cart.lines) || []) {
+    const pkg = String(l.packageNo ?? '').trim();
+    if (!counts.has(pkg)) { counts.set(pkg, 0); order.push(pkg); }
+    counts.set(pkg, counts.get(pkg) + 1);
+  }
+  return order.filter((pkg) => Number(sz[pkg]) > 0 && counts.get(pkg) === Number(sz[pkg]));
+}
+
 function buildApprovalPayload(cart, sale, user) {
   const items = cart.lines.map((l) => ({
     type: 'than',
@@ -271,6 +292,9 @@ function buildApprovalPayload(cart, sale, user) {
     bundleFlow: 'BUNDLE-SALE-C1',
     designSummary: sale.designSummary || '',
     warehouse: sale.warehouse || '',
+    // SELL-T3e — the bales loaded whole, so every card built from this row
+    // prints each as ONE line / one B while the executor keeps the thans.
+    ...(Array.isArray(sale.wholeBales) && sale.wholeBales.length ? { wholeBales: sale.wholeBales.map(String) } : {}),
     // SELL-K1 (owner 10-Aug-2026) — the sales bill is mandatory on this door
     // and rides the queue row, so the reminder sweep, the approvals inbox
     // and the supply-ledger doc list all find it exactly where every other
@@ -366,6 +390,7 @@ module.exports = {
   smartPackForTarget,
   reconcileWithLive,
   buildApprovalPayload,
+  wholeBalesInCart, // SELL-T3e
   submitForApproval,
   ageBucket,
 };

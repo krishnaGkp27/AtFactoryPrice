@@ -598,9 +598,15 @@ function saleGoods(aj) {
   let bales = 0;
   let thans = 0;
   const items = Array.isArray(aj && aj.items) ? aj.items : [];
+  // SELL-T3e — a bale loaded whole counts ONCE as a bale, its thans never.
+  const whole = new Set((Array.isArray(aj && aj.wholeBales) ? aj.wholeBales : []).map(String));
+  const wholeSeen = new Set();
   for (const it of items) {
     if (!it) continue;
-    if (it.type === 'than') thans += 1;
+    const pkg = String(it.packageNo ?? '');
+    if (it.type === 'than' && whole.has(pkg)) {
+      if (!wholeSeen.has(pkg)) { wholeSeen.add(pkg); bales += 1; }
+    } else if (it.type === 'than') thans += 1;
     else bales += 1;
   }
   if (!items.length && aj) {
@@ -1416,6 +1422,7 @@ module.exports = {
   SESSION_TYPE,
   _internals: {
     categoryOf, ageDays, ageDot, CATEGORIES, TRANSFER_ACTIONS, STALE_DAYS,
+    saleGoods, // SELL-T3e
     // DEC-1
     recentDecided, decidedChip, decidedAt, DECIDED_MAX,
     _resetResolvedCache: () => { _resolvedCache = { at: 0, rows: null }; },

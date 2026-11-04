@@ -244,6 +244,25 @@ async function start(bot, chatId, userId, messageId) {
  *          warehouseHint?:string, bad?:string[], commaThanHint?:boolean}} parsed
  * @returns {Promise<boolean>} true when a card was shown
  */
+/**
+ * SELL-T3e — remember that this bale was taken WHOLE and how many thans
+ * that was, so submit can tell "still whole" from "one dropped".
+ */
+function noteWhole(session, bale) {
+  const thans = (bale && bale.thans) || [];
+  const pkg = String((bale && bale.packageNo) || (thans[0] && thans[0].packageNo) || '').trim();
+  if (!pkg || !thans.length) return;
+  session._wholeSizes = session._wholeSizes || {};
+  session._wholeSizes[pkg] = thans.length;
+}
+
+/** `10B` · `9B + 4t` · `50t` — the house rule-6c tally of the cart. */
+function itemsTally(cart, wholeBales) {
+  const whole = new Set((wholeBales || []).map(String));
+  const loose = (cart.lines || []).filter((l) => !whole.has(String(l.packageNo))).length;
+  return require('../services/unitDisplayService').formatCounts({ bales: whole.size, thans: loose });
+}
+
 async function startWithThans(bot, chatId, userId, parsed) {
   if (!auth.isAdmin(userId) && !auth.isEmployee(userId)) {
     await bot.sendMessage(chatId, '🧵 Bundle sale is available to employees and admins.');
@@ -391,6 +410,9 @@ async function startWithThans(bot, chatId, userId, parsed) {
     cart: bundleSaleService.emptyCart(),
     customer: '', rate: 0, paymentMode: '',
     expandedShade: '', smartPack: null,
+    // SELL-T3e — the available than count of every bale loaded whole, so
+    // submit can tell a bale still whole from one he dropped a than of.
+    _wholeSizes: Object.fromEntries(wholeBales.map((w) => [String(w.packageNo), w.count])),
     _preload: {
       notLoaded, needPick, wholeBales,
       bad: (parsed && parsed.bad) || [],
@@ -1267,6 +1289,8 @@ async function submit(bot, chatId, userId) {
     const sellerLabel = session.salesPerson || submitterLabel;
     const saleIso = session.salesDate || dateCalendar.lagosISO(0);
     const backdated = Number(session.backdatedDays) || 0;
+    // SELL-T3e — which bales are still whole: one line / one B on every card.
+    const wholeBales = bundleSaleService.wholeBalesInCart(session.cart, session._wholeSizes);
     const { requestId, duplicate } = await bundleSaleService.submitForApproval({
       requestId: session.pendingRequestId,
       cart: session.cart,
@@ -1285,6 +1309,7 @@ async function submit(bot, chatId, userId) {
         daysBack: backdated,
         saleDocFileId: session.saleDocFileId,
         saleDocType: session.saleDocType || 'image',
+        wholeBales,
       },
       user: { id: userId, userId, username: '' },
       riskReason: backdated ? `Backdated sale (${backdated} days in the past).` : '',
@@ -1314,6 +1339,7 @@ async function submit(bot, chatId, userId) {
           design: l.design, shade: l.shade, thans: 1, yards: Number(l.yards) || 0,
           warehouse: l.warehouse || session.warehouse || '',
         })),
+        wholeBales, // SELL-T3e
         docAttached: true,
         // CARD-4 — the banner is the SHARED builder's job now, so every
         // door words it identically instead of each appending its own.
@@ -1338,7 +1364,7 @@ async function submit(bot, chatId, userId) {
     await render(bot, chatId, userId,
       `⏳ *Submitted for approval*\n\n`
       + `• Request: \`${requestId}\`\n`
-      + `• Items: *${totals.thans} than · ${fmtQty(totals.yards)} yd*\n`
+      + `• Items: *${itemsTally(session.cart, wholeBales)} · ${fmtQty(totals.yards)} yd*\n`
       + `• Approver: 2nd admin (you cannot self-approve)\n\n`
       + `_The admin assigns the customer, rate and payment when approving — you will get the customer name and number back here once approved._`,
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]],
@@ -1508,6 +1534,7 @@ async function handleCallback(bot, query) {
           yards: t.yards, design: session.design, shade: bucket.shade, binLocation: bale.binLocation,
           arrivalBatch: bale.arrivalBatch || '',
         })));
+        noteWhole(session, bale);
       }
       sessionStore.set(userId, session);
     }
@@ -1557,6 +1584,7 @@ async function handleCallback(bot, query) {
           arrivalBatch: bale.arrivalBatch || '',
         }));
         bundleSaleService.addLines(session.cart, lines);
+        noteWhole(session, bale);
         sessionStore.set(userId, session);
       }
     }

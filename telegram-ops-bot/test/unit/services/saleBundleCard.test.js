@@ -262,3 +262,64 @@ test('QTA-2: ⚠️ items that are this request\'s OWN earlier flips say so — 
   const gone = await approvalCards.buildSaleBundleCard({ ...aj, items: [{ type: 'package', packageNo: '779' }] });
   assert.match(gone, /🚨 NOTHING in this request is available/);
 });
+
+// ── SELL-T3e (owner's go, 04-Nov-2026) — a bale loaded WHOLE is one line ──
+
+test('SELL-T3e: bales loaded whole fold to one line each and count as B', async () => {
+  seed([
+    row('516', '9060-A', '01', 'IDUMOTA', 1), row('516', '9060-A', '01', 'IDUMOTA', 2), row('516', '9060-A', '01', 'IDUMOTA', 3),
+    row('520', '9060-A', '01', 'IDUMOTA', 1), row('520', '9060-A', '01', 'IDUMOTA', 2),
+  ]);
+  const items = [1, 2, 3].map((t) => ({ type: 'than', packageNo: '516', thanNo: t, yards: 50, warehouse: 'IDUMOTA' }))
+    .concat([1, 2].map((t) => ({ type: 'than', packageNo: '520', thanNo: t, yards: 50, warehouse: 'IDUMOTA' })));
+  const text = await approvalCards.buildSaleBundleCard({
+    action: 'sale_bundle', customer: '', salesPerson: 'Abdul', salesDate: '2026-11-03',
+    items, wholeBales: ['516', '520'], totalYards: 250,
+  });
+  assert.match(text, /^🧾 Sale · IDUMOTA · 2B · 250 yd\n/, `tally in bales: ${text.split('\n')[0]}`);
+  assert.match(text, / {2}1\. 516 · 150 yd\n {2}2\. 520 · 100 yd$/m, `one line per bale:\n${text}`);
+  assert.ok(!/516\/|520\//.test(text), 'no than lines for a whole bale');
+});
+
+test('SELL-T3e: a whole bale with a than gone stays than by than, ⚠️ on the right than', async () => {
+  seed([row('516', '9060-A', '01', 'IDUMOTA', 1), row('516', '9060-A', '01', 'IDUMOTA', 2)]); // than 3 sold since
+  const items = [1, 2, 3].map((t) => ({ type: 'than', packageNo: '516', thanNo: t, yards: 50, warehouse: 'IDUMOTA' }));
+  const text = await approvalCards.buildSaleBundleCard({
+    action: 'sale_bundle', customer: '', salesPerson: 'Abdul', salesDate: '2026-11-03',
+    items, wholeBales: ['516'], totalYards: 150,
+  });
+  assert.ok(!/ 516 · /.test(text), `must not fold a bale with a flagged than:\n${text}`);
+  assert.match(text, /516\/1 · 50 yd/);
+  assert.match(text, /516\/3[^\n]*⚠️/, 'the gone than carries the mark');
+});
+
+test('SELL-T3e: whole bales and loose thans mix — `1B + 1t`, each in its own packaging', async () => {
+  seed([
+    row('516', '9060-A', '01', 'IDUMOTA', 1), row('516', '9060-A', '01', 'IDUMOTA', 2), row('516', '9060-A', '01', 'IDUMOTA', 3),
+    row('520', '9060-A', '01', 'IDUMOTA', 1), row('520', '9060-A', '01', 'IDUMOTA', 2),
+  ]);
+  const items = [1, 2, 3].map((t) => ({ type: 'than', packageNo: '516', thanNo: t, yards: 50, warehouse: 'IDUMOTA' }))
+    .concat([{ type: 'than', packageNo: '520', thanNo: 1, yards: 50, warehouse: 'IDUMOTA' }]);
+  const aj = { action: 'sale_bundle', customer: '', salesPerson: 'Abdul', salesDate: '2026-11-03', items, wholeBales: ['516'], totalYards: 200 };
+  const text = await approvalCards.buildSaleBundleCard(aj);
+  assert.match(text, /^🧾 Sale · IDUMOTA · 1B \+ 1t · 200 yd\n/);
+  assert.match(text, / {2}1\. 516 · 150 yd\n {2}2\. 520\/1 · 50 yd$/m);
+  // The inbox chip counts the same way, straight off the queued row.
+  const inbox = require(path.join(SRC, 'flows/approvalsInboxFlow'));
+  assert.deepEqual(inbox._internals.saleGoods(aj), { bales: 1, thans: 1, yards: 200 });
+  assert.deepEqual(inbox._internals.saleGoods({ ...aj, wholeBales: undefined }), { bales: 0, thans: 4, yards: 200 });
+});
+
+test('SELL-T3e: foldWholeBales is a no-op without a list, and never folds an unresolved bale', () => {
+  const items = [{ type: 'than', packageNo: '516', thanNo: 1, yards: 50 }, { type: 'than', packageNo: '516', thanNo: 2, yards: 50 }];
+  assert.equal(approvalCards.foldWholeBales(items, []), items);
+  assert.equal(approvalCards.foldWholeBales(items, undefined), items);
+  assert.equal(approvalCards.foldWholeBales(items, ['516']), items, 'no design resolved → stays as it is');
+  const resolved = items.map((it) => ({ ...it, design: '9060-A', shade: '01' }));
+  const folded = approvalCards.foldWholeBales(resolved, ['516']);
+  assert.equal(folded.length, 1);
+  assert.equal(folded[0].type, 'bale');
+  assert.equal(folded[0].yards, 100);
+  assert.equal(folded[0].thans, 2);
+  assert.equal(folded[0].thanNo, undefined);
+});

@@ -213,7 +213,9 @@ function sortSaleItems(items) {
  *    when the sale has several designs); the Σ line and the legend are gone;
  *  - one bale per line: number (a than item as `1100/1`, the owner's own
  *    typed grammar), its yards, and its store only when the sale ships
- *    from more than one place; never `×N` and never `@`;
+ *    from more than one place; never `×N` and never `@`; since SELL-T3e a
+ *    bale the seller loaded whole (`p.wholeBales`) is one line and one B
+ *    even though the request carries its thans (`foldWholeBales`);
  *  - the shade heading carries the catalogue COLOUR — `1 - Dark Brown`, the
  *    form the cart block and Check Stock use — from the design's active
  *    DesignAssets entry (the sale's container first, else the newest);
@@ -262,8 +264,52 @@ function shadeHeading(sh, names) {
   return name ? `${sh} - ${name}` : `Shade ${sh}`;
 }
 
+/**
+ * SELL-T3e (owner's go, 04-Nov-2026 — Abdul's 10-bale line came back as
+ * 50 than lines and `50t`): a bale the seller loaded WHOLE — a bare typed
+ * number (SELL-T3c/d) or 📦 Take whole bale — prints as ONE line and counts
+ * as a bale, the way the Sell Bale door always printed it. The request
+ * still carries every than (the executor sells row by row); this folds
+ * them for the eye only. A bale with any than flagged (no stock, its own
+ * half-done run) or with no resolved design stays than by than, so the ⚠️
+ * sits on the exact than. The folded line keeps the bale's number, so the
+ * VRF-5 ✅ / 🔴 marks land on it as before.
+ * @param {Array<object>} items  card items (enriched)
+ * @param {Array<string>} [wholeBales]  bale numbers loaded whole, still whole at submit
+ */
+function foldWholeBales(items, wholeBales) {
+  const whole = new Set((Array.isArray(wholeBales) ? wholeBales : []).map((n) => String(n ?? '').trim()).filter(Boolean));
+  if (!whole.size) return items;
+  const byPkg = new Map();
+  for (const it of items || []) {
+    const pkg = String(it.packageNo ?? '').trim();
+    if (!whole.has(pkg)) continue;
+    if (!byPkg.has(pkg)) byPkg.set(pkg, []);
+    byPkg.get(pkg).push(it);
+  }
+  const foldable = new Set();
+  for (const [pkg, group] of byPkg) {
+    if (group.every((it) => it.type === 'than' && it.design && !it.noStock)) foldable.add(pkg);
+  }
+  if (!foldable.size) return items;
+  const out = [];
+  const done = new Set();
+  for (const it of items) {
+    const pkg = String(it.packageNo ?? '').trim();
+    if (!foldable.has(pkg)) { out.push(it); continue; }
+    if (done.has(pkg)) continue;
+    done.add(pkg);
+    const group = byPkg.get(pkg);
+    out.push({
+      ...it, type: 'bale', thanNo: undefined, thans: group.length,
+      yards: group.reduce((s, x) => s + (Number(x.yards) || 0), 0),
+    });
+  }
+  return out;
+}
+
 async function buildSaleCard(p) {
-  const items = sortSaleItems(p.items);
+  const items = sortSaleItems(foldWholeBales(p.items, p.wholeBales));
   // The store is a header fact when the whole request ships from one place;
   // a mixed request keeps it per line so no bale is mis-attributed.
   const stores = [...new Set(items.map((it) => String(it.warehouse || '')).filter(Boolean))];
@@ -795,7 +841,19 @@ async function enrichBundleItems(rawItems, aj = null) {
     }
     if (designs.length !== 1) return { ...it }; // ambiguous — never guess
     if (it.type === 'than') {
-      const row = rows.find((r) => String(r.thanNo) === String(it.thanNo)) || rows[0];
+      const row = rows.find((r) => String(r.thanNo) === String(it.thanNo));
+      if (!row) {
+        // SELL-T3e — the bale is live but THIS than is not (sold since the
+        // request was raised): flag the than, keep the bale's design so it
+        // sits under the right heading. Before, it borrowed a sibling's
+        // row and read as available — which the whole-bale fold would then
+        // have hidden inside one clean line.
+        let ownSale = false;
+        if (aj && aj.customer) {
+          try { ownSale = require('./saleRestart').hasOwnRows(it, aj, inv); } catch (_) { ownSale = false; }
+        }
+        return { ...it, design: rows[0].design, shade: rows[0].shade, warehouse: rows[0].warehouse, thans: 1, noStock: true, ownSale };
+      }
       return {
         ...it, design: row.design, shade: row.shade, warehouse: row.warehouse,
         thans: 1, yards: Number(row.yards) || 0,
@@ -944,6 +1002,7 @@ async function buildSaleBundleCard(aj, opts = {}) {
     paymentMode: aj.paymentMode,
     salesDate: aj.salesDate,
     items,
+    wholeBales: aj.wholeBales, // SELL-T3e — bales loaded whole print as one line
     backdated: !!aj.backdated,
     daysBack: aj.daysBack,
     requester: opts.requester, // CARD-6
@@ -1299,6 +1358,7 @@ module.exports = {
   shortTransferRef,
   buildAddWarehouseCard,
   buildSaleCard,
+  foldWholeBales, // SELL-T3e
   buildSellPackageCard,
   buildReturnCard,
   buildReturnThansCard,

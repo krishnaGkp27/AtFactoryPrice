@@ -237,9 +237,10 @@ Not built; each needs the owner's word.
    he drops a than it reads `32 of 32` — his own edit never shows as a
    failure to load. A `(1 dropped)` note would make the edit visible on
    the review; wanted or not is his call.
-4. **Whole-bale lines on the review.** Print `· whole bale` instead of the
+4. ~~**Whole-bale lines on the review.** Print `· whole bale` instead of the
    full than list when every than is in the cart, to keep a 6-than bale
-   to one short line.
+   to one short line.~~ **Built for the APPROVAL card as SELL-T3e
+   (04-Nov-2026, below); the review card keeps its `📦 Loaded whole:` line.**
 5. **Bare-only lines.** `Sell 771, 779 to X` goes through the AI parser to
    `sellBaleFlow.startWithBales` (SELL-T1). Routing it through this local
    parser too would make it instant and provider-free — but that door's
@@ -282,3 +283,58 @@ AI door (SELL-T3c kept "bare-only lines through the local parser" aside).
 - Tests: `thanListParser.test.js` (claimed / not claimed, the parse),
   `sellThanList.test.js` (the review card through the real controller,
   zero AI calls).
+
+## SELL-T3e — a whole bale is ONE line on the card (owner's go, 04-Nov-2026)
+
+Abdul's `Sell 481, 497, … to X` (10 bales, IDUMOTA) reached the admins as 50
+lines of `481/1 · 30 yd` under `50t · 1,500 yd`. Owner: *"It is not the same
+way it was coming before on the approval."* It was not the card that changed:
+until SELL-T3d that line went through the AI into the Sell Bale door (one item
+per BALE → `481 · 150 yd`, `10B`); since 04-Nov it opens the bundle door, which
+carries every than so one can be dropped, and the shared card printed each in
+its own packaging. Kept-aside item 5 had warned the two doors' cards must be
+reconciled first.
+
+**The rule.** A bale the seller loaded WHOLE — a bare typed number, or
+📦 Take whole bale / a bale-list tap — and still whole at submit prints as one
+line and counts as a bale:
+
+```
+🧾 Sale · IDUMOTA · 10B · 1,500 yd
+🧑 Abdul · 📅 03-Nov-2026
+
+44200
+ Shade BLACK
+   1. 481 · 150 yd
+   2. 497 · 150 yd
+   …
+```
+
+A than dropped on its card un-wholes the bale: its remaining thans print one
+per line and count as thans (`9B + 4t`). A bale typed as `6189/5` was never
+whole and stays a than line. "Whole" = every than that was available when the
+bale was loaded; a bale with a than sold earlier loads its remainder whole
+and prints `481 · 120 yd` as one bale, as the Sell Bale door did.
+
+**What rides the request.** `sale_bundle.wholeBales` — the bale numbers still
+whole at submit (`bundleSaleService.wholeBalesInCart(cart, session._wholeSizes)`,
+sizes recorded by `startWithThans` and the two whole-bale taps). The request
+still carries every than; the executor is untouched.
+
+**Where it shows.** `approvalCards.foldWholeBales` inside the ONE
+`buildSaleCard`, so the inbox card, the admin DM, the hourly reminder, the
+approved reply and the seller's receipt (`Items: 10B · 1,500 yd`) agree; the
+inbox chip (`saleGoods`) counts the same way. The VRF-5 ✅ / 🔴 keys on the
+bale number, so the folded line carries its mark.
+
+**Safety.** The fold never hides a problem: a bale with any than flagged ⚠️
+(no stock, its own half-done run) or with no resolved design stays than by
+than. Found while building: a than whose OWN row is gone while its bale still
+has live siblings was silently described from a sibling row and never flagged
+(`enrichBundleItems` fell back to `rows[0]`); it is now flagged ⚠️ under the
+bale's design heading.
+
+Tests: `test/unit/services/saleBundleCard.test.js` (fold, flagged than, mixed,
+inbox count), `test/unit/services/bundleSaleService.wholeBales.test.js`,
+`test/characterization/sellThanList.test.js` (typed line → queue → the admin's
+copy; drop a than → than by than; take whole again → whole).
