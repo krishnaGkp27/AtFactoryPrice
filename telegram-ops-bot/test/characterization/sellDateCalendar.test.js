@@ -36,7 +36,11 @@ function lagosISO(daysBack = 0) {
 
 /** Drive to the date step via typed preload → customer → salesperson → payment. */
 async function reachDateStep(bot) {
-  await controller.handleMessage(bot, { from: { id: '4242' }, chat: { id: '4242' }, text: 'Sell package 507' });
+  // SELL-T3d (04-Nov-2026): a bare "Sell package 507" is read locally now
+  // and opens the SELL-T3 review card instead. This test is about the
+  // legacy Sell Bale door's date step, which the AI path (mode 1) still
+  // reaches — so enter through a sentence the local reader does not claim.
+  await controller.handleMessage(bot, { from: { id: '4242' }, chat: { id: '4242' }, text: 'Please sell package 507' });
   // Seed the mid-flow fields directly (customer/salesperson/payment are
   // covered by their own tests) and open the date step like the taps do.
   const s = sessionStore.get('4242');

@@ -367,6 +367,9 @@ async function startWithThans(bot, chatId, userId, parsed) {
     }
     // SELL-T3c — a bare bale is the whole bale: every available than of
     // it goes in, and its 🔎 Open chip lets him drop one.
+    // SELL-T3d — a bale typed twice ("507, 503, 507") loads once and is
+    // named once; the legacy typed door counted it once too.
+    if (wholeBales.some((w) => w.packageNo === pkg)) continue;
     for (const row of rows) {
       lines.push({
         baleUid: row.baleUid, packageNo: row.packageNo, thanNo: row.thanNo,

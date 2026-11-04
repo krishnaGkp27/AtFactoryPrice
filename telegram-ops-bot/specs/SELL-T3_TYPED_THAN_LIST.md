@@ -272,6 +272,12 @@ AI door (SELL-T3c kept "bare-only lines through the local parser" aside).
 - Not claimed: the worded than form `Sell than 3 from package 5801 to
   Ibrahim` (its 3 is a than, not a bale) and a count `Sell 5 bales of 9006`
   (one digit). Those go the AI way, or the chips card when the AI is off.
+- Two edges the legacy SELL-T1 door handled with taps are the review
+  card's existing SELL-T3b behaviour here: a line whose bales sit in two
+  stores is asked for the store name (`… from IDUMOTA …`) and loads
+  nothing; a line with no valid number shows the card with `Nothing loaded
+  yet` and the reason per number. The legacy door is still reached by the
+  AI path (mode `1`) for worded sentences.
 - The chips card's sell example is now `Sell 1111, 1112 to Abba`.
 - Tests: `thanListParser.test.js` (claimed / not claimed, the parse),
   `sellThanList.test.js` (the review card through the real controller,

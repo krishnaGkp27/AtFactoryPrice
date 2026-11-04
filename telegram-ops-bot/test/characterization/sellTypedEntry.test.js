@@ -20,11 +20,15 @@ const { cb, lastKb } = require('../helpers/charFixture');
 
 installFakeSheets(createFakeSheets({}));
 // The intent parser recognises the typed command and extracts the numbers.
-installFakeIntent(() => ({
-  action: 'sell_batch',
-  packageNos: ['507', '503', '684', '999', '512', '507'],
-  confidence: 0.95,
-}));
+// SELL-T3d (04-Nov-2026): a BARE-ONLY sell line is read locally and never
+// reaches this stub; the SELL-T1 pins below enter through "Please sell …",
+// which the local reader does not claim, so the AI door (mode 1) is still
+// exercised. The local door has its own pins at the end of this file.
+let intentCalls = 0;
+installFakeIntent(() => {
+  intentCalls += 1;
+  return { action: 'sell_batch', packageNos: ['507', '503', '684', '999', '512', '507'], confidence: 0.95 };
+});
 
 const controller = loadController();
 const sessionStore = require(path.join(SRC, 'utils/sessionStore'));
@@ -33,12 +37,12 @@ const customersRepository = require(path.join(SRC, 'repositories/customersReposi
 const auditLogRepository = require(path.join(SRC, 'repositories/auditLogRepository'));
 
 inventoryRepository.getAll = async () => [
-  { packageNo: '507', design: '77016', shade: '5', warehouse: 'IDUMOTA', status: 'available', yards: 30 },
-  { packageNo: '507', design: '77016', shade: '5', warehouse: 'IDUMOTA', status: 'available', yards: 30 },
-  { packageNo: '503', design: '9032', shade: '1', warehouse: 'IDUMOTA', status: 'available', yards: 55 },
-  { packageNo: '684', design: '9032', shade: '2', warehouse: 'IDUMOTA', status: 'sold', yards: 55, soldTo: 'CJE' },
-  { packageNo: '512', design: '44200', shade: '1', warehouse: 'IDUMOTA', status: 'available', yards: 50 },
-  { packageNo: '512', design: '44200', shade: '1', warehouse: 'Kano office', status: 'available', yards: 48 },
+  { packageNo: '507', thanNo: 1, baleUid: 'U-507-1', design: '77016', shade: '5', warehouse: 'IDUMOTA', status: 'available', yards: 30 },
+  { packageNo: '507', thanNo: 2, baleUid: 'U-507-2', design: '77016', shade: '5', warehouse: 'IDUMOTA', status: 'available', yards: 30 },
+  { packageNo: '503', thanNo: 1, baleUid: 'U-503-1', design: '9032', shade: '1', warehouse: 'IDUMOTA', status: 'available', yards: 55 },
+  { packageNo: '684', thanNo: 1, baleUid: 'U-684-1', design: '9032', shade: '2', warehouse: 'IDUMOTA', status: 'sold', yards: 55, soldTo: 'CJE' },
+  { packageNo: '512', thanNo: 1, baleUid: 'U-512-I', design: '44200', shade: '1', warehouse: 'IDUMOTA', status: 'available', yards: 50 },
+  { packageNo: '512', thanNo: 1, baleUid: 'U-512-K', design: '44200', shade: '1', warehouse: 'Kano office', status: 'available', yards: 48 },
 ];
 customersRepository.getAll = async () => [
   { customer_id: 'C1', name: 'MAMA KAFAYA', status: 'Active' },
@@ -51,7 +55,7 @@ test('typed numbers preload the flow: dedupe, reasons, warehouse tap, then sales
   const bot = createFakeBot();
   await controller.handleMessage(bot, {
     from: { id: '4242' }, chat: { id: '4242' },
-    text: 'Sell package 507,503,684,999,512,507 to mama kafaya, ZENITH BANK, 11 July 2026',
+    text: 'Please sell package 507,503,684,999,512,507 to mama kafaya, ZENITH BANK, 11 July 2026',
   });
   // 512 is in two warehouses → the ambiguity tap comes first.
   let text = bot.allText().replace(/\\/g, '');
@@ -92,10 +96,59 @@ test('typed numbers preload the flow: dedupe, reasons, warehouse tap, then sales
 test('a command with no valid numbers falls back to the guidance card, nothing loaded', async () => {
   const bot = createFakeBot();
   installFakeIntent(() => ({ action: 'sell_batch', packageNos: ['111', '222'], confidence: 0.9 }));
-  await controller.handleMessage(bot, { from: { id: '4242' }, chat: { id: '4242' }, text: 'Sell package 111,222 to someone' });
+  await controller.handleMessage(bot, { from: { id: '4242' }, chat: { id: '4242' }, text: 'Please sell package 111,222 to someone' });
   const text = bot.allText().replace(/\\/g, '');
   assert.match(text, /None of the typed bale numbers matched available stock/);
   assert.match(text, /111 — not found in the sheet/);
   assert.ok(lastKb(bot).some((b) => b.callback_data === 'act:sell_bale'), 'tap-flow fallback offered');
   assert.ok(!sessionStore.get('4242'), 'no half-loaded session left behind');
+});
+
+// ── SELL-T3d (owner's Go, 04-Nov-2026) — the same bare-only line, read LOCALLY
+test('SELL-T3d: the bare-only line opens the review card locally — whole bales, reasons, buyer noted, no AI', async () => {
+  sessionStore.clear('4242');
+  intentCalls = 0;
+  const bot = createFakeBot();
+  // 512 sits in two stores, so the store is named on the line (§2: never guessed).
+  await controller.handleMessage(bot, {
+    from: { id: '4242' }, chat: { id: '4242' },
+    text: 'Sell 507,503,684,999,512,507 from IDUMOTA to mama kafaya',
+  });
+  assert.equal(intentCalls, 0, 'the AI must not be consulted');
+  const text = bot.allText().replace(/\\/g, '');
+  assert.match(text, /Sell Thans/);
+  assert.match(text, /From \*IDUMOTA\*/);
+  assert.match(text, /Loaded whole: 507, 503, 512/);
+  assert.match(text, /684 .*already sold to CJE/);
+  assert.match(text, /999 .*no bale with this number on record/);
+  assert.match(text, /mama kafaya/);
+  const s = sessionStore.get('4242');
+  assert.equal(s.type, 'bundle_sale_flow');
+  assert.deepEqual([...new Set(s.cart.lines.map((l) => String(l.packageNo)))].sort(), ['503', '507', '512']);
+  assert.equal(s.cart.lines.filter((l) => String(l.packageNo) === '507').length, 2, '507 typed twice loads once, whole');
+  assert.ok(!s.customer, 'the typed buyer never lands on the session — the admin sets the customer at approval');
+  sessionStore.clear('4242');
+});
+
+test('SELL-T3d: bales spread over two stores → the bot asks for the store, loads nothing (§2)', async () => {
+  sessionStore.clear('4242');
+  intentCalls = 0;
+  const bot = createFakeBot();
+  await controller.handleMessage(bot, { from: { id: '4242' }, chat: { id: '4242' }, text: 'Sell 507,512 to mama kafaya' });
+  assert.equal(intentCalls, 0);
+  assert.match(bot.allText(), /sit in 2 different stores/);
+  assert.ok(!sessionStore.get('4242'), 'nothing half-loaded');
+});
+
+test('SELL-T3d: no valid number → the review card says nothing loaded, with the reasons, no AI', async () => {
+  sessionStore.clear('4242');
+  intentCalls = 0;
+  const bot = createFakeBot();
+  await controller.handleMessage(bot, { from: { id: '4242' }, chat: { id: '4242' }, text: 'Sell 111,222 to someone' });
+  assert.equal(intentCalls, 0);
+  const text = bot.allText().replace(/\\/g, '');
+  assert.match(text, /Nothing loaded yet/);
+  assert.match(text, /111 .*no bale with this number on record/);
+  assert.match(text, /222 .*no bale with this number on record/);
+  sessionStore.clear('4242');
 });
