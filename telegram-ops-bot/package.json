@@ -16,6 +16,7 @@
     "check-org": "node scripts/check-org-graph.js",
     "onboard": "node scripts/onboard-employee.js",
     "smoke": "node scripts/smoke.js",
+    "ocr:try": "node scripts/ocr-try.js",
     "pg:sync": "node scripts/pg-inventory-sync.js",
     "pg:parity": "node scripts/pg-inventory-sync.js --parity",
     "snapshot": "node scripts/snapshot.js",
@@ -34,9 +35,11 @@
     "node-telegram-bot-api": "^0.66.0",
     "openai": "^4.73.0",
     "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^3.11.174",
     "pdfkit": "^0.19.1",
     "pg": "^8.22.0",
     "sharp": "^0.34.5",
+    "tesseract.js": "^5.1.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

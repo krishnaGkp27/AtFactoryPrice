@@ -56,6 +56,11 @@ task-note OCR (SNAP), the colour detector. They read pictures, not the
 sheet, and a person confirms every figure on chips before anything is
 written. Untouched by this change.
 
+**VRF-6 (04-Nov-2026):** the bill check no longer NEEDS the AI either —
+`OCR_PROVIDER=local` reads a typed PDF exactly and a photo / photo-PDF through
+Tesseract in-process (print well, handwriting poorly, never guessed). See
+`specs/VRF-6_LOCAL_BILL_READER.md`.
+
 ## 4. What staff lose, and the door for each
 
 | Typed sentence (old) | Door now |

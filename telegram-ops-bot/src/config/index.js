@@ -199,6 +199,10 @@ const config = {
     maxFileBytes: parseInt(process.env.OCR_MAX_FILE_BYTES, 10) || 5 * 1024 * 1024,
     /** Local archive dir (relative to repo root) */
     localArchiveDir: process.env.OCR_ARCHIVE_DIR || 'data/ocr',
+    /** VRF-6 — the in-process reader (OCR_PROVIDER=local or auto) */
+    localLang: process.env.OCR_LOCAL_LANG || 'eng',
+    localCacheDir: process.env.OCR_LOCAL_CACHE_DIR || 'data/ocr/tess',
+    localMaxPages: parseInt(process.env.OCR_LOCAL_MAX_PAGES, 10) || 30,
   },
 
   /**

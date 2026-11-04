@@ -81,12 +81,14 @@ test('unparseable output, unsupported mime, and missing key fail cleanly', async
   assert.match(heic.error, /not supported by the anthropic provider|ANTHROPIC_API_KEY/);
 });
 
-test('OCR_PROVIDER=auto routes to anthropic when its key exists', async () => {
+// VRF-6: the free local reader heads the auto chain; fake bytes it cannot
+// decode fall through to the paid provider whose key exists.
+test('OCR_PROVIDER=auto: the local reader cannot read the bytes → anthropic when its key exists', async () => {
   const json = JSON.stringify({ bales: [{ packageNo: '896', design: '77016', confidence: 0.9 }], rawText: '' });
   const r = await callWithMock([{ type: 'text', text: json }], () =>
     vision.extractBales(Buffer.from('fake-image-bytes'), 'image/jpeg', { providerOverride: 'auto' }));
   assert.equal(r.ok, true);
-  assert.equal(r.provider, 'anthropic', 'auto chain preferred Claude');
+  assert.equal(r.provider, 'anthropic', 'auto chain reached Claude after the local try');
 });
 
 test('SNAP-3: PDFs go up as a document block on the Sonnet model with no thinking', async () => {

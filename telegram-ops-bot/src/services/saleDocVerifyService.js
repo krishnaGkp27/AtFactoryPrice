@@ -514,6 +514,7 @@ function docVerifyRecord(results, extras, opts = {}) {
       .sort((a, b) => a.pos - b.pos).slice(0, RECORD_ROW_CAP).map(no),
     // VRF-5 — who re-checked the bill and when: one tap per admin per request.
     rechecks: Array.isArray(opts.rechecks) ? opts.rechecks : [],
+    ...(opts.provider ? { provider: String(opts.provider) } : {}),
     truncated: flag.cut
       || [okPlain, okNoted, differs, missing, extras].some((l) => l.length > RECORD_ROW_CAP),
   };
@@ -713,6 +714,7 @@ async function runCheck(bot, aj, requestId, { admins, recheck } = {}) {
   const prevRechecks = recheck && recheck.prev && Array.isArray(recheck.prev.rechecks) ? recheck.prev.rechecks : [];
   const record = docVerifyRecord(results, extras, {
     thanExcluded,
+    provider: ocr.provider || '', // VRF-6 — which reader marked the card
     rechecks: recheck ? [...prevRechecks, { by: recheck.by, at: now() }] : prevRechecks,
   });
   try {

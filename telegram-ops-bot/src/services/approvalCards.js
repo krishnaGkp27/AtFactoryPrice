@@ -915,7 +915,8 @@ function docVerifyLine(aj, opts = {}) {
   // false ❌s this feature removed: the approver reads it as "all good".
   const unchecked = Number(v.thanUnchecked) || 0;
   const tail = unchecked ? ` · ${unchecked} than not checked` : '';
-  let text = `\n🔬 Bill check: ${v.ok || 0} confirmed · ${v.differs || 0} differ · `
+  const who = v.provider === 'local' ? ' (local)' : ''; // VRF-6 — the free reader names itself
+  let text = `\n🔬 Bill check${who}: ${v.ok || 0} confirmed · ${v.differs || 0} differ · `
     + `${v.missing || 0} missing · ${v.extra || 0} extra${tail}`
     + `${bad ? ' ⚠️' : (unchecked ? ' ◍' : ' ✅')}`
     + (opts.marksOff ? ' · marks off, compare by hand' : '');

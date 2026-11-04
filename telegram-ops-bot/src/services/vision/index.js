@@ -59,22 +59,27 @@ const PROVIDERS = {
   stub,
   openai,
   anthropic,
+  // VRF-6 — the in-process reader (PDF text layer · embedded photos · Tesseract);
+  // its libraries load on first use, never at boot.
+  local: require('./local'),
   // google: require('./google'),   // wired in a future commit
 };
 
 /**
  * SNAP-2: OCR_PROVIDER=auto picks the best available real provider by
- * which API keys exist — Claude first (stronger at the handwritten label
- * values), then OpenAI, then the stub. Returns the chain, not just the
- * head: in auto mode a thrown provider error falls through to the next
- * entry so one provider outage doesn't take Snap Sale down.
+ * which API keys exist. Since VRF-6 (04-Nov-2026) the FREE local reader
+ * heads the chain; then Claude (stronger at handwritten label values),
+ * then OpenAI. Returns the chain, not just the head: in auto mode a thrown
+ * provider error — or a file the local reader cannot read — falls through
+ * to the next entry so one provider outage doesn't take the check down.
+ * With no paid key at all the chain is the local reader alone.
  */
 function resolveChain(providerName) {
   if (providerName !== 'auto') return [providerName];
-  const chain = [];
+  // VRF-6 — the free local reader first; a paid key, if any, only after it.
+  const chain = ['local'];
   if ((config.anthropic && config.anthropic.apiKey) || process.env.ANTHROPIC_API_KEY) chain.push('anthropic');
   if ((config.openai && config.openai.apiKey) || process.env.OPENAI_API_KEY) chain.push('openai');
-  if (!chain.length) chain.push('stub');
   return chain;
 }
 
@@ -139,6 +144,13 @@ async function extractBales(buffer, mimeType, opts = {}) {
     }
     try {
       const result = await provider.extractBales(buffer, mime, opts);
+      // VRF-6 — in the auto chain the free local reader is a TRY: when it
+      // cannot read the file and a paid provider is next, go on to it.
+      if (providerName === 'local' && result && result.ok === false && chain.indexOf(providerName) < chain.length - 1) {
+        logger.warn(`vision: local reader could not read the file (${result.error}) — trying the next provider`);
+        last = normalise(result, providerName);
+        continue;
+      }
       return normalise(result, providerName);
     } catch (e) {
       logger.warn(`vision: provider "${providerName}" threw: ${e.message}`);
@@ -153,7 +165,7 @@ async function extractBales(buffer, mimeType, opts = {}) {
 const _usage = { day: '', count: 0 };
 
 async function checkDailyCap(providerName) {
-  if (providerName === 'stub') return { ok: true, cap: Infinity };
+  if (providerName === 'stub' || providerName === 'local') return { ok: true, cap: Infinity }; // local reads cost nothing
   const day = todayInLagos();  // TIME-1 — the cap resets at Lagos midnight
   if (_usage.day !== day) { _usage.day = day; _usage.count = 0; }
   let cap = 100;
@@ -221,6 +233,7 @@ function normalise(raw, providerName) {
     rawText: String(raw.rawText || ''),
     overallConfidence: clampConfidence(raw.overallConfidence ?? avg(norm.map((b) => b.confidence))),
     warnings: Array.isArray(raw.warnings) ? raw.warnings.map(String) : [],
+    ...(raw.method ? { method: String(raw.method) } : {}), // VRF-6 — which local reader answered
   };
 }
 
