@@ -218,6 +218,10 @@ const ACTIVITIES = [
   // money owed to them is the ordinary case, and every write behind this
   // tile is approval-gated anyway.
   { code: 'payments',              label: 'Payments',                  icon: '💳', callback: 'act:payments',           hub: 'finance' },
+  // PRC-1 — a customer's payment against what they owe: customer → amount →
+  // cash / bank → one `record_payment` request for an admin. The tap door
+  // that replaces the typed AI sentence (TXT-1, owner 01-Nov-2026).
+  { code: 'payment_received',      label: 'Payment Received',          icon: '💵', callback: 'act:payment_received',   hub: 'finance' },
 
   // ── Human Resources (people + attendance) ────────────────────────────
   // ATT-C1 — Mark Attendance (employee-facing). Injected at menu-render

@@ -1154,6 +1154,20 @@ async function buildAddWarehouseCard(aj) {
  * outstanding balance is BADGED, never a gate — the owner's decision 4,
  * mirroring §13 where a threshold badges and does not block.
  */
+/**
+ * REV-1 — the revert of an approved sale. Two reverts must never read the
+ * same (D-4): the card names the customer, the goods and the sale it undoes.
+ */
+function buildRevertSaleCard(aj) {
+  const lines = ['↩️ Revert sale'];
+  if (aj.customer) lines.push(`Customer: ${aj.customer}`);
+  if (aj.goods) lines.push(`Goods: ${aj.goods}`);
+  lines.push(`Sale: ${[aj.saleDate ? fmtDate(aj.saleDate) : '', aj.saleRef ? `Ref ${aj.saleRef}` : ''].filter(Boolean).join(' · ')}`);
+  lines.push('Every bale and than of this sale goes back to available.');
+  lines.push('The customer\'s ledger entry for it is reversed.');
+  return lines.join('\n');
+}
+
 function buildRemoveCustomerCard(aj) {
   const removing = aj.action === 'remove_customer';
   let text = removing
@@ -1246,6 +1260,10 @@ async function buildCardFromActionJSON(aj, opts = {}) {
     if (aj.action === 'add_warehouse') return await buildAddWarehouseCard(aj);
     if (aj.action === 'design_asset_upload' && aj.kind === 'shade') return buildShadePhotoCard(aj);
     if (aj.action === 'edit_bale') return buildEditBaleCard(aj);
+    // REV-1 — a revert raised from the tap door says WHICH sale it undoes.
+    // A row raised by the old typed line carries only an id and falls
+    // through to the generic card, as before.
+    if (aj.action === 'revert_sale_bundle' && aj.saleRef) return buildRevertSaleCard(aj);
     // CUR-1 S-CUR rule 5 — PAY-1 money LEAVING the office is SIDE A. The
     // inbox and the reminder sweep rebuild it from the queue row through the
     // side-A builder (₦ printed there, never here), instead of the generic
@@ -1369,6 +1387,7 @@ module.exports = {
   buildSaleBundleCard,
   buildAddContactCard,
   buildRemoveCustomerCard,
+  buildRevertSaleCard,
   keyboardForRequest,
   buildSupplyRequestCard,
   buildPaymentCard,

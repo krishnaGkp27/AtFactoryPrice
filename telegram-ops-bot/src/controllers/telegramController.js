@@ -3817,6 +3817,11 @@ async function handleMessage(bot, msg) {
       const handled = await require('../flows/customerRemoveFlow').handleText(bot, msg);
       if (handled) return;
     }
+    // PRC-1 — 💵 Payment Received: a typed customer search, then the amount.
+    if (brSession && brSession.type === 'payment_received_flow') {
+      const handled = await require('../flows/paymentReceivedFlow').handleText(bot, msg);
+      if (handled) return;
+    }
     // AUD-X1 — extra design numbers typed for the audit count sheet.
     if (brSession && brSession.type === 'wh_audit_flow') {
       const handled = await require('../flows/warehouseAuditFlow').handleText(bot, msg);
@@ -7595,6 +7600,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['cmg:'], handle: (bot, cq) => require('../flows/customerMergeFlow').handleCallback(bot, cq) },
   // RMV-1 Phase B — ➖ Remove Customer / ↩️ Restore (dual-admin), owner go 23-Sep-2026.
   { prefixes: ['rmc:'], handle: (bot, cq) => require('../flows/customerRemoveFlow').handleCallback(bot, cq) },
+  // PRC-1 — 💵 Payment Received.
+  { prefixes: ['prc:'], handle: (bot, cq) => require('../flows/paymentReceivedFlow').handleCallback(bot, cq) },
   { prefixes: ['bgl:'], handle: (bot, cq) => require('../flows/businessGlanceFlow').handleCallback(bot, cq) },
   { prefixes: ['atd_rpt:'], handle: (bot, cq) => require('../flows/attendanceReportFlow').handleCallback(bot, cq) },
   { prefixes: ['atd_adm:'], handle: (bot, cq) => require('../flows/attendanceAdminFlow').handleCallback(bot, cq) },
@@ -10107,6 +10114,12 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       // through dual-admin approval anyway.
       case 'payments': {
         await require('../flows/paymentFlow').start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'payment_received': {
+        // PRC-1 — a customer's payment against what they owe (tap door for
+        // the retired typed sentence); raises `record_payment` for an admin.
+        await require('../flows/paymentReceivedFlow').start(bot, chatId, uid, messageId);
         break;
       }
       case 'manage_users': {

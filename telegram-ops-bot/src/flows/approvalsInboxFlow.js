@@ -952,10 +952,22 @@ async function renderItem(bot, chatId, userId, idx) {
       const isTransfer = TRANSFER_ACTIONS.includes(String((live.actionJSON || {}).action || ''));
       const verdict = st === 'approved' ? (isTransfer ? 'received' : 'approved') : st;
       const byWhom = live.approver ? ` by ${mdEscape(String(live.approver))}` : '';
+      // REV-1 — an approved sale can be reverted from its own record: the
+      // admin sees whether a revert is done, waiting, or can be asked for.
+      const saleRevert = require('../services/saleRevert');
+      let revertLine = '';
+      const revertRows = [];
+      if (saleRevert.eligible(live, userId)) {
+        const rs = await saleRevert.stateOf(live.requestId);
+        if (rs.state === 'reverted') revertLine = `\n↩️ _This sale was reverted${rs.when ? ` · ${fmtDate(rs.when)}` : ''}._`;
+        else if (rs.state === 'pending') revertLine = `\n↩️ _A revert is waiting for approval · ${approvalCards.shortRequestRef(rs.requestId)}._`;
+        else if (rs.state === 'none') revertRows.push([{ text: '↩️ Revert this sale', callback_data: `abx:rev:${idx}` }]);
+      }
       await render(bot, chatId, userId,
-        `${escCard(card)}\n\n${st === 'approved' ? '✅' : '❌'} _Already ${verdict}${byWhom}${when} — no action needed._${payLine}`,
+        `${escCard(card)}\n\n${st === 'approved' ? '✅' : '❌'} _Already ${verdict}${byWhom}${when} — no action needed._${payLine}${revertLine}`,
         [
           ...(peek ? [[{ text: peek.label, callback_data: `abx:doc:${idx}` }]] : []),
+          ...revertRows,
           backRow('⬅ Back to list'), closeRow(),
         ]);
       return;
@@ -1200,6 +1212,50 @@ async function handleCallback(bot, query) {
   try {
     await require('../services/ephemeralDocs').sweep(bot, userId, peekKind ? { kind: peekKind } : {});
   } catch (_) { /* best-effort */ }
+
+  // REV-1 — ↩️ Revert this sale, from the sale's own decided record: ask
+  // first (it undoes stock and ledger), then raise the dual-admin request.
+  if (data.startsWith('abx:rev:') || data.startsWith('abx:revyes:')) {
+    const yes = data.startsWith('abx:revyes:');
+    const session0 = sessionStore.get(userId);
+    const idx = parseInt(data.slice(yes ? 'abx:revyes:'.length : 'abx:rev:'.length), 10);
+    const item = session0 && Array.isArray(session0._items) ? session0._items[idx] : null;
+    if (!item) { await renderItems(bot, cid, userId); return true; }
+    const saleRevert = require('../services/saleRevert');
+    const backToRecord = [{ text: '⬅ Back', callback_data: `abx:i:${idx}` }];
+    let live = null;
+    try { live = await approvalQueueRepository.getByRequestId(item.requestId); } catch (_) { /* refused below */ }
+    if (!live || !saleRevert.eligible(live, userId)) {
+      await render(bot, cid, userId, '↩️ Only an admin can ask for the revert of an approved sale.', [backToRecord, closeRow()]);
+      return true;
+    }
+    let card = '';
+    try { card = await approvalCards.buildCardFromActionJSON(live.actionJSON) || ''; } catch (_) { /* bare */ }
+    if (!yes) {
+      await render(bot, cid, userId,
+        `↩️ *Revert this sale?*\n\n${escCard(card)}\n\n`
+        + 'Every bale and than of it goes back to available.\n'
+        + 'The customer\'s ledger entry for it is reversed.\n'
+        + 'Two admins must approve. You cannot approve your own request.',
+        [[{ text: '↩️ Yes, ask for the revert', callback_data: `abx:revyes:${idx}` }], backToRecord, closeRow()]);
+      return true;
+    }
+    let res;
+    try { res = await saleRevert.request({ bot, userId, sale: live }); } catch (e) {
+      logger.error(`approvalsInbox: revert request failed for ${item.requestId}: ${e.message}`);
+      res = { ok: false, reason: `Could not send: ${e.message}. Nothing was changed.` };
+    }
+    if (!res.ok) {
+      await render(bot, cid, userId, `↩️ ${mdEscape(res.reason)}`, [backToRecord, closeRow()]);
+      return true;
+    }
+    await render(bot, cid, userId,
+      `⏳ *Revert sent for approval*\n\n${mdEscape(res.payload.customer || '')}${res.payload.goods ? ` · ${mdEscape(res.payload.goods)}` : ''}\n`
+      + `Sale ${mdEscape(res.payload.saleRef)} · Ref ${approvalCards.shortRequestRef(res.requestId)}\n\n`
+      + 'Nothing changes until two admins approve it.',
+      [require('../services/approvalGate').receiptRow(res.requestId), backToRecord, closeRow()]);
+    return true;
+  }
 
   // SAB-1 — deliver the sales bill for the card being viewed.
   if (data.startsWith('abx:doc:')) {

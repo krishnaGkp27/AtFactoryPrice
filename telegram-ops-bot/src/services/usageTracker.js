@@ -24,6 +24,7 @@ const logger = require('../utils/logger');
  */
 const PREFIX_FEATURES = {
   'agk:': 'agent_access',
+  'prc:': 'payment_received',
   'srf_': 'supply_request',
   'gr:': 'receive_goods',
   'br:': 'bulk_receive_goods',

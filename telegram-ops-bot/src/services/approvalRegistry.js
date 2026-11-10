@@ -75,6 +75,22 @@ const ENTRIES = Object.freeze({
   // The other payment door: one bank account registered twice is the same
   // request whoever typed it. Flagged, not refused — the register's own
   // "already on file" check is the refusal.
+  // PRC-1 — a customer's payment against what they owe. No declared twin
+  // rule (the default: flag): two customers do pay the same amount.
+  record_payment: {
+    icon: '💵',
+    label: 'Payment received',
+    oneLine: (aj) => [aj.customer || '', Number(aj.amount) > 0 ? money.sale(aj.amount) : '', aj.method || ''].filter(Boolean).join(' · '),
+  },
+  // The reversal of an approved sale (dual admin).
+  revert_sale_bundle: {
+    icon: '↩️',
+    label: 'Revert sale',
+    // One sale is reverted once: a second request for the same sale is
+    // refused while the first is open, whoever asks.
+    twin: { key: (aj) => (aj && aj.saleRefId ? `sale:${aj.saleRefId}` : null), policy: 'refuse', scope: 'open', anyRequester: true },
+    oneLine: (aj) => [aj.customer || '', aj.goods || '', aj.saleRef ? `sale ${aj.saleRef}` : ''].filter(Boolean).join(' · '),
+  },
   register_payment_account: {
     icon: '🏦',
     label: 'Payee account',

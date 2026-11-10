@@ -1072,10 +1072,20 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
 > gets the notification back as and when approved by the admin, one by one,
 > with the name and number of approvers required."
 
-- **Every new request is raised through the approval gate**
-  (`approvalGate.raise`) — never by writing the queue directly. Existing
-  doors move there one commit at a time; the smoke check S-APG stops any new
-  door from raising outside it.
+- **Every request is raised through the approval gate**
+  (`approvalGate.raise`) — never by writing the queue directly. Since
+  10-Nov-2026 (phases 2 and 3, owner: "Go with all the remaining phases")
+  every door is on it; the smoke check S-APG fails on any direct queue
+  write outside the gate.
+- **Two taps of one Submit are one request**, on every door: the same
+  person raising the same request again within seconds
+  (Settings `APPROVAL_DOUBLE_TAP_SECONDS`, 20) is handed the first one's
+  request. No second row, no second admin card.
+- **The typed AI sentences that changed the sheet have tap doors**
+  (11-Nov-2026): a customer's payment is 💰 Finance → 💵 Payment Received;
+  the revert of a sale is 🛂 Approvals → ✅❌ Decided → the sale →
+  ↩️ Revert this sale (admins, dual approval, one revert per sale). Both
+  raise the same request types the typed lines raised.
 - **A request type states its own rule in one place**
   (`approvalRegistry`): what makes two of it the same, and whether a twin is
   refused, flagged or ignored. **The default is flag**: admins see
