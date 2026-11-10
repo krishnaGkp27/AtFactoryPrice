@@ -385,7 +385,104 @@ function validateAmount(raw) {
   return { ok: true, value: n };
 }
 
+/* ── PAY-5 (owner's Go, 10-Nov-2026) — salary by month, and the twin source ── */
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const SALARY_KINDS = Object.freeze({ salary: 'Salary', salary_advance: 'Salary advance' });
+
+/** `2026-11` → `Nov-2026`; '' when malformed. */
+function periodLabel(period) {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(period || ''));
+  if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) return '';
+  return `${MONTHS[Number(m[2]) - 1]}-${m[1]}`;
+}
+
+/** The months a salary may be raised for: last, this, next (Lagos calendar). */
+function periodChoices(now = new Date()) {
+  const [y, mo] = now.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' }).split('-').map(Number);
+  return [-1, 0, 1].map((d) => {
+    const dt = new Date(Date.UTC(y, mo - 1 + d, 1));
+    return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
+  });
+}
+
+/** The stored reason text of a salary chip: `Salary · Nov-2026`. */
+function salaryReason(kind, period) {
+  const word = SALARY_KINDS[kind];
+  const label = periodLabel(period);
+  return word && label ? `${word} · ${label}` : '';
+}
+
+/**
+ * Read a reason back: `Salary · Nov-2026` → { kind: 'salary', period:
+ * '2026-11' }. The sheet's column S holds the text, so the month needs no
+ * column of its own. Anything else → { kind: '', period: '' }.
+ */
+function reasonKind(text) {
+  const m = /^(Salary advance|Salary) · ([A-Z][a-z]{2})-(\d{4})$/.exec(String(text || '').trim());
+  if (!m) return { kind: '', period: '' };
+  const mi = MONTHS.indexOf(m[2]);
+  if (mi < 0) return { kind: '', period: '' };
+  return { kind: m[1] === 'Salary' ? 'salary' : 'salary_advance', period: `${m[3]}-${String(mi + 1).padStart(2, '0')}` };
+}
+
+/** A typed reason that is really a salary — it must go through the chip. */
+function looksLikeSalary(text) {
+  return /\bsalar(y|ies)\b/i.test(String(text || ''));
+}
+
+const digitsOf = (v) => String(v || '').replace(/\D/g, '');
+const lower = (v) => String(v || '').trim().toLowerCase();
+
+/**
+ * PAY-5 — the payments twin source for the approval gate. A payment is the
+ * same thing when it goes to the same account for the same amount and one
+ * is still OPEN (waiting on approval, or approved and not yet paid); and a
+ * 💼 Salary is the same thing when that employee already has one for that
+ * month — waiting, approved OR paid (declined / rejected ones do not count).
+ * @returns {Promise<object|null>} twin descriptor for approvalGate
+ */
+async function openTwinFor({ payload }) {
+  const p = payload || {};
+  const rows = await require('../repositories/paymentRequestsRepository').getAll();
+  const acct = digitsOf(p.account_number);
+  const bank = lower(p.bank);
+  const amt = Math.round(Number(p.amount_ngn) || 0);
+  const byAge = (a, b) => String(a.raised_at || '').localeCompare(String(b.raised_at || ''));
+  let hit = null;
+  let kind = 'same_request';
+  if (acct && amt > 0) {
+    hit = rows.filter((r) => ['pending_approval', 'approved'].includes(r.status)
+      && digitsOf(r.account_number) === acct && lower(r.bank) === bank
+      && Math.round(Number(r.amount_ngn) || 0) === amt).sort(byAge)[0] || null;
+  }
+  if (!hit && p.reason_kind === 'salary' && p.period) {
+    hit = rows.filter((r) => ['pending_approval', 'approved', 'done'].includes(r.status)
+      && lower(r.payee_name) === lower(p.payee_name)
+      && lower(r.payee_type) === lower(p.payee_type)
+      && (() => { const k = reasonKind(r.reason); return k.kind === 'salary' && k.period === p.period; })()).sort(byAge)[0] || null;
+    kind = 'salary_period';
+  }
+  if (!hit) return null;
+  const state = hit.status === 'pending_approval' ? 'pending' : (hit.status === 'approved' ? 'approved' : 'done');
+  let aj = {
+    action: 'request_payment', payment_id: hit.payment_id, payee_name: hit.payee_name,
+    payee_type: hit.payee_type, amount_ngn: hit.amount_ngn, account_number: hit.account_number,
+    bank: hit.bank, reason: hit.reason || '',
+  };
+  // A waiting twin's signatures live on its queue row — read it so the
+  // refusal can say "1 of 2 signed".
+  if (state === 'pending' && hit.approval_request_id) {
+    try {
+      const q = await approvalQueueRepository.getByRequestId(hit.approval_request_id);
+      if (q && q.actionJSON) aj = { ...aj, ...q.actionJSON, reason: aj.reason || q.actionJSON.reason || '' };
+    } catch (_) { /* the twin stands without its signature count */ }
+  }
+  return { requestId: hit.approval_request_id || '', raisedBy: hit.raised_by, createdAt: hit.raised_at, state, kind, aj };
+}
+
 module.exports = {
+  periodLabel, periodChoices, salaryReason, reasonKind, looksLikeSalary, openTwinFor, SALARY_KINDS,
   FINANCE_DEPARTMENT,
   REASON_MIN,
   REASON_MAX,

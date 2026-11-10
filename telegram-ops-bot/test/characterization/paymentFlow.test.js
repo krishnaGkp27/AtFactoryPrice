@@ -696,3 +696,247 @@ test('PAY-2: the queue refuses anyone who cannot execute', async () => {
   assert.match(lastText(bot), /for the finance seat/);
   assert.equal(bot.callsTo('sendMessage').filter((c) => /💳 \*Payment\*/.test(c.args.text)).length, 0);
 });
+
+/* ── PAY-5 (owner's Go, 10-Nov-2026) — the payment door on the approval gate ──
+ *
+ * Two identical ₦70,000 salary requests reached the admins a second apart.
+ * Pinned here, through the real controller:
+ *  - Submit fires ONCE: two taps in the same instant queue one request;
+ *  - the same account + amount is refused while one is open (waiting, or
+ *    approved and unpaid) and the open one is shown instead; once it is
+ *    paid, an identical payment is a new one;
+ *  - an admin may ⧉ Send anyway, and every card says so;
+ *  - a salary is picked by chip with its month — one per employee per
+ *    month, paid ones included; an advance is its own chip;
+ *  - the receipt and 📋 My requests carry 🔔 Remind approvers, which
+ *    re-sends the same card and raises nothing.
+ */
+requestsRepo.getAll = async () => REQUESTS;
+approvalQueueRepository.getAllPending = async () => QUEUED.filter((q) => String(q.status || 'pending') === 'pending');
+approvalQueueRepository.updateActionJSON = async (id, patch) => {
+  const row = QUEUED.find((q) => q.requestId === id);
+  if (row) row.actionJSON = { ...row.actionJSON, ...patch };
+  return true;
+};
+let NOTIFIED = [];
+approvalEvents.notifyAdminsApprovalRequest = async (...a) => { NOTIFIED.push(a); return { sent: 1, failed: 0 }; };
+const paymentService = require(path.join(SRC, 'services/paymentService'));
+
+const kbOf = (bot) => {
+  const c = bot.calls.filter((x) => x.args.opts && x.args.opts.reply_markup && x.args.opts.reply_markup.inline_keyboard).pop();
+  return c ? c.args.opts.reply_markup.inline_keyboard.flat() : [];
+};
+/** Walk the door up to the confirm card (or wherever the gate stops it). */
+async function toConfirm(bot, uid, amount, reason) {
+  await controller.handleCallbackQuery(bot, cb('act:payments', uid));
+  await controller.handleCallbackQuery(bot, cb('pay:start:req', uid));
+  await controller.handleCallbackQuery(bot, cb('pay:acct:0', uid));
+  await controller.handleMessage(bot, msg(uid, String(amount)));
+  if (reason) await controller.handleMessage(bot, msg(uid, reason));
+}
+const skipBill = (bot, uid) => controller.handleCallbackQuery(bot, cb('pay:bill:skip', uid));
+
+test('PAY-5: Submit fires once — two taps in the same instant queue ONE request', async () => {
+  reset(); NOTIFIED = [];
+  await registerApproved();
+  const bot = createFakeBot();
+  await toConfirm(bot, ABDUL, 70000, 'Loading at the warehouse');
+  await skipBill(bot, ABDUL);
+  assert.ok(kbOf(bot).some((b) => b.callback_data === 'pay:submit'));
+  await Promise.all([
+    controller.handleCallbackQuery(bot, cb('pay:submit', ABDUL)),
+    controller.handleCallbackQuery(bot, cb('pay:submit', ABDUL)),
+  ]);
+  assert.equal(REQUESTS.length, 1, 'one PaymentRequests row');
+  assert.equal(QUEUED.length, 1, 'one approval request');
+  assert.equal(NOTIFIED.length, 1, 'one card to the admins');
+  // a late third tap on the dead card changes nothing
+  await controller.handleCallbackQuery(bot, cb('pay:submit', ABDUL));
+  assert.equal(REQUESTS.length, 1);
+  assert.equal(QUEUED.length, 1);
+});
+
+test('PAY-5: the same account + amount is refused while one is open — the open request is shown, nothing new is raised', async () => {
+  reset(); NOTIFIED = [];
+  await registerApproved();
+  const bot = createFakeBot();
+  await toConfirm(bot, ABDUL, 45000, 'Transport to Idumota');
+  await skipBill(bot, ABDUL);
+  await controller.handleCallbackQuery(bot, cb('pay:submit', ABDUL));
+  assert.equal(REQUESTS.length, 1);
+  const firstId = QUEUED[0].requestId;
+
+  // the same payment again: stopped BEFORE a Submit button exists
+  await toConfirm(bot, ABDUL, 45000, 'Transport again');
+  await skipBill(bot, ABDUL);
+  const card = lastText(bot).replace(/\\/g, '');
+  assert.match(card, /^⏳ This request is already open\n💳 Payment request · ₦45,000 → Abdul · Transport to Idumota\nRaised by Abdul · /, card);
+  assert.match(card, /🛂 Waiting on approval · 0 of 2 signed/);
+  assert.match(card, /If this really is a second payment, ask an admin to raise it\./);
+  assert.match(card, /Nothing new was raised\.$/);
+  const kb = kbOf(bot);
+  assert.ok(!kb.some((b) => b.callback_data === 'pay:submit'), 'no Submit on a refused request');
+  assert.ok(!kb.some((b) => b.callback_data === 'pay:force'), 'Send anyway is an admin\'s chip');
+  assert.ok(kb.some((b) => b.callback_data === `apg:st:${firstId}`), '📋 Open it');
+  assert.ok(kb.some((b) => b.callback_data === `apg:nudge:${firstId}`), '🔔 Remind approvers on his own request');
+  assert.equal(REQUESTS.length, 1);
+  assert.equal(QUEUED.length, 1);
+
+  // approved and waiting for finance is still open
+  REQUESTS[0].status = 'approved'; QUEUED[0].status = 'approved';
+  await toConfirm(bot, ABDUL, 45000, 'Transport again');
+  await skipBill(bot, ABDUL);
+  assert.match(lastText(bot), /🏦 Approved — waiting to be paid/);
+  assert.equal(REQUESTS.length, 1);
+
+  // a different amount is a different payment
+  await toConfirm(bot, ABDUL, 46000, 'Transport, second trip');
+  await skipBill(bot, ABDUL);
+  assert.match(lastText(bot), /Send this for approval\?/);
+  assert.ok(kbOf(bot).some((b) => b.callback_data === 'pay:submit'));
+
+  // once the first is PAID, the same payment is a new one
+  REQUESTS[0].status = 'done';
+  await toConfirm(bot, ABDUL, 45000, 'Transport, next week');
+  await skipBill(bot, ABDUL);
+  assert.match(lastText(bot), /Send this for approval\?/);
+});
+
+test('PAY-5: an admin may ⧉ Send anyway — the confirm, the row and the admin card all say it is a repeat', async () => {
+  reset(); NOTIFIED = [];
+  await registerApproved({ owner_name: 'Sani Loader', owner_type: 'contractor', owner_telegram_id: '', account_number: '2233445566', bank: 'Zenith' });
+  const bot = createFakeBot();
+  await toConfirm(bot, AJEET, 20000, 'Loading the container');
+  await skipBill(bot, AJEET);
+  await controller.handleCallbackQuery(bot, cb('pay:submit', AJEET));
+  assert.equal(QUEUED.length, 1);
+  const firstId = QUEUED[0].requestId;
+
+  await toConfirm(bot, AJEET, 20000, 'Loading, second container');
+  await skipBill(bot, AJEET);
+  assert.match(lastText(bot), /This request is already open/);
+  assert.match(lastText(bot), /As an admin you can send it anyway/);
+  assert.ok(kbOf(bot).some((b) => b.callback_data === 'pay:force'));
+  await controller.handleCallbackQuery(bot, cb('pay:force', AJEET));
+  assert.match(lastText(bot), /Send this for approval\?/);
+  assert.match(lastText(bot), /⧉ Repeat of R-[A-Z0-9]{4} — you are sending it anyway/);
+  await controller.handleCallbackQuery(bot, cb('pay:submit', AJEET));
+  assert.equal(QUEUED.length, 2);
+  assert.equal(QUEUED[1].actionJSON.twinOf, firstId);
+  assert.equal(QUEUED[1].actionJSON.sentAnywayBy, AJEET);
+  assert.match(NOTIFIED[1][3], /⧉ Repeat of R-[A-Z0-9]{4} — sent anyway by Ajeet/, 'the admin card says so');
+  // the rebuilt card (inbox, reminder) says it too
+  assert.match(paymentCards.buildApprovalSummary(QUEUED[1].actionJSON), /⧉ Repeat of R-[A-Z0-9]{4} — sent anyway by Ajeet/);
+});
+
+test('PAY-5: a salary is picked by chip with its month — one per employee per month, paid ones included; an advance is its own chip', async () => {
+  reset(); NOTIFIED = [];
+  await registerApproved();
+  const bot = createFakeBot();
+  const [, thisMonth] = paymentService.periodChoices();
+  const label = paymentService.periodLabel(thisMonth);
+
+  await toConfirm(bot, ABDUL, 70000);
+  assert.match(lastText(bot), /For a salary, tap 💼 Salary or 💵 Salary advance\./);
+  assert.ok(kbOf(bot).some((b) => b.callback_data === 'pay:rk:salary'));
+  assert.ok(kbOf(bot).some((b) => b.callback_data === 'pay:rk:advance'));
+  // typed "salary" has no month → sent to the chip
+  await controller.handleMessage(bot, msg(ABDUL, 'my salary for this month'));
+  assert.match(lastText(bot), /^⚠️ A salary is picked with the chips below, so its month is on record\./);
+  assert.equal(sessionStore.get(ABDUL).step, 'req_reason');
+
+  await controller.handleCallbackQuery(bot, cb('pay:rk:salary', ABDUL));
+  assert.match(lastText(bot), /💼 \*Salary — for which month\?\*/);
+  const months = kbOf(bot).filter((b) => (b.callback_data || '').startsWith('pay:mo:'));
+  assert.deepEqual(months.map((b) => b.callback_data), paymentService.periodChoices().map((c) => `pay:mo:${c}`), 'last · this · next');
+  await controller.handleCallbackQuery(bot, cb(`pay:mo:${thisMonth}`, ABDUL));
+  assert.match(lastText(bot), /bill or invoice/i);
+  await skipBill(bot, ABDUL);
+  assert.match(lastText(bot).replace(/\\/g, ''), new RegExp(`📝 Salary · ${label}`));
+  await controller.handleCallbackQuery(bot, cb('pay:submit', ABDUL));
+  assert.equal(REQUESTS[0].reason, `Salary · ${label}`, 'the month is in the sheet\'s own reason cell');
+  assert.equal(QUEUED[0].actionJSON.reason_kind, 'salary');
+  assert.equal(QUEUED[0].actionJSON.period, thisMonth);
+
+  // a second salary for the same month — even a different amount — is refused
+  const again = async (amount, chip, month) => {
+    await toConfirm(bot, ABDUL, amount);
+    await controller.handleCallbackQuery(bot, cb(`pay:rk:${chip}`, ABDUL));
+    await controller.handleCallbackQuery(bot, cb(`pay:mo:${month}`, ABDUL));
+    await skipBill(bot, ABDUL);
+    return lastText(bot).replace(/\\/g, '');
+  };
+  let t = await again(60000, 'salary', thisMonth);
+  assert.match(t, new RegExp(`^💼 Salary for ${label} is already on record\\n💳 Payment request · ₦70,000 → Abdul · Salary · ${label}\\n`), t);
+  assert.match(t, /Nothing new was raised\.$/);
+  assert.equal(REQUESTS.length, 1);
+
+  // …and still refused once that salary has been PAID
+  REQUESTS[0].status = 'done'; QUEUED[0].status = 'approved';
+  t = await again(60000, 'salary', thisMonth);
+  assert.match(t, new RegExp(`^💼 Salary for ${label} is already on record`));
+  assert.match(t, /✅ Already paid/);
+
+  // an advance for the same month is its own thing; so is another month's salary
+  t = await again(10000, 'advance', thisMonth);
+  assert.match(t, /Send this for approval\?/);
+  assert.match(t, new RegExp(`📝 Salary advance · ${label}`));
+  const [lastMonth] = paymentService.periodChoices();
+  t = await again(70000, 'salary', lastMonth);
+  assert.match(t, /Send this for approval\?/);
+
+  // a month that is not on the chips is refused, never guessed
+  await toConfirm(bot, ABDUL, 5000);
+  await controller.handleCallbackQuery(bot, cb('pay:rk:salary', ABDUL));
+  await controller.handleCallbackQuery(bot, cb('pay:mo:2031-01', ABDUL));
+  assert.match(lastText(bot), /Pick the month again/);
+});
+
+test('PAY-5: a contractor payee has no salary chips, and a typed reason clears a picked salary', async () => {
+  reset();
+  await registerApproved({ owner_name: 'Sani Loader', owner_type: 'contractor', owner_telegram_id: '', account_number: '2233445566', bank: 'Zenith' });
+  const bot = createFakeBot();
+  await toConfirm(bot, AJEET, 9000);
+  assert.ok(!kbOf(bot).some((b) => (b.callback_data || '').startsWith('pay:rk:')));
+  assert.ok(!/For a salary/.test(lastText(bot)));
+  await controller.handleMessage(bot, msg(AJEET, 'salary of the loaders'));
+  assert.match(lastText(bot), /bill or invoice/i, 'a contractor is not on the salary rule');
+});
+
+test('PAY-5: the receipt carries 🔔 Remind approvers and 📋 Status; the reminder re-sends the card and raises nothing; My requests offers it too', async () => {
+  reset(); NOTIFIED = [];
+  await registerApproved();
+  const bot = createFakeBot();
+  await toConfirm(bot, ABDUL, 45000, 'Transport to Idumota');
+  await skipBill(bot, ABDUL);
+  await controller.handleCallbackQuery(bot, cb('pay:submit', ABDUL));
+  const id = QUEUED[0].requestId;
+  const receipt = lastText(bot).replace(/\\/g, '');
+  assert.match(receipt, /^⏳ \*Sent for approval\*\n\n💰 ₦45,000 → Abdul\n📝 Transport to Idumota\n/);
+  assert.match(receipt, /You are told at each signature\._$/);
+  const kb = kbOf(bot);
+  assert.ok(kb.some((b) => b.callback_data === `apg:nudge:${id}`));
+  assert.ok(kb.some((b) => b.callback_data === `apg:st:${id}`));
+  assert.ok(kb.some((b) => b.callback_data === 'pay:start:mine'));
+
+  assert.equal(NOTIFIED.length, 1);
+  await controller.handleCallbackQuery(bot, cb(`apg:nudge:${id}`, ABDUL));
+  assert.equal(NOTIFIED.length, 2, 'the same card went out again');
+  assert.equal(NOTIFIED[1][1], id);
+  assert.match(NOTIFIED[1][6].prependNote, /^🔔 Abdul asks for a decision · waiting .* · reminder 1$/);
+  assert.equal(REQUESTS.length, 1, 'a reminder raises nothing');
+  assert.equal(QUEUED.length, 1);
+  assert.equal(QUEUED[0].actionJSON.nudges.length, 1);
+  // within the day a second tap only says so
+  await controller.handleCallbackQuery(bot, cb(`apg:nudge:${id}`, ABDUL));
+  assert.equal(NOTIFIED.length, 2);
+  const toast = bot.calls.filter((c) => c.method === 'answerCallbackQuery').pop();
+  assert.match(toast.args.opts.text, /^Already reminded .* You can remind again in 24h\.$/);
+
+  // 📋 My requests: who has signed, and the reminder chip for what is still waiting
+  QUEUED[0].actionJSON.signoffs = [{ id: AJEET, name: 'Ajeet', at: '2026-11-10T09:20:00.000Z' }];
+  await controller.handleCallbackQuery(bot, cb('act:payments', ABDUL));
+  await controller.handleCallbackQuery(bot, cb('pay:start:mine', ABDUL));
+  assert.match(lastText(bot), /🔏 1 signed — Ajeet/);
+  assert.ok(kbOf(bot).some((b) => b.callback_data === `apg:nudge:${id}` && /^🔔 Remind approvers · ₦45,000$/.test(b.text)));
+});

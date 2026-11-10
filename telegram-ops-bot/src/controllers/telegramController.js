@@ -7572,6 +7572,9 @@ const FLOW_CALLBACK_ROUTES = [
   // SESSION-FREE: the finance head taps them on a card that arrived hours
   // earlier, long after any flow session has expired.
   { prefixes: ['pay:'], handle: (bot, cq) => require('../flows/paymentFlow').handleCallback(bot, cq) },
+  // APG-1 — the approval gate's session-free chips: 🔔 Remind approvers,
+  // 📋 Status, ⧉ Reject as duplicate.
+  { prefixes: ['apg:'], handle: (bot, cq) => require('../services/approvalGate').handleCallback(bot, cq) },
   // People / HR flows.
   { prefixes: ['usr:'], handle: (bot, cq) => require('../flows/userAddFlow').handleCallback(bot, cq) },
   { prefixes: ['umg:'], handle: (bot, cq) => require('../flows/userManageFlow').handleCallback(bot, cq) },

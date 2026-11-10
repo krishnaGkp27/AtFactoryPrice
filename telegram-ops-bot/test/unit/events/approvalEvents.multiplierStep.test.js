@@ -340,7 +340,10 @@ test('approved reply, Outstanding line and requester card: bare, and they never 
 
   const edit = bot.callsTo('editMessageText').find((c) => c.args.opts.message_id === 77);
   assert.ok(edit, 'the requester card is edited in place');
-  assert.equal(edit.args.text, '✅ *Approved — ready to dispatch*\n\n👤 Customer: *Soldier Madam*\n📞 08012345678\nRef: ' + require('../../../src/services/approvalCards').shortRequestRef('R-REQ1'));
+  // APG-1 — the dispatcher's card names the admin who released it, 1 of 1.
+  const refTail = '\n\n👤 Customer: *Soldier Madam*\n📞 08012345678\nRef: ' + require('../../../src/services/approvalCards').shortRequestRef('R-REQ1');
+  assert.ok(edit.args.text.endsWith(refTail), edit.args.text);
+  assert.match(edit.args.text.slice(0, edit.args.text.length - refTail.length), /^✅ \*Approved by [^*_\n]+ · 1 of 1 — ready to dispatch\*$/);
   assert.ok(!/×|Customer copy|1,250|1250/.test(edit.args.text), 'no factor on the requester card');
 });
 

@@ -52,10 +52,23 @@
  *   pay:done:<id>            pay:dec:<id>        pay:proof:skip
  *   pay:wait:<i>             (re-send the finance card of queue item i)
  *   pay:back                 pay:cancel
+ *
+ * PAY-5 (owner's Go, 10-Nov-2026 — two identical ₦70,000 salary requests a
+ * second apart) — this door now raises through the approval gate (APG-1):
+ *   · Submit fires ONCE (the button goes at the tap, one request id per
+ *     confirm);
+ *   · a payment to the same account for the same amount is REFUSED while
+ *     one is open (waiting, or approved and unpaid) — the open one is
+ *     shown instead; an admin may ⧉ Send anyway, marked on every card;
+ *   · a salary is picked by chip with its MONTH, and one salary per
+ *     employee per month is allowed (💵 Salary advance is its own chip);
+ *   · the receipt carries 🔔 Remind approvers (once a day) and 📋 Status.
+ *   pay:rk:salary|advance    pay:mo:<YYYY-MM>    pay:force
  */
 
 const sessionStore = require('../utils/sessionStore');
-const { makeRenderer, mdEscape, rowsFor } = require('../utils/flowKit');
+const { makeRenderer, mdEscape, rowsFor, beginSubmit, endSubmit } = require('../utils/flowKit');
+const approvalGate = require('../services/approvalGate');
 const paymentService = require('../services/paymentService');
 const paymentCards = require('../services/paymentCards');
 const paymentAccountsRepo = require('../repositories/paymentAccountsRepository');
@@ -76,6 +89,9 @@ const logger = require('../utils/logger');
 
 const SESSION_TYPE = 'payment_flow';
 const NS = 'pay';
+// PAY-5 — what the queue cannot see (approved-but-unpaid, this month's
+// salary already paid) is this door's own knowledge: hand it to the gate.
+approvalGate.registerTwinSource('request_payment', (ctx) => paymentService.openTwinFor(ctx));
 const render = makeRenderer();
 const { backAndCancelRow, backRow, cancelRow, menuRow } = rowsFor(NS);
 
@@ -270,22 +286,17 @@ async function submitRegister(bot, chatId, userId) {
     return;
   }
 
-  const requestId = idGenerator.requestId();
+  // APG-1 — one confirm, one request: the flag stops a second tap while the
+  // sheet is being written, and the request rides the gate like every other.
+  if (!beginSubmit(session, userId)) return;
+  if (!r.requestId) { r.requestId = idGenerator.requestId(); sessionStore.set(userId, session); }
+  const requestId = r.requestId;
   try {
-    const saved = await paymentAccountsRepo.append({
-      owner_name: r.owner_name, owner_type: r.owner_type,
-      owner_telegram_id: r.owner_telegram_id,
-      account_number: r.number, bank: r.bank,
-      status: 'pending', registered_by: String(userId),
-      approval_request_id: requestId,
-    });
     const risk = await riskEvaluate.evaluate({ action: 'register_payment_account', userId });
-    await approvalQueueRepository.append({
-      requestId,
-      user: String(userId),
-      actionJSON: {
-        action: 'register_payment_account',
-        account_id: saved.account_id,
+    let saved = null;
+    const raised = await approvalGate.raise({
+      userId, action: 'register_payment_account', requestId,
+      payload: {
         owner_name: r.owner_name, owner_type: r.owner_type,
         account_number: r.number, bank: r.bank,
         // PAY-ID — the linked identity rides the row so the executor can
@@ -293,10 +304,24 @@ async function submitRegister(bot, chatId, userId) {
         owner_telegram_id: r.owner_telegram_id || '',
       },
       riskReason: risk.reason || 'dual_admin_required',
-      status: 'pending',
+      auditMeta: (aj) => ({ account_id: aj.account_id }),
+      prepare: async () => {
+        saved = await paymentAccountsRepo.append({
+          owner_name: r.owner_name, owner_type: r.owner_type,
+          owner_telegram_id: r.owner_telegram_id,
+          account_number: r.number, bank: r.bank,
+          status: 'pending', registered_by: String(userId),
+          approval_request_id: requestId,
+        });
+        return { account_id: saved.account_id };
+      },
     });
-    await auditLogRepository.append('approval_queued',
-      { requestId, action: 'register_payment_account', account_id: saved.account_id }, userId);
+    if (raised.duplicate || !saved) {
+      sessionStore.clear(userId);
+      await render(bot, chatId, userId, '⏳ *Already sent for approval.*',
+        [approvalGate.receiptRow(requestId), menuRow()]);
+      return;
+    }
 
     const label = await resolveName(userId);
     await approvalEvents.notifyAdminsApprovalRequest(
@@ -308,9 +333,11 @@ async function submitRegister(bot, chatId, userId) {
     await render(bot, chatId, userId,
       `⏳ *Sent for approval*\n\n🏦 ${mdEscape(r.bank)} ${mdEscape(r.number)}\n`
       + `👤 ${mdEscape(r.owner_name)}\n\n_You’ll be told when two admins have signed it._`,
-      [menuRow()]);
+      [approvalGate.receiptRow(requestId), menuRow()]);
   } catch (e) {
     logger.error(`paymentFlow.submitRegister: ${e.message}`);
+    const s2 = sessionStore.get(userId);
+    if (s2) endSubmit(s2, userId);
     await render(bot, chatId, userId, `⚠️ Could not submit: ${mdEscape(e.message)}`, [menuRow()]);
   }
 }
@@ -367,8 +394,99 @@ async function askReason(bot, chatId, userId, warn) {
     + `💸 *${mdEscape(a.owner_name)}*\n`
     + `🏦 ${mdEscape(a.bank)} ${mdEscape(a.account_number)} · ${mdEscape(paymentService.fmtNaira(session.req.amount))}\n\n`
     + '📝 *What is this payment for?*\n'
-    + 'Type a short reason — e.g. transport to Idumota, loading at the warehouse.',
-    [backAndCancelRow()]);
+    + 'Type a short reason — e.g. transport to Idumota, loading at the warehouse.'
+    + (a.owner_type === 'employee' ? '\nFor a salary, tap 💼 Salary or 💵 Salary advance.' : ''),
+    [
+      // PAY-5 — a salary is picked, not typed, so its month is on record.
+      ...(a.owner_type === 'employee' ? [[
+        { text: '💼 Salary', callback_data: `${NS}:rk:salary` },
+        { text: '💵 Salary advance', callback_data: `${NS}:rk:advance` },
+      ]] : []),
+      backAndCancelRow(),
+    ]);
+}
+
+/** PAY-5 — which month the salary (or advance) is for: last · this · next. */
+async function askSalaryMonth(bot, chatId, userId, kind) {
+  const session = sessionStore.get(userId);
+  const a = session.req.account;
+  session.req.reason_kind = kind === 'advance' ? 'salary_advance' : 'salary';
+  session.step = 'req_month';
+  sessionStore.set(userId, session);
+  const word = paymentService.SALARY_KINDS[session.req.reason_kind];
+  const choices = paymentService.periodChoices();
+  await render(bot, chatId, userId,
+    `💸 *${mdEscape(a.owner_name)}* · ${mdEscape(paymentService.fmtNaira(session.req.amount))}\n\n`
+    + `${kind === 'advance' ? '💵' : '💼'} *${word} — for which month?*`,
+    [
+      choices.map((c) => ({ text: paymentService.periodLabel(c), callback_data: `${NS}:mo:${c}` })),
+      backAndCancelRow(),
+    ]);
+}
+
+async function applySalaryMonth(bot, chatId, userId, period) {
+  const session = sessionStore.get(userId);
+  const r = session.req;
+  if (!r.reason_kind || !paymentService.periodChoices().includes(period)) {
+    await askReason(bot, chatId, userId, 'Pick the month again.');
+    return;
+  }
+  r.period = period;
+  r.reason = paymentService.salaryReason(r.reason_kind, period);
+  sessionStore.set(userId, session);
+  await askBill(bot, chatId, userId);
+}
+
+/** The business payload of a request-in-progress — what the gate compares. */
+function payloadOf(r) {
+  return {
+    payee_name: r.account.owner_name,
+    payee_type: r.account.owner_type,
+    amount_ngn: r.amount,
+    account_number: r.account.account_number,
+    bank: r.account.bank,
+    above_threshold: !!r.above,
+    reason: r.reason || '',
+    bill_file_id: r.bill_file_id || '',
+    ...(r.reason_kind ? { reason_kind: r.reason_kind, period: r.period || '' } : {}),
+  };
+}
+
+/**
+ * PAY-5 — the refusal: the request that is already open (or the salary
+ * already on record for that month), shown INSTEAD of raising a second.
+ */
+async function showTwin(bot, chatId, userId, twin) {
+  const session = sessionStore.get(userId);
+  const isAdmin = auth.isAdmin(userId);
+  if (session) {
+    session.step = 'req_twin';
+    session.req.twinRef = twin.requestId || '';
+    sessionStore.set(userId, session);
+  }
+  const k = paymentService.reasonKind((twin.aj && twin.aj.reason) || '');
+  const text = approvalGate.twinCardText(twin, {
+    heading: twin.kind === 'salary_period'
+      ? `💼 Salary for ${paymentService.periodLabel(k.period)} is already on record`
+      : '⏳ This request is already open',
+    raisedByName: await resolveName(twin.raisedBy),
+    required: twin.state === 'pending'
+      ? approvalGate.requiredFor({ user: twin.raisedBy, actionJSON: twin.aj }) : 0,
+    extra: isAdmin
+      ? 'As an admin you can send it anyway — it is marked ⧉ as a repeat on every card.'
+      : 'If this really is a second payment, ask an admin to raise it.',
+  });
+  const rows = [];
+  if (twin.requestId) {
+    rows.push([
+      { text: '📋 Open it', callback_data: `${approvalGate.NS}:st:${twin.requestId}` },
+      ...(twin.state === 'pending' && String(twin.raisedBy) === String(userId)
+        ? [{ text: '🔔 Remind approvers', callback_data: `${approvalGate.NS}:nudge:${twin.requestId}` }] : []),
+    ]);
+  }
+  if (isAdmin && session) rows.push([{ text: '⧉ Send anyway', callback_data: `${NS}:force` }]);
+  rows.push(session ? backAndCancelRow() : menuRow());
+  await render(bot, chatId, userId, mdEscape(text), rows);
 }
 
 async function askBill(bot, chatId, userId) {
@@ -386,6 +504,17 @@ async function showRequestConfirm(bot, chatId, userId) {
   const r = session.req;
   const above = await paymentService.isAboveThreshold(r.amount);
   r.above = above;
+  // PAY-5 — is the same payment already open? Asked BEFORE the Submit button
+  // exists, so the person learns it here and not after a wasted tap. An
+  // admin's ⧉ Send anyway skips the question for this one request.
+  if (!r.force) {
+    const twin = await approvalGate.findOpenTwin({ action: 'request_payment', payload: payloadOf(r), userId });
+    if (twin && twin.policy === 'refuse') {
+      sessionStore.set(userId, session);
+      await showTwin(bot, chatId, userId, twin);
+      return;
+    }
+  }
   session.step = 'req_confirm';
   sessionStore.set(userId, session);
   await render(bot, chatId, userId,
@@ -395,6 +524,7 @@ async function showRequestConfirm(bot, chatId, userId) {
     + `💰 *${mdEscape(paymentService.fmtNaira(r.amount))}*${above ? '    ⚠️ large payment' : ''}\n`
     + `${r.reason ? `📝 ${mdEscape(r.reason)}\n` : ''}`
     + `${r.bill_file_id ? '📎 Bill attached\n' : ''}`
+    + `${r.force ? `⧉ Repeat of ${mdEscape(require('../services/approvalProgress').ref(r.twinRef))} — you are sending it anyway\n` : ''}`
     + '\n_Two admins approve, then finance pays._',
     [[{ text: '✅ Submit for approval', callback_data: 'pay:submit' }], backAndCancelRow()]);
 }
@@ -402,54 +532,65 @@ async function showRequestConfirm(bot, chatId, userId) {
 async function submitRequest(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session || !session.req || !session.req.account) return;
+  // PAY-5 / APG-1 — one confirm, one request. The flag stops a second tap
+  // while the sheet is being written (the cause of the two ₦70,000 twins),
+  // and the button goes NOW, not after the slow work.
+  if (!beginSubmit(session, userId)) return;
   const r = session.req;
-  const requestId = idGenerator.requestId();
+  if (!r.requestId) { r.requestId = idGenerator.requestId(); sessionStore.set(userId, session); }
+  const requestId = r.requestId;
+  await render(bot, chatId, userId, '⏳ *Submitting for approval…*', []);
   try {
-    const saved = await paymentRequestsRepo.append({
-      payee_name: r.account.owner_name,
-      payee_type: r.account.owner_type,
-      account_id: r.account.account_id,
-      account_number: r.account.account_number,
-      bank: r.account.bank,
-      amount_ngn: r.amount,
-      above_threshold: r.above,
-      raised_by: String(userId),
-      approval_request_id: requestId,
-      status: 'pending_approval',
-      bill_file_id: r.bill_file_id || '',
-      // Owner ruling 10-Sep-2026: the sheet row is the complete record of
-      // an approved / paid request, so the reason lands in column S at
-      // raise. Postgres keeps its buffer + trail copy below, unchanged.
-      reason: r.reason || '',
-    });
-    const risk = await riskEvaluate.evaluate({ action: 'request_payment', userId, quantity: r.amount });
-    await approvalQueueRepository.append({
-      requestId,
-      user: String(userId),
-      actionJSON: {
-        action: 'request_payment',
-        payment_id: saved.payment_id,
-        payee_name: r.account.owner_name,
-        // Carried on the queue row so the inbox / reminder rebuild
-        // (approvalCards → paymentCards) prints the same card as notify time.
-        payee_type: r.account.owner_type,
-        amount_ngn: r.amount,
-        account_number: r.account.account_number,
-        bank: r.account.bank,
-        above_threshold: !!r.above,
-        // PAY-2 §1 — the reason and the bill ride the payload: every card
-        // rebuild reads it, and approvalEvents forwards the bill to admins.
-        reason: r.reason || '',
-        bill_file_id: r.bill_file_id || '',
-        sale_doc_file_id: undefined,
-      },
-      riskReason: risk.reason || 'dual_admin_required',
-      status: 'pending',
-    });
-    await auditLogRepository.append('approval_queued',
-      { requestId, action: 'request_payment', payment_id: saved.payment_id, amount: r.amount }, userId);
-
     const label = await resolveName(userId);
+    const risk = await riskEvaluate.evaluate({ action: 'request_payment', userId, quantity: r.amount });
+    const force = !!r.force && auth.isAdmin(userId);
+    let saved = null;
+    const raised = await approvalGate.raise({
+      userId, action: 'request_payment', requestId,
+      // PAY-2 §1 — the reason and the bill ride the payload: every card
+      // rebuild reads it, and approvalEvents forwards the bill to admins.
+      payload: { ...payloadOf(r), ...(force ? { sentAnywayName: label } : {}) },
+      riskReason: risk.reason || 'dual_admin_required',
+      force, forcedBy: String(userId),
+      auditMeta: (aj) => ({ payment_id: aj.payment_id, amount: r.amount }),
+      // The PaymentRequests row is written only once the twin check has
+      // passed — a refused request leaves nothing on any sheet.
+      prepare: async () => {
+        saved = await paymentRequestsRepo.append({
+          payee_name: r.account.owner_name,
+          payee_type: r.account.owner_type,
+          account_id: r.account.account_id,
+          account_number: r.account.account_number,
+          bank: r.account.bank,
+          amount_ngn: r.amount,
+          above_threshold: r.above,
+          raised_by: String(userId),
+          approval_request_id: requestId,
+          status: 'pending_approval',
+          bill_file_id: r.bill_file_id || '',
+          // Owner ruling 10-Sep-2026: the sheet row is the complete record of
+          // an approved / paid request, so the reason lands in column S at
+          // raise. Postgres keeps its buffer + trail copy below, unchanged.
+          reason: r.reason || '',
+        });
+        return { payment_id: saved.payment_id };
+      },
+    });
+    if (!raised.ok) {
+      // Someone raised the same payment between the confirm card and the tap.
+      const s2 = sessionStore.get(userId);
+      if (s2) endSubmit(s2, userId);
+      await showTwin(bot, chatId, userId, raised.twin);
+      return;
+    }
+    if (raised.duplicate || !saved) {
+      // This very confirm is already queued — the admins have their card.
+      sessionStore.clear(userId);
+      await render(bot, chatId, userId, '⏳ *Already sent for approval.*',
+        [approvalGate.receiptRow(requestId), menuRow()]);
+      return;
+    }
+
     // PAY-2 §1 — Postgres AFTER the sheet writes, fail-open: a hiccup here
     // never blocks a request, and the payload copy is the fallback.
     await pgSafe(() => paymentReasonsRepository.record({
@@ -470,17 +611,25 @@ async function submitRequest(bot, chatId, userId) {
         ...saved, payee_name: r.account.owner_name, payee_type: r.account.owner_type,
         account_number: r.account.account_number, bank: r.account.bank,
         amount_ngn: r.amount, above_threshold: r.above, reason: r.reason || '',
+        twinOf: raised.actionJSON.twinOf, sentAnywayName: raised.actionJSON.sentAnywayName,
       }),
       risk.reason, auth.isAdmin(userId) ? String(userId) : undefined,
     );
     sessionStore.clear(userId);
     await render(bot, chatId, userId,
       `⏳ *Sent for approval*\n\n💰 ${mdEscape(paymentService.fmtNaira(r.amount))} → `
-      + `${mdEscape(r.account.owner_name)}\n\`${mdEscape(saved.payment_id)}\`\n\n`
-      + '_Two admins sign, then finance pays and marks it done._',
-      [menuRow()]);
+      + `${mdEscape(r.account.owner_name)}\n`
+      + `${r.reason ? `📝 ${mdEscape(r.reason)}\n` : ''}`
+      + `\`${mdEscape(saved.payment_id)}\`\n\n`
+      + '_Two admins sign, then finance pays and marks it done. You are told at each signature._',
+      // PAY-5 — the legitimate push: the same card to the admins who have
+      // not signed, once a day. Never a second request.
+      [approvalGate.receiptRow(requestId), [{ text: '📋 My requests', callback_data: `${NS}:start:mine` }], menuRow()]);
   } catch (e) {
     logger.error(`paymentFlow.submitRequest: ${e.message}`);
+    // A FAILED submit re-opens the door so the person can retry.
+    const s2 = sessionStore.get(userId);
+    if (s2) endSubmit(s2, userId);
     await render(bot, chatId, userId, `⚠️ Could not submit: ${mdEscape(e.message)}`, [menuRow()]);
   }
 }
@@ -504,15 +653,38 @@ async function showMine(bot, chatId, userId) {
   }
   const shown = rows.slice(0, 12);
   const reasons = await paymentService.reasonsFor(shown);
+  // PAY-5 — who has signed a waiting request, read off its queue row.
+  const signedBy = new Map();
+  try {
+    for (const q of await approvalQueueRepository.getAllPending()) {
+      const trail = require('../services/approvalProgress').trailOf(q.actionJSON);
+      if (trail.length) signedBy.set(String(q.requestId), trail);
+    }
+  } catch (_) { /* the list stands without the signature line */ }
   const lines = ['📋 *My requests*', ''];
+  const remind = [];
   for (const p of shown) {
     const reason = reasons.get(String(p.payment_id)) || '';
     lines.push(`${STATUS_ICON[p.status] || '•'} ${mdEscape(paymentService.fmtNaira(p.amount_ngn))} — ${mdEscape(STATUS_WORD[p.status] || p.status)}`
       + (reason ? ` · 📝 ${mdEscape(reason)}` : ''));
     lines.push(`   _${mdEscape(fmtDate.short ? fmtDate.short(p.raised_at) : p.raised_at)}_${p.decline_reason ? ` · ${mdEscape(p.decline_reason)}` : ''}`);
+    if (p.status === 'pending_approval' && p.approval_request_id) {
+      const trail = signedBy.get(String(p.approval_request_id)) || [];
+      if (trail.length) {
+        const names = [];
+        for (const t of trail) names.push(t.name || await resolveName(t.id));
+        lines.push(`   🔏 ${trail.length} signed — ${mdEscape(names.join(', '))}`);
+      }
+      if (remind.length < 3) {
+        remind.push([{
+          text: `🔔 Remind approvers · ${paymentService.fmtNaira(p.amount_ngn)}`,
+          callback_data: `${approvalGate.NS}:nudge:${p.approval_request_id}`,
+        }]);
+      }
+    }
   }
   if (rows.length > 12) lines.push(`\n_…and ${rows.length - 12} older._`);
-  await render(bot, chatId, userId, lines.join('\n'), [menuRow()]);
+  await render(bot, chatId, userId, lines.join('\n'), [...remind, menuRow()]);
 }
 
 /* ── execution: Mark Done / Decline ──────────────────────────────────── */
@@ -910,6 +1082,15 @@ async function handleText(bot, chatId, userId, text) {
       await askReason(bot, chatId, userId, v.reason);
       return true;
     }
+    // PAY-5 — a typed "salary" carries no month, so one-per-month could not
+    // be checked: an employee's salary is picked with the chip.
+    if (session.req.account && session.req.account.owner_type === 'employee'
+      && paymentService.looksLikeSalary(v.value)) {
+      await askReason(bot, chatId, userId, 'A salary is picked with the chips below, so its month is on record.');
+      return true;
+    }
+    delete session.req.reason_kind;
+    delete session.req.period;
     session.req.reason = v.value;
     sessionStore.set(userId, session);
     await askBill(bot, chatId, userId);
@@ -1006,6 +1187,24 @@ async function handleCallback(bot, callbackQuery) {
   }
 
   if (rest === 'bill:skip') { await showRequestConfirm(bot, chatId, userId); return true; }
+  // PAY-5 — salary chips, the month, and an admin's ⧉ Send anyway.
+  if (rest === 'rk:salary' || rest === 'rk:advance') {
+    if (!session.req || !session.req.account) { await render(bot, chatId, userId, '_That screen expired._', [menuRow()]); return true; }
+    await askSalaryMonth(bot, chatId, userId, rest.slice(3));
+    return true;
+  }
+  if (rest.startsWith('mo:')) {
+    if (!session.req || !session.req.account) { await render(bot, chatId, userId, '_That screen expired._', [menuRow()]); return true; }
+    await applySalaryMonth(bot, chatId, userId, rest.slice(3));
+    return true;
+  }
+  if (rest === 'force') {
+    if (!auth.isAdmin(userId) || !session.req || !session.req.account) { await render(bot, chatId, userId, '_Only an admin can send a repeat._', [menuRow()]); return true; }
+    session.req.force = true;
+    sessionStore.set(userId, session);
+    await showRequestConfirm(bot, chatId, userId);
+    return true;
+  }
   if (rest === 'proof:skip') { await finishDone(bot, chatId, userId, null); return true; }
   if (rest.startsWith('wait:')) { await reopenWaiting(bot, chatId, userId, parseInt(rest.slice(5), 10)); return true; }
 

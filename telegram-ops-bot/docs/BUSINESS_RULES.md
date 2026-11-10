@@ -1059,6 +1059,49 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
   an unknown first word gets the chips card and is counted (`nlp_off`, first 40
   characters). No typed payment line (01-Nov ruling stands). Spec §8.
 
+## 21 · One gate for every request; the same thing is not raised twice
+
+**Locked 10-Nov-2026 (owner, APG-1 + PAY-5).**
+
+> "There are multiple salary requests being raised by the employee. It
+> should not happen with them asking for the same approval again and again."
+> — "I want to build a strong foundation on which all other approvals also
+> sit. Otherwise every gate and channel will have its own method / path."
+> — "increase the reminder hours from 4 to a day. Everything else looks good
+> with twin rules, salary, and scope." — "make sure that the requester …
+> gets the notification back as and when approved by the admin, one by one,
+> with the name and number of approvers required."
+
+- **Every new request is raised through the approval gate**
+  (`approvalGate.raise`) — never by writing the queue directly. Existing
+  doors move there one commit at a time; the smoke check S-APG stops any new
+  door from raising outside it.
+- **A request type states its own rule in one place**
+  (`approvalRegistry`): what makes two of it the same, and whether a twin is
+  refused, flagged or ignored. **The default is flag**: admins see
+  ⚠️ Possible duplicate, nothing is refused — refusing by default could
+  block a genuine repeat order. A door refuses only once the owner has
+  ruled for it.
+- **Payments (ruled):** the same account for the same amount is refused
+  while one is open — waiting on approval, or approved and not yet paid —
+  whoever raised it. The open request is shown instead. An admin may send
+  it anyway; it is then marked ⧉ as a repeat on every card.
+- **Salary (ruled):** picked by chip with its month; one salary per
+  employee per month, a paid one included. A salary advance is its own
+  chip. A typed "salary" is sent to the chip.
+- **Submit fires once** on a gate door: the button goes at the tap and one
+  confirm is one request.
+- **The requester pushes with 🔔 Remind approvers, not with a second
+  request**: the same card to the admins who have not signed, once a day
+  (Settings `REQUEST_NUDGE_HOURS`).
+- **The requester is told at every signature**, by name and time, with the
+  count the request needs (`1 of 2`, `2 of 2`, `1 of 1`), and who rejected
+  it and — for a duplicate — which request is still open.
+- **Who signs is unchanged**: one admin or two stays with the policy lists
+  (§8, §13); the gate does not decide or execute.
+- Valve: Settings `APPROVAL_TWIN_GUARD = 0` stops every refusal (the flag
+  stays), live within the settings cache.
+
 ## Incident log (why these rules exist)
 
 | Date | Incident | Rule born |
@@ -1100,5 +1143,6 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
 | 30-Oct-2026 | Customers by REGION (§19): 👤 Customer Details opens on region chips (Lagos = Lagos + IDUMOTA, Kano = Kano office — from the Locations register; largest first), then a list paged eight a page with ◀ Back / Next ▶ (no See all); `🆕 Prospects`, `❔ Not placed yet` (until it empties), `🌐 All customers` for admins; an employee lands straight in their own region and can see no other; a prospect is tagged with the adding employee's store (provisional) at ➕ Add Contact and re-placed from the card; the supply request's `🌐 All customers` is the region for employees. Owner: "Go." | CRM-R1 (`src/services/customerRegion.js`; `specs/CRM-R1_CUSTOMER_REGIONS.md`) |
 | 31-Oct-2026 | Abdul's typed transfer line bounced four times as "Need more info" — the intent parser's OFFLINE fallback, OpenAI had stopped answering, the failure swallowed with no log; the typed transfer line was the one typed door still riding the provider (TRF-23 read it locally the same day). Owner, 01-Nov: no sheet read or write through the AI model at all — script lines or the chips card | §20 (TXT-1: `src/utils/typedRouter.js`; `specs/TXT-1_NO_AI_TEXT.md`) |
 | 04-Nov-2026 | The bill check on a sale card no longer needs a paid vision API: `OCR_PROVIDER=local` (or `auto`, which tries it first) reads the bill in-process — a PDF's text layer exactly, a photo-per-page PDF or a photo through Tesseract. Printed numbers read well; HANDWRITING reads poorly and is reported as unreadable or marked off, never guessed (the 75% marks-off rule stands). The card says which reader marked it (`🔬 Bill check (local):`). No sheet, no knob — two Railway variables, no deploy. Owner: "Since I am not integrating the OpenAI API for now … what other different permanent solution"; "Final go". | VRF-6 (`src/services/vision/local.js`; `specs/VRF-6_LOCAL_BILL_READER.md`) |
+| 10-Nov-2026 | Two identical ₦70,000 salary requests from one employee reached the admins a second apart: the payment door's Submit stayed tappable while the sheet was written, and the duplicate warning could not see payments (each carries its own payment id). Owner: one foundation under every approval, the same payment not raised twice, salary by month, a daily reminder instead of a re-raise, the requester told at every signature | §21 (APG-1 + PAY-5: `src/services/approvalGate.js`, `approvalRegistry.js`, `approvalProgress.js`; `specs/APG-1_APPROVAL_GATE.md`) |
 | 04-Nov-2026 | On a sale card a bale the seller loaded WHOLE (a bare typed number, 📦 Take whole bale) and still whole at submit is ONE line and one B (`481 · 150 yd`, `10B · 1,500 yd`), whichever door raised it; a than dropped from it un-wholes the bale (its thans print one per line, `9B + 4t`); a bale typed as `6189/5` stays a than line; a flagged than keeps its bale than by than. The request still carries every than; nothing in execution changes. Owner, on Abdul's 50-line card: "It is not the same way it was coming before"; layout shown; "Go". | SELL-T3e (`approvalCards.foldWholeBales`; `specs/SELL-T3_TYPED_THAN_LIST.md`) |
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

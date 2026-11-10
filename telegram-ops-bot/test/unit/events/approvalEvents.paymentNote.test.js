@@ -70,8 +70,11 @@ test('PAY-2 §2 C: the executor note reaches the deciding admin AND the requeste
   assert.ok(reply.endsWith(`\n${NOTE}`), `note appended to the admin reply, got: ${reply}`);
   const employee = textsTo(bot, EMPLOYEE);
   assert.equal(employee.length, 1, 'one notice to the requester');
-  assert.ok(employee[0].startsWith('✅ Your request'), employee[0]);
-  assert.ok(employee[0].endsWith(`\n${NOTE}`), `note appended to the requester notice, got: ${employee[0]}`);
+  // APG-1 — the requester's closing card: the count, every signer, then the
+  // executor's note, then the reference.
+  assert.ok(employee[0].startsWith('✅ Approved · 2 of 2\n💳 Payment request\n'), employee[0]);
+  assert.ok(employee[0].endsWith(`\n${NOTE}\nRef R-REQP`), `note rides the requester card, got: ${employee[0]}`);
+  assert.ok(!/Changes applied/.test(employee[0]), 'the executor note replaces the bare sentence');
   // The notice is sent without parse_mode — a payee named a_b or *x* can't break it.
   const sent = bot.calls.find((c) => c.method === 'sendMessage' && String(c.args.chatId) === EMPLOYEE);
   assert.equal(sent.args.opts && sent.args.opts.parse_mode, undefined);
@@ -85,7 +88,9 @@ test('PAY-2 §2 C: no note → both messages unchanged (no dangling newline)', a
   await approvalEvents.handleApprovalCallback(bot, cbq(ADMIN_2, 'REQ-Q'), 'approve');
   const reply = textsTo(bot, ADMIN_2).find((t) => /approved by John/.test(t));
   assert.equal(reply, '✅ Request REQ-Q approved by John. Changes applied.');
-  assert.equal(textsTo(bot, EMPLOYEE)[0], '✅ Your request R-REQQ has been approved by admin. Changes applied.');
+  // APG-1 — one admin was needed and is named, with the time they signed.
+  assert.match(textsTo(bot, EMPLOYEE)[0],
+    /^✅ Approved · 1 of 1\nAdd user\n✅ 888 · \d{2}-[A-Z][a-z]{2} \d{2}:\d{2}\nChanges applied\.\nRef R-REQQ$/);
 });
 
 test('PAY-2 §2 C: the note rides beside the RET-3 credit tail, credit first', async () => {

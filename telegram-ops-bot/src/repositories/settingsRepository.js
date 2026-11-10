@@ -113,6 +113,16 @@ const DEFAULTS = {
   // for one admin's ✅ before the bales flip to available; 0 = the receipt
   // applies at once, as before (an emergency valve, not a feature).
   TRANSFER_RECEIPT_REVIEW: 1,
+  // APG-1 (owner, 10-Nov-2026) — hours between two 🔔 Remind approvers
+  // taps on ONE request ("increase the reminder hours from 4 to a day").
+  // The requester's push re-sends the same card to the admins who have not
+  // signed; it never raises anything new. 0 switches the button off.
+  REQUEST_NUDGE_HOURS: 24,
+  // APG-1 — 1 = a door refuses a request whose twin is already open (by the
+  // type's rule in approvalRegistry; payments: same account + same amount);
+  // 0 = nothing is refused, admin cards keep their ⚠️ Possible duplicate
+  // line. An emergency valve, live within the settings cache, no deploy.
+  APPROVAL_TWIN_GUARD: 1,
   // TXT-1 (owner, 01-Nov-2026) — may the AI read a typed sentence for the
   // sheet? 0 = never: the three local script lines (sell / return /
   // transfer) or the chips card, OpenAI is not called; `reads` = the AI

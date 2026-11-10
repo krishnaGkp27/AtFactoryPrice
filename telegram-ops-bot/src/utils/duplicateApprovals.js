@@ -35,6 +35,9 @@ const DEFAULT_WINDOW_MINUTES = 10;
 const VOLATILE_KEYS = new Set([
   'requestId', 'request_id',
   'approvals', 'approvedByAdmin', 'approvedBy',
+  // APG-1 — the signature trail, the requester's reminders and the "sent
+  // anyway" mark are bookkeeping about a request, never part of what it asks.
+  'signoffs', 'nudges', 'twinOf', 'sentAnywayBy', 'rejectNote',
   'stage', 'dispatchedAt', 'bales', 'dispatched', 'short',
   'createdAt', 'created_at', 'timestamp', 'ts', 'updatedAt',
   'sale_doc_file_id', 'sale_doc_file_unique_id',
@@ -75,7 +78,20 @@ function fingerprintOf(row) {
   const aj = (row && row.actionJSON) || {};
   const action = String(aj.action || '');
   const user = String((row && row.user) || '');
+  // APG-1 — a request type may DECLARE what makes two of it the same thing
+  // (a payment: account + amount). Without that, every payment request is
+  // unique by its own payment id and two identical ones never matched —
+  // which is how two ₦70,000 salary cards reached the admins unflagged.
+  const registry = require('../services/approvalRegistry');
+  const key = registry.twinKeyOf(aj);
+  if (key) return `${registry.entryFor(action).twin.anyRequester ? '*' : user}|${action}|k:${key}`;
   return `${user}|${action}|${canonical(aj)}`;
+}
+
+/** APG-1 — how a row's type wants twins judged: { policy, scope }. */
+function twinRuleOf(row) {
+  const aj = (row && row.actionJSON) || {};
+  return require('../services/approvalRegistry').entryFor(aj.action).twin;
 }
 
 /** Parse a timestamp; NaN when absent or malformed. */
@@ -103,6 +119,7 @@ function findDuplicateGroups(rows, windowMinutes = DEFAULT_WINDOW_MINUTES) {
   for (const r of Array.isArray(rows) ? rows : []) {
     if (!r) continue;
     if (!isFinite(timeOf(r))) continue; // undateable → never a duplicate
+    if (twinRuleOf(r).policy === 'off') continue; // APG-1 — the type opted out
     const p = fingerprintOf(r);
     if (!byPrint.has(p)) byPrint.set(p, []);
     byPrint.get(p).push(r);
@@ -112,9 +129,12 @@ function findDuplicateGroups(rows, windowMinutes = DEFAULT_WINDOW_MINUTES) {
   for (const list of byPrint.values()) {
     if (list.length < 2) continue;
     const sorted = [...list].sort((a, b) => timeOf(a) - timeOf(b));
+    // APG-1 — scope 'open': twins for as long as both are open, however far
+    // apart they were raised (rows handed in are the PENDING ones).
+    const gapMs = twinRuleOf(sorted[0]).scope === 'open' ? Infinity : windowMs;
     let run = [sorted[0]];
     for (let i = 1; i < sorted.length; i += 1) {
-      if (timeOf(sorted[i]) - timeOf(sorted[i - 1]) <= windowMs) {
+      if (timeOf(sorted[i]) - timeOf(sorted[i - 1]) <= gapMs) {
         run.push(sorted[i]);
       } else {
         if (run.length > 1) groups.push(run);

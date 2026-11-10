@@ -1000,7 +1000,7 @@ async function renderItem(bot, chatId, userId, idx) {
     const group = dupIdx.get(String(item.requestId));
     if (group && group.length > 1) {
       const others = group.filter((g) => String(g.requestId) !== String(item.requestId));
-      dupNote = `\n\n⧉ *${group.length} identical requests* were queued within minutes of each other.\n`
+      dupNote = `\n\n⧉ *${group.length} identical requests* are open at the same time.\n`
         + `_Approve ONE — approving more applies this ${actionLabel(item)} ${group.length} times._\n`
         + `_Others: ${others.map((o) => approvalCards.shortRequestRef(o.requestId)).join(', ')}_`;
     }
@@ -1059,7 +1059,10 @@ async function renderItem(bot, chatId, userId, idx) {
   // APC-1 Phase D — decision chips carry the requestId, never a list index:
   // the tap acts on the request shown on THIS card, however stale the list.
   let decisionRows = [[{ text: '✅ Approve', callback_data: `abx:ok:${item.requestId}` },
-    { text: '❌ Reject', callback_data: `abx:no:${item.requestId}` }]];
+    { text: '❌ Reject', callback_data: `abx:no:${item.requestId}` }],
+  // APG-1 — a flagged twin is cleared in one tap; the requester is told
+  // which request is still open.
+  ...(dupNote ? [[{ text: '⧉ Reject as duplicate', callback_data: `apg:dup:${item.requestId}` }]] : [])];
   try {
     const { allItemsGone, SALE_ACTIONS } = require('../services/saleStockCheck');
     const aj = item.actionJSON || {};

@@ -187,6 +187,28 @@ async function updateRequesterCard(bot, item, requestId, requestingUser, headlin
   await notifyEmployee(bot, requestingUser, requestId, text.replace(/[*`]/g, ''));
 }
 
+/**
+ * APG-1 — the requester's closing card for an approval: every signer by
+ * name and time (the stored trail plus the admin who just released it),
+ * the count the request needed, then `tail` (what the approval did).
+ * Plain text; a name that cannot be resolved falls back to the id.
+ */
+async function requesterApprovedCard(bot, requestId, item, adminId, tail) {
+  const progressMod = require('../services/approvalProgress');
+  const aj = (item && item.actionJSON) || {};
+  const trail = progressMod.trailOf(aj);
+  const approvalCards = require('../services/approvalCards');
+  for (const s of trail) {
+    if (!s.name && s.id) {
+      try { s.name = await approvalCards.resolveUserLabel(s.id, bot); } catch (_) { /* id stands */ }
+    }
+  }
+  let finalName = '';
+  try { finalName = await require('../services/approverStamp').labelFor({ actorId: adminId, bot }); } catch (_) { /* id stands */ }
+  if (adminId && !trail.some((s) => String(s.id) === String(adminId))) trail.push(progressMod.signoff(adminId, finalName));
+  return progressMod.buildCard({ state: 'approved', requestId, aj, required: trail.length, signoffs: trail, tail });
+}
+
 async function notifyEmployee(bot, requestingUser, requestId, message) {
   let userId = requestingUser;
   if (!userId) {
@@ -1409,8 +1431,13 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
         await notifyEmployee(bot, requestingUser, requestId,
           `⚠️ Your request ${shortRequestRef(requestId)} was approved, but only ${rep.appliedPkgCount} of ${rep.requestedItems} ${balesWordMsg} could be applied. ${rep.failedItems.length} item(s) were stale/invalid and skipped. Please check with admin.${partialTail}`);
       } else {
+        // APG-1 — the approver is named on the dispatcher's card too.
+        let saleApprover = '';
+        try { saleApprover = await require('../services/approverStamp').labelFor({ actorId: adminId, bot }); } catch (_) { /* unnamed */ }
+        // The headline is Markdown: a name must not open a span of its own.
+        saleApprover = String(saleApprover || '').replace(/[*_`[\]]/g, '');
         await updateRequesterCard(bot, item, requestId, requestingUser,
-          '✅ *Approved — ready to dispatch*');
+          `✅ *Approved${saleApprover ? ` by ${saleApprover}` : ''} · 1 of 1 — ready to dispatch*`);
       }
       const customer = item?.actionJSON?.customer || item?.actionJSON?.customerName;
       if (customer) {
@@ -1862,12 +1889,17 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
       dupeLine = `⚠️ *Possible duplicate* — same request also pending as ${refs}\\. Approve ONE, reject the rest\\.\n\n`;
     }
   } catch (_) { /* the flag is best-effort; the card must always send */ }
+  // APG-1 — the gate's 🔔 reminder goes only to admins who have not signed.
+  const excludeIds = new Set((opts && Array.isArray(opts.excludeIds) ? opts.excludeIds : []).map(String));
   const text = `${noteLine}${dupeLine}🔔 *Approval required*\n\nRef: \`${requestId}\`\nFrom: ${esc(userLabel)}\n\n${esc(actionSummary)}\n\n_${esc(shortWhy)}_\n\nUse buttons below to approve or reject\\.`;
   // CNET-2 — a caller may hand the card a routing keyboard (the add-contact
   // destination chips); everything else keeps the standard pair.
   const keyboard = (opts && opts.keyboard) || {
     inline_keyboard: [
       [{ text: '✅ Approve', callback_data: `approve:${requestId}` }, { text: '❌ Reject', callback_data: `reject:${requestId}` }],
+      // APG-1 — a flagged twin is cleared in ONE tap: the requester is told
+      // which request is still open, no reason to type.
+      ...(dupeLine ? [[{ text: '⧉ Reject as duplicate', callback_data: `apg:dup:${requestId}` }]] : []),
     ],
   };
   // APU-1: report delivery so callers can tell the requester when a queued
@@ -1876,6 +1908,7 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
   let failed = 0;
   for (const adminId of config.access.adminIds) {
     if (excludeUserId && String(adminId) === String(excludeUserId)) continue;
+    if (excludeIds.has(String(adminId))) continue;
     // Best-effort photo preview (e.g. for design_asset_upload). Never blocks the text notification.
     if (opts && opts.previewPhoto) {
       try {
@@ -2075,8 +2108,20 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
           action: actName, requesterIsAdmin, adminCount,
         });
         if (prior.length + 1 < required) {
+          // APR-1 / APG-1 — name the signature: the second admin sees whose
+          // they are joining, and the requester is told who has acted. The
+          // name and the time ride the row (`signoffs`) beside the ids, so
+          // the final card can list every signer. Naming must never cost
+          // the sign-off: a failed lookup records the id alone.
+          let signerLabel = '';
+          try {
+            signerLabel = await require('../services/approverStamp').labelFor({ actorId: adminId, bot });
+          } catch (_) { /* id alone */ }
+          const progressMod = require('../services/approvalProgress');
+          const trail = [...progressMod.trailOf(item.actionJSON), progressMod.signoff(adminId, signerLabel)];
           await approvalQueueRepository.updateActionJSON(requestId, {
             approvals: [...prior, adminId],
+            signoffs: trail,
           });
           try {
             const auditLogRepository = require('../repositories/auditLogRepository');
@@ -2096,20 +2141,16 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
               message_id: callbackQuery.message.message_id,
             });
           } catch (_) { /* stale card; not fatal */ }
-          // APR-1 — name the signature so the second admin knows whose they
-          // are joining, and the requester knows who has acted.
-          let signerLabel = '';
-          try {
-            signerLabel = await require('../services/approverStamp').labelFor({ actorId: adminId, bot });
-          } catch (_) { /* naming must never cost the sign-off */ }
-          const signedBy = signerLabel ? ` — signed by ${signerLabel}` : '';
           try {
             await bot.sendMessage(callbackQuery.message.chat.id,
               `🔏 Request ${requestId}: your approval is recorded (1 of ${required}). Waiting for a second admin.`);
           } catch (_) { /* chat unreachable */ }
+          // APG-1 (owner, 10-Nov-2026) — the requester is told at EVERY
+          // signature: who signed, when, and how many the request needs.
           try {
-            await notifyEmployee(bot, requestingUser, requestId,
-              `🔏 Your request (${requestId}) has 1 of ${required} admin approvals${signedBy}. One more to go.`);
+            await notifyEmployee(bot, requestingUser, requestId, progressMod.buildCard({
+              state: 'signed', requestId, aj: item.actionJSON, required, signoffs: trail,
+            }));
           } catch (_) { /* best-effort */ }
           // Ping the remaining env admins so the request doesn't stall
           // silently (sheet-cache admins still have live cards; best-effort).
@@ -2228,7 +2269,16 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
         // payment, and that it is now with finance) rides the same way.
         const noteTail = result.note ? `\n${result.note}` : '';
         await bot.sendMessage(chatIdCb, approvedMsg + creditTail + noteTail);
-        await notifyEmployee(bot, requestingUser, requestId, `✅ Your request ${shortRequestRef(requestId)} has been approved by admin. Changes applied.${creditTail}${noteTail}`);
+        // APG-1 — the requester's closing card: every signer by name and
+        // time, the count the request needed, then what the approval did.
+        await notifyEmployee(bot, requestingUser, requestId,
+          await requesterApprovedCard(bot, requestId, item, adminId, [
+            // The executor's own closing line (a credit, "now with finance")
+            // says what happened; the bare sentence is for when it has none.
+            erpFails.length ? 'Applied — some book entries need an admin\'s attention.'
+              : ((result.creditNote || result.note) ? '' : 'Changes applied.'),
+            result.creditNote || '', result.note || '',
+          ].filter(Boolean).join('\n')));
 
         // CAT-C1 — a container landed with designs lacking fresh catalogue
         // photos (shades differ per shipment): ONE checklist card to every
@@ -2324,7 +2374,17 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
       const result = await inventoryService.rejectApproval(requestId, adminId);
       if (result.ok) {
         await bot.sendMessage(chatIdCb, `❌ Request ${requestId} rejected.`);
-        await notifyEmployee(bot, requestingUser, requestId, `❌ Your request ${shortRequestRef(requestId)} has been rejected by admin.`);
+        // APG-1 — named and dated; a one-tap duplicate rejection carries
+        // which request is still open (`rejectNote`, stamped by the gate).
+        let rejecter = '';
+        try { rejecter = await require('../services/approverStamp').labelFor({ actorId: adminId, bot }); } catch (_) { /* unnamed */ }
+        const progressRej = require('../services/approvalProgress');
+        await notifyEmployee(bot, requestingUser, requestId, progressRej.buildCard({
+          state: 'rejected', requestId, aj: (item && item.actionJSON) || {},
+          signoffs: progressRej.trailOf(item && item.actionJSON),
+          by: rejecter, at: new Date().toISOString(),
+          note: (item && item.actionJSON && item.actionJSON.rejectNote) || '',
+        }));
       } else {
         await bot.sendMessage(chatIdCb, `⚠️ Rejection failed: ${result.message || 'Unknown error'}`);
       }

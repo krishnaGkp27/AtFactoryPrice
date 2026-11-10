@@ -94,6 +94,10 @@ function buildApprovalSummary(pay) {
   if (pay.reason) out.push(`Reason: ${pay.reason}`);
   if (pay.above_threshold) out.push('⚠️ LARGE PAYMENT — above the threshold');
   if (pay.bill_file_id) out.push('Bill: attached');
+  // PAY-5 — an admin sent this although its twin is open: every card says so.
+  if (pay.twinOf) {
+    out.push(`⧉ Repeat of ${require('./approvalProgress').ref(pay.twinOf)} — sent anyway${pay.sentAnywayName ? ` by ${pay.sentAnywayName}` : ''}`);
+  }
   return out.join('\n');
 }
 
