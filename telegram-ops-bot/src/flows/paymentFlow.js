@@ -507,12 +507,20 @@ async function showRequestConfirm(bot, chatId, userId) {
   // PAY-5 — is the same payment already open? Asked BEFORE the Submit button
   // exists, so the person learns it here and not after a wasted tap. An
   // admin's ⧉ Send anyway skips the question for this one request.
+  r.twinHeadsUp = '';
   if (!r.force) {
     const twin = await approvalGate.findOpenTwin({ action: 'request_payment', payload: payloadOf(r), userId });
-    if (twin && twin.policy === 'refuse') {
+    if (twin && twin.refused) {
       sessionStore.set(userId, session);
       await showTwin(bot, chatId, userId, twin);
       return;
+    }
+    // Owner, 11-Nov-2026: a payment someone ELSE already raised for this
+    // account, name and amount is not refused — "the admin will be
+    // notified". The requester is told so before they submit.
+    if (twin) {
+      r.twinHeadsUp = `⚠️ The same payment is already open (${require('../services/approvalProgress').ref(twin.requestId)}, raised by `
+        + `${await resolveName(twin.raisedBy)}). Yours will reach the admins marked as a possible duplicate.`;
     }
   }
   session.step = 'req_confirm';
@@ -525,6 +533,7 @@ async function showRequestConfirm(bot, chatId, userId) {
     + `${r.reason ? `📝 ${mdEscape(r.reason)}\n` : ''}`
     + `${r.bill_file_id ? '📎 Bill attached\n' : ''}`
     + `${r.force ? `⧉ Repeat of ${mdEscape(require('../services/approvalProgress').ref(r.twinRef))} — you are sending it anyway\n` : ''}`
+    + `${r.twinHeadsUp ? `${mdEscape(r.twinHeadsUp)}\n` : ''}`
     + '\n_Two admins approve, then finance pays._',
     [[{ text: '✅ Submit for approval', callback_data: 'pay:submit' }], backAndCancelRow()]);
 }
@@ -549,7 +558,13 @@ async function submitRequest(bot, chatId, userId) {
       userId, action: 'request_payment', requestId,
       // PAY-2 §1 — the reason and the bill ride the payload: every card
       // rebuild reads it, and approvalEvents forwards the bill to admins.
-      payload: { ...payloadOf(r), ...(force ? { sentAnywayName: label } : {}) },
+      payload: {
+        ...payloadOf(r),
+        ...(force ? { sentAnywayName: label } : {}),
+        // Raised into an account that is not the requester's own (an admin
+        // for a contractor): the card says so in words.
+        ...(String(r.account.owner_telegram_id || '') !== String(userId) ? { on_behalf_by: label } : {}),
+      },
       riskReason: risk.reason || 'dual_admin_required',
       force, forcedBy: String(userId),
       auditMeta: (aj) => ({ payment_id: aj.payment_id, amount: r.amount }),
@@ -612,6 +627,7 @@ async function submitRequest(bot, chatId, userId) {
         account_number: r.account.account_number, bank: r.account.bank,
         amount_ngn: r.amount, above_threshold: r.above, reason: r.reason || '',
         twinOf: raised.actionJSON.twinOf, sentAnywayName: raised.actionJSON.sentAnywayName,
+        twinFlag: raised.actionJSON.twinFlag, on_behalf_by: raised.actionJSON.on_behalf_by,
       }),
       risk.reason, auth.isAdmin(userId) ? String(userId) : undefined,
     );

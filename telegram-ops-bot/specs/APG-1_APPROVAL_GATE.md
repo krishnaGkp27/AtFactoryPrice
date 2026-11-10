@@ -105,11 +105,30 @@ unchanged.
 ## 4. PAY-5 — payments on the gate (owner's rulings)
 
 - **Submit fires once.** The button goes at the tap; one request id per confirm.
-- **Twin rule:** same account + same amount while one is open (waiting on
-  approval, or approved and not yet paid) → refused, by anyone. The open
-  request is shown instead, with 📋 Open it and (on your own) 🔔 Remind
-  approvers. Once it is paid, an identical payment is a new one. A different
-  amount is a different payment.
+- **Twin rule (amended 11-Nov-2026, owner):** *"The primary key of the
+  duplicate transaction would be account number, name, and the amount, which
+  comes out to be the same. Then the admin will be able to refuse it."* and,
+  for a request raised by another person on someone's behalf, *"you don't
+  have to refuse it on your own, but the admin will be notified."*
+  - **Key:** account number + payee name + amount, while one is open
+    (waiting on approval, or approved and not yet paid).
+  - **The same person's repeat** is stopped at the door: the open request is
+    shown instead, with 📋 Open it and 🔔 Remind approvers. (This is the
+    original complaint; `APPROVAL_TWIN_GUARD = 0` switches even this off —
+    then every twin is raised and flagged.)
+  - **Another person's** (on behalf) is **never refused by the bot**: the
+    confirm card warns the requester, the request is raised with `twinFlag`
+    on its row, and every admin card carries
+    `⚠️ Same account, name and amount as R-XXXX (raised by John · waiting on
+    approval)` plus `⧉ Reject as duplicate`. The admin decides.
+  - A request raised into an account that is not the requester's own says so:
+    `👥 Raised by Ajeet on behalf of Sani Loader`.
+  - Once the first is paid, an identical payment is a new one. A different
+    amount, or another name, is a different payment.
+  - Who may raise for whom is unchanged (PAY-1): an employee into their own
+    account, an admin also into a contractor's. Raising into another
+    EMPLOYEE's account is still not possible — an owner ruling would be
+    needed to open it.
 - **An admin may ⧉ Send anyway** — the confirm, the queue row (`twinOf`,
   `sentAnywayBy`) and every admin card say it is a repeat.
 - **Salary by month.** For an employee payee the reason step offers

@@ -1062,7 +1062,8 @@ async function renderItem(bot, chatId, userId, idx) {
     { text: '❌ Reject', callback_data: `abx:no:${item.requestId}` }],
   // APG-1 — a flagged twin is cleared in one tap; the requester is told
   // which request is still open.
-  ...(dupNote ? [[{ text: '⧉ Reject as duplicate', callback_data: `apg:dup:${item.requestId}` }]] : [])];
+  ...((dupNote || (item.actionJSON && item.actionJSON.twinFlag))
+    ? [[{ text: '⧉ Reject as duplicate', callback_data: `apg:dup:${item.requestId}` }]] : [])];
   try {
     const { allItemsGone, SALE_ACTIONS } = require('../services/saleStockCheck');
     const aj = item.actionJSON || {};

@@ -1898,8 +1898,10 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
     inline_keyboard: [
       [{ text: '✅ Approve', callback_data: `approve:${requestId}` }, { text: '❌ Reject', callback_data: `reject:${requestId}` }],
       // APG-1 — a flagged twin is cleared in ONE tap: the requester is told
-      // which request is still open, no reason to type.
-      ...(dupeLine ? [[{ text: '⧉ Reject as duplicate', callback_data: `apg:dup:${requestId}` }]] : []),
+      // which request is still open, no reason to type. `twinFlag` covers
+      // the twin the detector cannot see (approved and unpaid, already paid).
+      ...((dupeLine || (queueRow && queueRow.actionJSON && queueRow.actionJSON.twinFlag))
+        ? [[{ text: '⧉ Reject as duplicate', callback_data: `apg:dup:${requestId}` }]] : []),
     ],
   };
   // APU-1: report delivery so callers can tell the requester when a queued

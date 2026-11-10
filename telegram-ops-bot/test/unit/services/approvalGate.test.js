@@ -5,9 +5,12 @@
  * in-memory array.
  *
  * Pinned, in the order the risks bite:
- *  - a payment to the same account for the same amount is REFUSED while one
- *    is open, whoever raised it, and a refused request writes NOTHING
- *    (the door's own record is prepared only after the check passes);
+ *  - the duplicate key of a payment is account number + name + amount
+ *    (owner, 11-Nov-2026); the SAME person's repeat is REFUSED while one is
+ *    open and writes NOTHING (the door's own record is prepared only after
+ *    the check passes); ANOTHER person's (on behalf) is raised and FLAGGED
+ *    — "you don't have to refuse it on your own, but the admin will be
+ *    notified";
  *  - an admin's force raises it marked ⧉ (twinOf, sentAnywayBy);
  *  - one request id is one row — a retry never runs `prepare` twice;
  *  - a type with no declared rule is never refused (flag is the default);
@@ -64,7 +67,7 @@ const PAY = { payee_name: 'Muhammad', payee_type: 'employee', amount_ngn: 70000,
 function reset() { QUEUE = []; AUDIT = []; SETTINGS = {}; NOTIFIED = []; REJECTED = []; gate._internals.twinSources.clear(); }
 const cq = (from, data) => ({ id: 'q1', data, from: { id: Number(from) }, message: { chat: { id: Number(from) }, message_id: 9 } });
 
-test('registry: an unknown type gets the safe default; payments declare account + amount, any requester, while open', () => {
+test('registry: an unknown type gets the safe default; payments declare account number + name + amount, while open, refused for the same person only', () => {
   const d = registry.entryFor('some_new_action');
   assert.deepEqual(d.twin, { key: null, policy: 'flag', scope: 'window', anyRequester: false });
   assert.equal(d.nudge, true);
@@ -72,8 +75,11 @@ test('registry: an unknown type gets the safe default; payments declare account 
   assert.equal(p.twin.policy, 'refuse');
   assert.equal(p.twin.scope, 'open');
   assert.equal(p.twin.anyRequester, true);
-  assert.equal(registry.twinKeyOf({ action: 'request_payment', ...PAY }), 'acct:7044196792|opay|amt:70000');
-  assert.equal(registry.twinKeyOf({ action: 'request_payment', ...PAY, account_number: '704-419 6792', bank: ' Opay ' }), 'acct:7044196792|opay|amt:70000', 'formatting never splits one account');
+  assert.equal(p.twin.refuse, 'same_requester');
+  assert.equal(registry.twinKeyOf({ action: 'request_payment', ...PAY }), 'acct:7044196792|name:muhammad|amt:70000');
+  assert.equal(registry.twinKeyOf({ action: 'request_payment', ...PAY, account_number: '704-419 6792', payee_name: '  MUHAMMAD ', bank: 'Kuda' }),
+    'acct:7044196792|name:muhammad|amt:70000', 'formatting never splits one account + name');
+  assert.notEqual(registry.twinKeyOf({ action: 'request_payment', ...PAY, payee_name: 'Abdul' }), registry.twinKeyOf({ action: 'request_payment', ...PAY }), 'another name is another payment');
   assert.equal(registry.twinKeyOf({ action: 'request_payment', payee_name: 'x' }), null, 'a thin payload declares nothing');
   assert.equal(registry.twinKeyOf({ action: 'sale_bundle', items: [] }), null);
   assert.equal(registry.describe({ action: 'request_payment', ...PAY, reason: 'Salary · Nov-2026' }), '💳 Payment request · ₦70,000 → Muhammad · Salary · Nov-2026');
@@ -121,27 +127,43 @@ test('raise: the first payment is queued once, with its audit line and the door\
   assert.equal(QUEUE.length, 1);
 });
 
-test('raise: the same account + amount is REFUSED while one is open — by anyone — and writes nothing', async () => {
+test('raise: the SAME person\'s repeat is refused and writes nothing; ANOTHER person\'s is raised and flagged for the admin', async () => {
   reset();
   await gate.raise({ userId: '555', action: 'request_payment', payload: PAY, requestId: 'REQ-1' });
   let prepared = 0;
-  const twin = await gate.raise({ userId: '556', action: 'request_payment', payload: { ...PAY, reason: 'salary again' }, requestId: 'REQ-2', prepare: async () => { prepared += 1; return {}; } });
+  const twin = await gate.raise({ userId: '555', action: 'request_payment', payload: { ...PAY, reason: 'salary again' }, requestId: 'REQ-2', prepare: async () => { prepared += 1; return {}; } });
   assert.equal(twin.ok, false);
   assert.equal(twin.refused, 'twin');
   assert.equal(twin.twin.requestId, 'REQ-1');
-  assert.equal(twin.twin.raisedBy, '555');
+  assert.equal(twin.twin.sameRequester, true);
   assert.equal(twin.twin.state, 'pending');
   assert.equal(prepared, 0, 'a refused request never reaches the door\'s own record');
   assert.equal(QUEUE.length, 1);
   assert.equal(AUDIT.length, 1);
-  // a different amount to the same account is a different request
-  const other = await gate.raise({ userId: '555', action: 'request_payment', payload: { ...PAY, amount_ngn: 20000 }, requestId: 'REQ-3' });
-  assert.equal(other.ok, true);
+
+  // Owner, 11-Nov-2026 — raised by another person on his behalf: never
+  // refused by the bot; the row says what it repeats and the admin decides.
+  const onBehalf = await gate.raise({ userId: '777', action: 'request_payment', payload: PAY, requestId: 'REQ-3', prepare: async () => { prepared += 1; return { payment_id: 'PAY-3' }; } });
+  assert.equal(onBehalf.ok, true);
+  assert.equal(prepared, 1);
+  assert.deepEqual(onBehalf.actionJSON.twinFlag, { requestId: 'REQ-1', raisedBy: '555', raisedByName: 'Muhammad', state: 'pending', kind: 'same_request' });
+  assert.equal(onBehalf.actionJSON.twinOf, undefined, 'flagged is not "sent anyway"');
   assert.equal(QUEUE.length, 2);
-  // once the first is decided the twin is gone
+
+  // a different amount, or another name on the same number, is a different payment
+  const other = await gate.raise({ userId: '555', action: 'request_payment', payload: { ...PAY, amount_ngn: 20000 }, requestId: 'REQ-4' });
+  assert.equal(other.ok, true);
+  assert.equal(other.actionJSON.twinFlag, undefined);
+  const otherName = await gate.raise({ userId: '555', action: 'request_payment', payload: { ...PAY, payee_name: 'Abdul' }, requestId: 'REQ-5' });
+  assert.equal(otherName.ok, true);
+  assert.equal(otherName.actionJSON.twinFlag, undefined);
+
+  // once HIS first is decided, his next one is no longer refused — but it
+  // still repeats the admin's open one, so it is flagged
   QUEUE[0].status = 'approved';
-  const later = await gate.raise({ userId: '555', action: 'request_payment', payload: PAY, requestId: 'REQ-4' });
-  assert.equal(later.ok, true, 'the queue only refuses against PENDING rows; the door\'s own source covers approved-unpaid');
+  const later = await gate.raise({ userId: '555', action: 'request_payment', payload: PAY, requestId: 'REQ-6' });
+  assert.equal(later.ok, true);
+  assert.equal(later.actionJSON.twinFlag.requestId, 'REQ-3');
 });
 
 test('raise: an admin may send a refused twin anyway — marked ⧉ on the row and in the audit', async () => {
@@ -175,6 +197,7 @@ test('raise: an undeclared type is never refused, and the valve switches the ref
   SETTINGS = { APPROVAL_TWIN_GUARD: 0 };
   const open = await gate.raise({ userId: '555', action: 'request_payment', payload: PAY, requestId: 'REQ-2' });
   assert.equal(open.ok, true, 'APPROVAL_TWIN_GUARD = 0 → nothing is refused');
+  assert.equal(open.actionJSON.twinFlag.requestId, 'REQ-1', '…but it is still raised FLAGGED, so the admin can refuse it');
 });
 
 test('🔔 Remind approvers: the same card to the admins who have NOT signed, once per window, by the requester only', async () => {
@@ -272,6 +295,19 @@ test('⧉ Reject as duplicate: stamps which request stays open and hands over to
   await gate.handleCallback(bot2, cq('888', 'apg:dup:REQ-2'));
   assert.equal(REJECTED.length, 0);
   assert.match(bot2.calls.find((c) => c.method === 'answerCallbackQuery').args.opts.text, /no longer open/);
+
+  // a row FLAGGED against a twin that has since been approved is still a
+  // duplicate (the detector only sees pending rows; the flag remembers)…
+  QUEUE[0].status = 'approved';
+  QUEUE[1].actionJSON = { ...QUEUE[1].actionJSON, rejectNote: undefined, twinFlag: { requestId: 'REQ-1', raisedBy: '555', state: 'pending' } };
+  await gate.handleCallback(createFakeBot(), cq('888', 'apg:dup:REQ-2'));
+  assert.deepEqual(REJECTED, [{ data: 'reject:REQ-2', action: 'reject' }]);
+  assert.equal(QUEUE[1].actionJSON.rejectNote, 'Duplicate of R-REQ1, which was already approved');
+  // …and stops being one only when that twin was rejected
+  REJECTED = [];
+  QUEUE[0].status = 'rejected';
+  await gate.handleCallback(createFakeBot(), cq('888', 'apg:dup:REQ-2'));
+  assert.equal(REJECTED.length, 0);
 });
 
 test('twin card: names the open request, who raised it, where it stands, and that nothing new was raised', () => {

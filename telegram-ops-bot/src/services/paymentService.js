@@ -436,24 +436,31 @@ const lower = (v) => String(v || '').trim().toLowerCase();
 
 /**
  * PAY-5 — the payments twin source for the approval gate. A payment is the
- * same thing when it goes to the same account for the same amount and one
- * is still OPEN (waiting on approval, or approved and not yet paid); and a
+ * same thing when it goes to the same account number and name for the same
+ * amount and one is still OPEN (waiting on approval, or approved and not yet paid); and a
  * 💼 Salary is the same thing when that employee already has one for that
  * month — waiting, approved OR paid (declined / rejected ones do not count).
  * @returns {Promise<object|null>} twin descriptor for approvalGate
  */
-async function openTwinFor({ payload }) {
+async function openTwinFor({ payload, userId }) {
   const p = payload || {};
+  const me = String(userId || '');
   const rows = await require('../repositories/paymentRequestsRepository').getAll();
   const acct = digitsOf(p.account_number);
-  const bank = lower(p.bank);
+  const name = lower(String(p.payee_name || '').replace(/\s+/g, ' '));
   const amt = Math.round(Number(p.amount_ngn) || 0);
-  const byAge = (a, b) => String(a.raised_at || '').localeCompare(String(b.raised_at || ''));
+  // The requester's OWN open request first (that is the one the door
+  // refuses), then the oldest of anyone's (that is the one it flags).
+  const byAge = (a, b) => (Number(String(b.raised_by) === me) - Number(String(a.raised_by) === me))
+    || String(a.raised_at || '').localeCompare(String(b.raised_at || ''));
   let hit = null;
   let kind = 'same_request';
   if (acct && amt > 0) {
+    // Owner, 11-Nov-2026: "The primary key of the duplicate transaction
+    // would be account number, name, and the amount."
     hit = rows.filter((r) => ['pending_approval', 'approved'].includes(r.status)
-      && digitsOf(r.account_number) === acct && lower(r.bank) === bank
+      && digitsOf(r.account_number) === acct
+      && lower(String(r.payee_name || '').replace(/\s+/g, ' ')) === name
       && Math.round(Number(r.amount_ngn) || 0) === amt).sort(byAge)[0] || null;
   }
   if (!hit && p.reason_kind === 'salary' && p.period) {

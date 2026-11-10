@@ -146,5 +146,13 @@ test('the admin card of a flagged twin carries ⧉ Reject as duplicate; a clean 
     const kb2 = bot2.calls.find((c) => c.method === 'sendMessage').args.opts.reply_markup.inline_keyboard;
     assert.equal(kb2.length, 1);
     assert.ok(!/Possible duplicate/.test(bot2.calls.find((c) => c.method === 'sendMessage').args.text));
+    // a row FLAGGED at raise against a twin the detector cannot see
+    // (approved and unpaid) still offers the admin the one-tap refusal
+    const flagged = { ...twinB, requestId: 'REQ-F', actionJSON: { ...twinB.actionJSON, twinFlag: { requestId: 'REQ-OLD', raisedBy: '556', raisedByName: 'Abdul', state: 'approved' } } };
+    approvalQueueRepository.getAllPending = async () => [flagged];
+    const bot3 = createFakeBot();
+    await approvalEvents.notifyAdminsApprovalRequest(bot3, 'REQ-F', 'Muhammad', 'Payment request: ₦70,000', 'dual_admin_required', undefined);
+    const kb3 = bot3.calls.find((c) => c.method === 'sendMessage').args.opts.reply_markup.inline_keyboard;
+    assert.deepEqual(kb3[1], [{ text: '⧉ Reject as duplicate', callback_data: 'apg:dup:REQ-F' }]);
   } finally { approvalQueueRepository.getAllPending = savedPending; }
 });

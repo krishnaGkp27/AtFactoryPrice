@@ -35,8 +35,13 @@
  * S-APG freezes the direct `approvalQueueRepository.append` sites so no NEW
  * door can raise outside the gate.
  *
- * Valve: Settings `APPROVAL_TWIN_GUARD` = 0 switches the refusal off (the
- * admin cards keep their ⚠️ line), live within the settings cache, no deploy.
+ * A twin that is NOT refused — raised by another person on someone's
+ * behalf, or the valve is off — is raised with `twinFlag` on its row: the
+ * admin card says which request it repeats and carries ⧉ Reject as
+ * duplicate. The bot never decides that one; the admin does.
+ *
+ * Valve: Settings `APPROVAL_TWIN_GUARD` = 0 switches every refusal off (all
+ * twins are raised and flagged), live within the settings cache, no deploy.
  */
 
 const settingsRepository = require('../repositories/settingsRepository');
@@ -86,6 +91,17 @@ const signedCount = (aj) => {
   return Array.isArray(a.approvals) ? a.approvals.length : 0;
 };
 
+/**
+ * Would the door refuse this twin? Only when the type's policy is 'refuse',
+ * the valve is on, and — for a type that refuses the same person only — it
+ * was this requester who raised the open one.
+ */
+function wouldRefuse(entry, twin, uid, guardOn) {
+  if (!twin || !guardOn || entry.twin.policy !== 'refuse') return false;
+  if (entry.twin.refuse === 'same_requester') return String(twin.raisedBy) === String(uid);
+  return true;
+}
+
 function normaliseTwin(t, entry) {
   return {
     requestId: String(t.requestId || ''),
@@ -109,14 +125,20 @@ function normaliseTwin(t, entry) {
 async function findOpenTwin({ action, payload, userId, excludeRequestId } = {}) {
   const entry = registry.entryFor(action);
   if (entry.twin.policy === 'off') return null;
-  if (!(await guardEnabled())) return null;
+  const guardOn = await guardEnabled();
   const aj = { ...(payload || {}), action };
   const uid = String(userId || '');
+  const done = (t) => {
+    const twin = normaliseTwin(t, entry);
+    twin.sameRequester = String(twin.raisedBy) === uid;
+    twin.refused = wouldRefuse(entry, twin, uid, guardOn);
+    return twin;
+  };
   const src = twinSources.get(String(action));
   if (src) {
     try {
       const t = await src({ payload: aj, userId: uid, excludeRequestId });
-      if (t) return normaliseTwin(t, entry);
+      if (t) return done(t);
     } catch (e) { logger.warn(`approvalGate: twin source for ${action} failed (allowing): ${e.message}`); }
   }
   const key = registry.twinKeyOf(aj);
@@ -131,9 +153,12 @@ async function findOpenTwin({ action, payload, userId, excludeRequestId } = {}) 
       && String(r.requestId) !== String(excludeRequestId || '')
       && (entry.twin.anyRequester || String(r.user) === uid)
       && registry.twinKeyOf(r.actionJSON) === key)
-    .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))[0];
+    // the requester's OWN open request first (the one a door refuses),
+    // then the oldest of anyone's (the one it flags)
+    .sort((a, b) => (Number(String(b.user) === uid) - Number(String(a.user) === uid))
+      || String(a.createdAt || '').localeCompare(String(b.createdAt || '')))[0];
   if (!hit) return null;
-  return normaliseTwin({ requestId: hit.requestId, raisedBy: hit.user, createdAt: hit.createdAt, state: 'pending', aj: hit.actionJSON }, entry);
+  return done({ requestId: hit.requestId, raisedBy: hit.user, createdAt: hit.createdAt, state: 'pending', aj: hit.actionJSON });
 }
 
 /**
@@ -164,15 +189,29 @@ async function raise(p) {
   }
 
   const twin = await findOpenTwin({ action, payload: p.payload, userId: uid, excludeRequestId: id });
-  if (twin && entry.twin.policy === 'refuse' && !p.force) {
+  if (twin && twin.refused && !p.force) {
     usageTracker.track({ userId: uid, surface: 'approval', feature: action, event: 'twin_refused', requestId: twin.requestId, meta: { kind: twin.kind, state: twin.state } });
     return { ok: false, refused: 'twin', twin };
+  }
+  // A twin the bot does not refuse on its own (raised by another person on
+  // someone's behalf, or the valve is off) is raised and FLAGGED: the row
+  // says what it repeats, so the admin card can warn and offer the refusal.
+  // Only a type that has DECLARED its key is stamped — every other type
+  // keeps the detector's ⚠️ line at notify time, as before.
+  let twinFlag = null;
+  if (twin && !twin.refused && !p.force && entry.twin.policy === 'refuse') {
+    twinFlag = {
+      requestId: twin.requestId, raisedBy: twin.raisedBy, raisedByName: await nameOf(twin.raisedBy, p.bot),
+      state: twin.state, kind: twin.kind,
+    };
+    usageTracker.track({ userId: uid, surface: 'approval', feature: action, event: 'twin_flagged', requestId: twin.requestId, meta: { kind: twin.kind, state: twin.state } });
   }
 
   const extra = typeof p.prepare === 'function' ? ((await p.prepare()) || {}) : {};
   const actionJSON = {
     ...(p.payload || {}), ...extra, action,
     ...(twin && p.force ? { twinOf: twin.requestId, sentAnywayBy: String(p.forcedBy || uid) } : {}),
+    ...(twinFlag ? { twinFlag } : {}),
   };
   const res = await approvalQueueRepository.appendOnce({
     requestId: id, user: uid, actionJSON, riskReason: p.riskReason || '', status: 'pending',
@@ -330,13 +369,26 @@ async function rejectAsDuplicate(bot, callbackQuery, requestId) {
     const group = duplicateIndex(pending, Number(s.DUPLICATE_WINDOW_MINUTES) || undefined).get(String(requestId)) || [];
     others = group.filter((g) => String(g.requestId) !== String(requestId));
   } catch (e) { logger.warn(`approvalGate: duplicate lookup for ${requestId} failed: ${e.message}`); }
-  if (!others.length) {
+  let note = '';
+  if (others.length) {
+    const keep = others.sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))[0];
+    note = `Duplicate of ${progress.ref(keep.requestId)}, which is still open`;
+  } else {
+    // The twin this row was flagged against may be past approval (approved
+    // and unpaid, or paid) — the detector only sees PENDING rows, the flag
+    // remembers. It stops being a duplicate only if that twin was rejected.
+    const flag = (row.actionJSON || {}).twinFlag;
+    let t = null;
+    if (flag && flag.requestId) { try { t = await approvalQueueRepository.getByRequestId(flag.requestId); } catch (_) { t = null; } }
+    const st = String((t && t.status) || '').toLowerCase();
+    if (t && st === 'pending') note = `Duplicate of ${progress.ref(t.requestId)}, which is still open`;
+    else if (t && st === 'approved') note = `Duplicate of ${progress.ref(t.requestId)}, which was already approved`;
+  }
+  if (!note) {
     await answer('Its twin is no longer open, so this is not a duplicate any more. Use ❌ Reject if you still want to refuse it.', true);
     return;
   }
-  const keep = others.sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))[0];
-  await approvalQueueRepository.updateActionJSON(requestId,
-    { rejectNote: `Duplicate of ${progress.ref(keep.requestId)}, which is still open` });
+  await approvalQueueRepository.updateActionJSON(requestId, { rejectNote: note });
   usageTracker.track({ userId: uid, surface: 'approval', feature: (row.actionJSON || {}).action || 'request', event: 'rejected_as_duplicate', requestId });
   await require('../events/approvalEvents').handleApprovalCallback(
     bot, { ...callbackQuery, data: `reject:${requestId}` }, 'reject');
@@ -402,8 +454,20 @@ async function handleCallback(bot, callbackQuery) {
   return true;
 }
 
+/**
+ * `⚠️ Same account, name and amount as R-B118 (raised by Muhammad · waiting
+ * on approval)` — the line a flagged twin carries on its admin card.
+ */
+function twinFlagLine(flag, { what = 'Same request' } = {}) {
+  if (!flag || !flag.requestId) return '';
+  const state = flag.state === 'approved' ? 'approved, waiting to be paid'
+    : (flag.state === 'done' ? 'already paid' : 'waiting on approval');
+  return `⚠️ ${what} as ${progress.ref(flag.requestId)} (raised by ${flag.raisedByName || flag.raisedBy || '—'} · ${state})`;
+}
+
 module.exports = {
   NS,
+  twinFlagLine,
   raise, findOpenTwin, registerTwinSource,
   nudge, nudgeHours, guardEnabled, requiredFor,
   receiptRow, twinCardText, showStatus, rejectAsDuplicate,

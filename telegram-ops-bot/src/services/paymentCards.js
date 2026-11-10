@@ -94,6 +94,19 @@ function buildApprovalSummary(pay) {
   if (pay.reason) out.push(`Reason: ${pay.reason}`);
   if (pay.above_threshold) out.push('⚠️ LARGE PAYMENT — above the threshold');
   if (pay.bill_file_id) out.push('Bill: attached');
+  // PAY-5 — raised by one person into another's account: said in words
+  // (owner: "which will be shown on the card explicitly").
+  if (pay.on_behalf_by) out.push(`👥 Raised by ${pay.on_behalf_by} on behalf of ${pay.payee_name}`);
+  // PAY-5 — the same account, name and amount is already open and the bot
+  // did not refuse it (another person raised that one): the admin decides.
+  if (pay.twinFlag) {
+    const k = paymentService.reasonKind(pay.reason || '');
+    out.push(require('./approvalGate').twinFlagLine(pay.twinFlag, {
+      what: pay.twinFlag.kind === 'salary_period' && k.period
+        ? `Salary for ${paymentService.periodLabel(k.period)} is already on record`
+        : 'Same account, name and amount',
+    }));
+  }
   // PAY-5 — an admin sent this although its twin is open: every card says so.
   if (pay.twinOf) {
     out.push(`⧉ Repeat of ${require('./approvalProgress').ref(pay.twinOf)} — sent anyway${pay.sentAnywayName ? ` by ${pay.sentAnywayName}` : ''}`);

@@ -940,3 +940,49 @@ test('PAY-5: the receipt carries 🔔 Remind approvers and 📋 Status; the remi
   assert.match(lastText(bot), /🔏 1 signed — Ajeet/);
   assert.ok(kbOf(bot).some((b) => b.callback_data === `apg:nudge:${id}` && /^🔔 Remind approvers · ₦45,000$/.test(b.text)));
 });
+
+test('PAY-5 (amended 11-Nov): a payment ANOTHER person already raised is not refused — it is raised, says who raised it for whom, and reaches the admins flagged', async () => {
+  reset(); NOTIFIED = [];
+  await registerApproved({ owner_name: 'Sani Loader', owner_type: 'contractor', owner_telegram_id: '', account_number: '2233445566', bank: 'Zenith' });
+  const bot = createFakeBot();
+  // John raises it for the contractor
+  await toConfirm(bot, JOHN, 20000, 'Loading the container');
+  await skipBill(bot, JOHN);
+  await controller.handleCallbackQuery(bot, cb('pay:submit', JOHN));
+  const firstId = QUEUED[0].requestId;
+  assert.equal(QUEUED[0].actionJSON.on_behalf_by, 'John');
+  assert.match(NOTIFIED[0][3], /👥 Raised by John on behalf of Sani Loader/);
+
+  // Ajeet raises the very same payment — same account number, name, amount
+  await toConfirm(bot, AJEET, 20000, 'Loading — same job');
+  await skipBill(bot, AJEET);
+  const confirm = lastText(bot).replace(/\\/g, '');
+  assert.match(confirm, /Send this for approval\?/, 'not refused: the bot does not decide this one');
+  assert.match(confirm, /⚠️ The same payment is already open \(R-[A-Z0-9]{4}, raised by John\)\. Yours will reach the admins marked as a possible duplicate\./);
+  assert.ok(kbOf(bot).some((b) => b.callback_data === 'pay:submit'));
+  await controller.handleCallbackQuery(bot, cb('pay:submit', AJEET));
+  assert.equal(QUEUED.length, 2, 'raised');
+  assert.equal(REQUESTS.length, 2);
+  assert.deepEqual(QUEUED[1].actionJSON.twinFlag, { requestId: firstId, raisedBy: JOHN, raisedByName: 'John', state: 'pending', kind: 'same_request' });
+  const card = NOTIFIED[1][3];
+  assert.match(card, /👥 Raised by Ajeet on behalf of Sani Loader/);
+  assert.match(card, /⚠️ Same account, name and amount as R-[A-Z0-9]{4} \(raised by John · waiting on approval\)/);
+  // the rebuilt card (inbox, reminder) carries both lines too
+  const rebuilt = paymentCards.buildApprovalSummary(QUEUED[1].actionJSON);
+  assert.match(rebuilt, /👥 Raised by Ajeet on behalf of Sani Loader/);
+  assert.match(rebuilt, /⚠️ Same account, name and amount as R-[A-Z0-9]{4}/);
+
+  // …but Ajeet's OWN repeat of it is still stopped at the door
+  await toConfirm(bot, AJEET, 20000, 'Loading — once more');
+  await skipBill(bot, AJEET);
+  assert.match(lastText(bot), /This request is already open/);
+
+  // his own account, his own request: no "on behalf" line
+  reset(); NOTIFIED = [];
+  await registerApproved();
+  await toConfirm(bot, ABDUL, 3000, 'Transport');
+  await skipBill(bot, ABDUL);
+  await controller.handleCallbackQuery(bot, cb('pay:submit', ABDUL));
+  assert.equal(QUEUED[0].actionJSON.on_behalf_by, undefined);
+  assert.ok(!/on behalf/.test(NOTIFIED[0][3]));
+});

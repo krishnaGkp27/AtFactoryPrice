@@ -28,6 +28,10 @@
  *                            tap), so the same order next week stands alone
  *   twin.anyRequester  true = the same thing raised by ANOTHER person is a
  *                 twin too (money: two people asking for one payment)
+ *   twin.refuse   'same_requester' — with policy 'refuse', only the SAME
+ *                 person's repeat is stopped at the door; a twin raised by
+ *                 someone else (on behalf) is raised and FLAGGED, and the
+ *                 admin decides. Absent = a refused type refuses for anyone.
  *   oneLine(aj)   the request in one line, for receipts and progress cards
  *   nudge         may the requester press 🔔 Remind approvers (default yes)
  *
@@ -41,9 +45,13 @@ const money = require('../utils/money');
 const DEFAULT_TWIN = Object.freeze({ key: null, policy: 'flag', scope: 'window', anyRequester: false });
 
 const ENTRIES = Object.freeze({
-  // PAY-5 (owner's Go, 10-Nov-2026): "same account and same amount while
-  // one is open means refused." Keyed on the ACCOUNT, not the requester —
-  // two people asking for one payment is the same double payment.
+  // PAY-5 (owner's Go, 10-Nov-2026) as amended the next day — "The primary
+  // key of the duplicate transaction would be account number, name, and the
+  // amount … Then the admin will be able to refuse it", and for a request
+  // raised by another person on someone's behalf: "you don't have to refuse
+  // it on your own, but the admin will be notified." So: the key is those
+  // three; the SAME person's repeat is stopped at the door (the original
+  // complaint); anyone else's is raised, flagged, and the admin decides.
   request_payment: {
     icon: '💳',
     label: 'Payment request',
@@ -51,10 +59,11 @@ const ENTRIES = Object.freeze({
       key: (aj) => {
         const acct = String((aj && aj.account_number) || '').replace(/\D/g, '');
         const amt = Math.round(Number(aj && aj.amount_ngn) || 0);
+        const name = String((aj && aj.payee_name) || '').replace(/\s+/g, ' ').trim().toLowerCase();
         if (!acct || amt <= 0) return null;
-        return `acct:${acct}|${String(aj.bank || '').trim().toLowerCase()}|amt:${amt}`;
+        return `acct:${acct}|name:${name}|amt:${amt}`;
       },
-      policy: 'refuse', scope: 'open', anyRequester: true,
+      policy: 'refuse', scope: 'open', anyRequester: true, refuse: 'same_requester',
     },
     oneLine: (aj) => [
       // A thin payload (a row from before the amount rode it) names nothing

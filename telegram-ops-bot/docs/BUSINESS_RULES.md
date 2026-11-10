@@ -1082,10 +1082,16 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
   ⚠️ Possible duplicate, nothing is refused — refusing by default could
   block a genuine repeat order. A door refuses only once the owner has
   ruled for it.
-- **Payments (ruled):** the same account for the same amount is refused
-  while one is open — waiting on approval, or approved and not yet paid —
-  whoever raised it. The open request is shown instead. An admin may send
-  it anyway; it is then marked ⧉ as a repeat on every card.
+- **Payments (ruled, amended 11-Nov-2026):** a duplicate is the same
+  **account number, name and amount** while one is open — waiting on
+  approval, or approved and not yet paid. *"Then the admin will be able to
+  refuse it."* The **same person's** repeat is stopped at the door and the
+  open request is shown instead. A request raised by **another person on
+  someone's behalf** is never refused by the bot — *"you don't have to
+  refuse it on your own, but the admin will be notified"*: it is raised,
+  the card says who raised it for whom and which request it repeats, and
+  the admin has ⧉ Reject as duplicate. An admin may also send their own
+  repeat anyway; it is then marked ⧉ on every card.
 - **Salary (ruled):** picked by chip with its month; one salary per
   employee per month, a paid one included. A salary advance is its own
   chip. A typed "salary" is sent to the chip.
