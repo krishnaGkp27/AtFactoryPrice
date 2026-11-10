@@ -22,7 +22,8 @@
     "snapshot": "node scripts/snapshot.js",
     "snapshot:list": "node scripts/snapshot-list.js",
     "kpi:usage": "node scripts/update-kpi-matrix.js",
-    "census": "node scripts/census.js"
+    "census": "node scripts/census.js",
+    "census:typed": "node scripts/typed-census.js"
   },
   "engines": {
     "node": ">=20"
