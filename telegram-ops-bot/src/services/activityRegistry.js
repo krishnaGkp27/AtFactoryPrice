@@ -270,6 +270,9 @@ const ACTIVITIES = [
   // SEN-1 — read-only cross-sheet consistency checks (admin-only, gated in
   // the flow's start()).
   { code: 'data_health',           label: 'Data Health',               icon: '🩺', callback: 'act:data_health',        hub: 'reporting' },
+  // AGT-1 — the coding agent's read-only data door: mint / replace / switch
+  // off its key, or send the report file (admin-only, gated in the flow).
+  { code: 'agent_access',          label: 'Agent Data Access',         icon: '🤖', callback: 'act:agent_access',       hub: 'reporting' },
   // T3 — admin read-only lens on the supply-order pipeline (Orders +
   // Customers + LedgerBalanceCache joined into one view).
   // SUPQ-1 (owner, 22-Aug-2026): relabeled — this IS the goods-owed queue.

@@ -156,6 +156,11 @@ app.get('/api/ops/approvals/:requestId', apiController.getOpsApprovalDetail);
 app.get('/api/ops/attendance', apiController.getOpsAttendance);
 app.get('/api/ops/stocktakes', apiController.getOpsStockTakes);
 app.get('/api/ops/design-movement', apiController.getOpsDesignMovement); // DML-1
+// AGT-1 — the agent data door: read-only reports over Postgres (usage,
+// flows, typed lines, the log). Gated by the agent key alone, which an admin
+// mints from Telegram (📊 Reporting → 🤖 Agent Data Access). No write route.
+app.get('/api/insights', (req, res) => require('./src/controllers/insightsController').getIndex(req, res));
+app.get('/api/insights/:report', (req, res) => require('./src/controllers/insightsController').getReport(req, res));
 /**
  * WEB-1 — the pages this server serves behind a magic-link session, and the
  * ONLY destinations /auth will redirect to.
@@ -522,6 +527,9 @@ const server = app.listen(PORT, async () => {
   // STK-PG — versioned migrations (stock_events shadow ledger; no-op
   // without DATABASE_URL). Awaited nowhere: a PG outage never delays boot.
   try { require('./src/db/migrations').migrate().catch((e) => logger.warn(`migrations boot: ${e.message}`)); } catch (e) { logger.warn(`migrations boot: ${e.message}`); }
+  // AGT-1 — keep the console lines in Postgres (`app_logs`) so the log can
+  // be read back without the Railway dashboard. No-op without DATABASE_URL.
+  try { require('./src/services/logSink').start(); } catch (e) { logger.warn(`logSink boot: ${e.message}`); }
   try {
     const extLedgerService = require('./src/services/extLedgerService');
     extLedgerService.sweepExpired().catch(() => {});

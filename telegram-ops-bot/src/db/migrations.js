@@ -125,6 +125,34 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS transfer_events_ref_idx ON transfer_events (ref, at);
     `,
   },
+  {
+    // AGT-1 (10-Nov-2026) — the agent data door. `app_logs` is the bot's own
+    // console lines (the Railway log, kept where it can be read back);
+    // `agent_keys` holds the SHA-256 of the read-only key an admin mints
+    // from Telegram — the key itself is shown once and never stored.
+    id: '004_agent_data_door',
+    sql: `
+      CREATE TABLE IF NOT EXISTS app_logs (
+        id     BIGSERIAL PRIMARY KEY,
+        ts     TIMESTAMPTZ NOT NULL DEFAULT now(),
+        level  TEXT NOT NULL,
+        msg    TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS app_logs_ts_idx ON app_logs (ts);
+      CREATE INDEX IF NOT EXISTS app_logs_level_ts_idx ON app_logs (level, ts);
+      CREATE TABLE IF NOT EXISTS agent_keys (
+        id            BIGSERIAL PRIMARY KEY,
+        key_hash      TEXT NOT NULL UNIQUE,
+        created_by    TEXT NOT NULL DEFAULT '',
+        created_name  TEXT NOT NULL DEFAULT '',
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        revoked_at    TIMESTAMPTZ,
+        revoked_by    TEXT,
+        last_used_at  TIMESTAMPTZ,
+        uses          INT NOT NULL DEFAULT 0
+      );
+    `,
+  },
 ];
 
 /**

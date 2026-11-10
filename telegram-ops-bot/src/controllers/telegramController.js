@@ -7557,6 +7557,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['sdg:'], handle: (bot, cq) => require('../flows/supplyDetailsDesignFlow').handleCallback(bot, cq) },
   { prefixes: ['sds:'], handle: (bot, cq) => require('../flows/stockByShadeFlow').handleCallback(bot, cq) },
   { prefixes: ['snt:'], handle: (bot, cq) => require('../flows/dataHealthFlow').handleCallback(bot, cq) },
+  // AGT-1 — 🤖 Agent Data Access (session-free; every tap re-checks admin).
+  { prefixes: ['agk:'], handle: (bot, cq) => require('../flows/agentAccessFlow').handleCallback(bot, cq) },
   { prefixes: ['apz:'], handle: (bot, cq) => require('../events/approvalEvents').handleMarkDone(bot, cq) },
   { prefixes: ['abx:'], handle: (bot, cq) => require('../flows/approvalsInboxFlow').handleCallback(bot, cq) },
   // DCAT-1 — design → product-category mapping (dual-admin approval).
@@ -10287,6 +10289,12 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         // gated in the flow's start()).
         const dataHealthFlow = require('../flows/dataHealthFlow');
         await dataHealthFlow.start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'agent_access': {
+        // AGT-1 — the coding agent's read-only data door (admin-only, gated
+        // in the flow's start()).
+        await require('../flows/agentAccessFlow').start(bot, chatId, uid, messageId);
         break;
       }
       case 'display_units': {

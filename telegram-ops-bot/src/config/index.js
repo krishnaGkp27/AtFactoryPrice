@@ -126,6 +126,24 @@ const config = {
   },
 
   /**
+   * AGT-1 — the agent data door (specs/AGT-1_AGENT_DATA_DOOR.md).
+   * The log sink keeps the bot's console lines in Postgres (`app_logs`) so
+   * they can be read back over /api/insights/logs. On whenever DATABASE_URL
+   * is set; LOG_SINK_ENABLED=0 switches it off. LOG_SINK_LEVEL = the lowest
+   * level kept (INFO default); LOG_SINK_DAYS = retention (14 default).
+   * AGENT_DATA_KEY is an optional fixed key for the same door — the usual
+   * key is minted from Telegram (📊 Reporting → 🤖 Agent Data Access).
+   */
+  logSink: {
+    enabled: !['0', 'false'].includes(String(process.env.LOG_SINK_ENABLED || '').toLowerCase()),
+    level: String(process.env.LOG_SINK_LEVEL || 'INFO').toUpperCase(),
+    days: Math.max(1, parseInt(process.env.LOG_SINK_DAYS, 10) || 14),
+    flushMs: parseInt(process.env.LOG_SINK_FLUSH_MS, 10) || 5_000,
+    bufferMax: parseInt(process.env.LOG_SINK_BUFFER_MAX, 10) || 2_000,
+  },
+  agentDataKey: process.env.AGENT_DATA_KEY || '',
+
+  /**
    * ANL-1 — usage analytics capture (specs/ANL-1_USAGE_ANALYTICS.md).
    * Ships dark: set ANALYTICS_ENABLED=1 (plus DATABASE_URL) to activate.
    * Events buffer in memory and batch-flush; analytics never block flows.

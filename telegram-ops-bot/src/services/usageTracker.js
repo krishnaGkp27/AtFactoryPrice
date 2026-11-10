@@ -23,6 +23,7 @@ const logger = require('../utils/logger');
  * in meta so new namespaces are visible in the data before being mapped.
  */
 const PREFIX_FEATURES = {
+  'agk:': 'agent_access',
   'srf_': 'supply_request',
   'gr:': 'receive_goods',
   'br:': 'bulk_receive_goods',
