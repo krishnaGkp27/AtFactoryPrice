@@ -2941,13 +2941,14 @@ async function requestAutoRemind(bot, callbackQuery, ctx, taskId) {
     || task.assigned_to;
   try {
     const risk = await riskEvaluate.evaluate({ action: 'task_reminder_enable', userId });
-    await approvalQueueRepository.append({
-      requestId,
-      user: String(userId),
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false,
+      userId: String(userId),
       actionJSON: { action: 'task_reminder_enable', task_id: taskId, title: task.title, doer_name: doerName },
       riskReason: risk.reason || 'dual_admin_required',
-      status: 'pending',
     });
+    if (!raised.created) return;
     await approvalEvents.notifyAdminsApprovalRequest(
       bot, requestId, (await usersRepository.findByUserId(userId).catch(() => null))?.name || userId,
       // Plain text on purpose: notifyAdminsApprovalRequest escapes the

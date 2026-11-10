@@ -123,14 +123,16 @@ async function submitRequest(bot, chatId, userId) {
 
   const requestId = idGenerator.requestId();
   try {
-    await approvalQueueRepository.append({
-      requestId, user: String(userId),
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: String(userId),
       // APU-1: persist the from-mode so an approval executed after the
       // mode changed underneath can be detected, and the reminder sweep
       // can rebuild the full card from the queue row.
       actionJSON: { action: ACTION, warehouse, mode: to, mode_before: from },
-      riskReason: RISK_REASON, status: 'pending',
+      riskReason: RISK_REASON,
     });
+    if (!raised.created) return;
     await auditLogRepository.append('approval_queued', { requestId, action: ACTION, warehouse, mode: to }, String(userId));
     const isAdm = auth.isAdmin(String(userId));
     const excludeId = isAdm ? String(userId) : undefined;

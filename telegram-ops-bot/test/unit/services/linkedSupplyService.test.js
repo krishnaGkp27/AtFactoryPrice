@@ -19,6 +19,8 @@ let PENDING = [];
 let appended = [];
 let patched = [];
 approvalQueueRepository.getAllPending = async () => PENDING;
+// APG-1 — the door raises through the gate, which writes with `append`.
+approvalQueueRepository.append = async (rec) => { appended.push(rec); };
 approvalQueueRepository.appendOnce = async (rec) => { appended.push(rec); return { created: true }; };
 approvalQueueRepository.updateActionJSON = async (id, patch) => { patched.push({ id, patch }); };
 auditLogRepository.append = async () => {};

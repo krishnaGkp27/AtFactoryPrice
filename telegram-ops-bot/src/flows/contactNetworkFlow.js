@@ -18,7 +18,6 @@ const auth = require('../middlewares/auth');
 const usersRepository = require('../repositories/usersRepository');
 const designCategoriesRepo = require('../repositories/designCategoriesRepository');
 const contactsRepository = require('../repositories/contactsRepository');
-const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const contactGraph = require('../services/contactGraphService');
 const idGenerator = require('../utils/idGenerator');
@@ -274,10 +273,12 @@ async function handleCallback(bot, callbackQuery) {
       contact_id: d.contact_id, name: d.name, customer_id: d.customer_id || '',
       field: d.field, old_value: d.old_value || '', new_value: d.new_value || '',
     };
-    await approvalQueueRepository.append({
-      requestId, user: userId, actionJSON,
-      riskReason: 'Contact detail changes are reviewed by an admin.', status: 'pending',
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: userId, actionJSON,
+      riskReason: 'Contact detail changes are reviewed by an admin.',
     });
+    if (!raised.created) return true;
     await auditLogRepository.append('approval_queued', { requestId, action: 'update_contact_info', contact: d.name, field: d.field }, userId);
     try {
       const approvalEvents = require('../events/approvalEvents');
@@ -335,10 +336,12 @@ async function handleCallback(bot, callbackQuery) {
       name: d.name, phone: d.phone || '', notes: d.notes || '',
       existing_contact_id: d.existing_contact_id || '',
     };
-    await approvalQueueRepository.append({
-      requestId, user: userId, actionJSON,
-      riskReason: 'Contact-network changes are reviewed by an admin.', status: 'pending',
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: userId, actionJSON,
+      riskReason: 'Contact-network changes are reviewed by an admin.',
     });
+    if (!raised.created) return true;
     await auditLogRepository.append('approval_queued', { requestId, action: 'add_contact_link', boss: d.boss_name, person: d.name }, userId);
     try {
       const approvalEvents = require('../events/approvalEvents');

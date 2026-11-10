@@ -30,7 +30,6 @@
 const sessionStore = require('../utils/sessionStore');
 const { makeRenderer, chunk, mdEscape, beginSubmit, endSubmit } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
-const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const usersRepository = require('../repositories/usersRepository');
 const idGenerator = require('../utils/idGenerator');
@@ -629,12 +628,13 @@ async function submitBatch(bot, chatId, userId, session) {
     sale_doc_type: 'document',
     source: 'snap_pdf',
   };
-  await approvalQueueRepository.append({
-    requestId, user: userId, actionJSON,
-    riskReason: 'All sale operations require admin approval.', status: 'pending',
+  // APG-1 — raised through the gate (a double tap is one request).
+  const raised = await require('../services/approvalGate').raise({
+    requestId, fresh: true, userId, actionJSON,
+    riskReason: 'All sale operations require admin approval.',
+    auditMeta: { source: 'snap_pdf', bales: batch.items.length, skipped: batch.skipped.length },
   });
-  await auditLogRepository.append('approval_queued',
-    { requestId, action: 'sale_bundle', source: 'snap_pdf', bales: batch.items.length, skipped: batch.skipped.length }, userId);
+  if (!raised.created) return true;
 
   let adminCards = 0;
   const excludeId = config.access.adminIds.includes(userId) ? userId : undefined;
@@ -780,11 +780,13 @@ async function handleCallback(bot, callbackQuery) {
       sale_doc_file_id: session.photoFileId || '',
       source: 'snap_sale',
     };
-    await approvalQueueRepository.append({
-      requestId, user: userId, actionJSON,
-      riskReason: 'All sale operations require admin approval.', status: 'pending',
+    // APG-1 — raised through the gate (a double tap is one request).
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, userId, actionJSON,
+      riskReason: 'All sale operations require admin approval.',
+      auditMeta: { source: 'snap_sale', packageNo: b.packageNo },
     });
-    await auditLogRepository.append('approval_queued', { requestId, action: 'sell_package', source: 'snap_sale', packageNo: b.packageNo }, userId);
+    if (!raised.created) return true;
     // APU-1: the approving admin sees the SAME card as a classic sale —
     // full item line + totals + the label photo forwarded before deciding.
     let adminCards = 0;

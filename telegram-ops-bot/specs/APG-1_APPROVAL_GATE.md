@@ -161,33 +161,65 @@ Nothing new was raised.
 |---|---|---|
 | `REQUEST_NUDGE_HOURS` | 24 | hours between two 🔔 reminders on one request; 0 = off |
 | `APPROVAL_TWIN_GUARD` | 1 | 0 = nothing is refused; admin cards keep their ⚠️ line |
+| `APPROVAL_DOUBLE_TAP_SECONDS` | 20 | the same person raising the same request again within this many seconds is ONE request; 0 = off |
 
 No sheet, column or action code was added.
 
-## 6. What phase 1 deliberately left alone
+## 6. Phases 2 and 3 — every door on the gate (10-Nov-2026)
 
-- **Deciding and executing** (`approvalEvents`, the 50 executor branches).
-- **The other 26 files' raise sites.** They keep working as they are and move
-  one commit at a time. The smoke check **S-APG** freezes their direct queue
-  writes: a file may lose calls, never gain one; a new file fails the build.
-- **Transfers** keep their own lifecycle (TRF-20 already refuses twins).
+Owner: "Go with all the remaining phases."
 
-## 7. Next phases
+All 44 direct queue writes in 26 files now call `approvalGate.raise`:
+sales (bundle, snap, the legacy tap door, the typed sells), returns, goods
+receipts (form, bulk, photo), Edit Bale, prices, banks, samples, customers
+and contacts, users, warehouses, categories, display units, reminders, task
+reminders, catalogue stock / supply / loan / return, marketers, shade and
+design photos, office expenses, landed cost, linked supply, supply requests,
+transfers. The smoke check **S-APG** is now absolute: only the gate and the
+queue repository may write the queue.
 
-- **Phase 2:** sales, returns, goods receipts, edit bale → the gate. Each
-  door's twin rule is the owner's to rule on; until then `flag`.
-- **Phase 3:** the rest; and the typed AI raise sites — four call sites,
-  three actions:
+What a door gains by being on the gate, with no change to its own screens:
 
-| Typed site | Action | Other door today | Recommendation |
-|---|---|---|---|
-| "Record payment 50000 from Ibrahim via bank" (+ its candidate chip) | `record_payment` | none (🧾 Upload Receipt is a different record) | **build a tap door first** (💰 Finance → 💵 Payment received), then delete the typed handler |
-| "Revert last transaction" | `revert_sale_bundle` | none | **build a tap door** (🛂 Decided → the sale → ↩️ Revert), then delete |
-| "Add contact Ibrahim, worker, phone …" | `add_contact` | 👥 CRM → ➕ Add Contact | delete the typed handler; optional `Contact …` shortcut INTO the door (CON-2 layout) |
+| | Before | Now |
+|---|---|---|
+| Two taps of one Submit | two requests, two admin cards (unless the door had its own guard — 5 of 26 did) | **one request.** The second tap is handed the first one's request and sends nothing. Per person, per identical request, within `APPROVAL_DOUBLE_TAP_SECONDS`, and only while the first is still waiting. |
+| One request id | one row only where the door used `appendOnce` | one row, always |
+| The requester's card at every signature | every type (phase 1) | unchanged |
+| A new rule about duplicates | 26 places to change | one registry entry |
 
-  `npm run census:typed` (needs the Railway `DATABASE_URL`) prints how often
-  each was typed, per month, and every line that bounced — the evidence for
-  the order of those doors.
+What the migration deliberately did NOT change:
+
+- **No door's twin rule.** Only payments declare what makes two of them the
+  same and refuse the same person's repeat. Every other type stays `flag`:
+  the admin card's `⚠️ Possible duplicate` line, as before. Declaring a key
+  for a type (a sale = the same bales; a customer = the same name) is one
+  registry entry each, and each is the owner's to rule on.
+- **Who signs, and what approval does.** `risk/evaluate.js`,
+  `approvalEvents` and the executors are untouched.
+- **Each door's own audit line and admin card.**
+- **Transfers** keep their lifecycle, their reference and their Send guard;
+  only their one queue write goes through the gate (`guard: false`,
+  `twin: false`).
+
+`raise` options the doors use: `actionJSON` (a door that already builds its
+whole row) · `fresh` (the id was minted for this call: no id lookups) ·
+`audit: false` (the door writes its own audit line) · `auditMeta` /
+`auditEvent` · `guard: false` · `twin: false`.
+
+## 7. The typed AI raise sites
+
+Four call sites, three actions, reachable only when `AI_TEXT_PARSER` is not
+`0`:
+
+| Typed site | Action | Tap door |
+|---|---|---|
+| "Record payment 50000 from Ibrahim via bank" (+ its candidate chip) | `record_payment` | 💰 Finance → 💵 Payment Received (built with this phase — see `PRC-1`) |
+| "Revert last transaction" | `revert_sale_bundle` | 🛂 Approvals → ✅❌ Decided → the sale → ↩️ Revert this sale (built with this phase) |
+| "Add contact Ibrahim, worker, phone …" | `add_contact` | 👥 CRM → ➕ Add Contact (exists) |
+
+The typed handlers stay in the code until the owner has read the typed
+census (`npm run insights -- typed`, or `npm run census:typed` on Railway)
+and says to delete them. They already raise through the gate.
 
 ## 8. Tests
 

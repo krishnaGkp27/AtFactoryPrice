@@ -596,9 +596,10 @@ async function submit(bot, chatId, userId) {
     return;
   }
   try {
-    const { requestId, branch, total, items } = await branchOpsService.submitExpenseBatch({
+    const { requestId, branch, total, items, duplicate } = await branchOpsService.submitExpenseBatch({
       userId, items: session.items,
     });
+    if (duplicate) return; // APG-1 — a double tap: the first tap is already sending the card
     const isAdm = auth.isAdmin(userId);
     const excludeId = isAdm ? userId : undefined;
     // Itemise the admin card so a spelling mistake is visible: the admin

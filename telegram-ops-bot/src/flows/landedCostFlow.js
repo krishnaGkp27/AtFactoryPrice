@@ -321,13 +321,14 @@ async function submit(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'landed_cost_flow') return;
   try {
-    const { requestId, allocation } = await landedCostService.submitForApproval({
+    const { requestId, allocation, duplicate } = await landedCostService.submitForApproval({
       grnId: session.grnId,
       userId,
       usdPerYard: session.usdPerYard,
       charges: session.charges || [],
       fxRate: session.fxRate,
     });
+    if (duplicate) return; // APG-1 — a double tap: the first tap is already sending the card
 
     const isAdm = auth.isAdmin(userId);
     const excludeId = isAdm ? userId : undefined;

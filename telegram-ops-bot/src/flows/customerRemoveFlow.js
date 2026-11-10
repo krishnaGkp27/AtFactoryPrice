@@ -32,8 +32,6 @@ const customersRepository = require('../repositories/customersRepository');
 const contactsRepository = require('../repositories/contactsRepository');
 const contactLinksRepository = require('../repositories/contactLinksRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
-const approvalQueueRepository = require('../repositories/approvalQueueRepository');
-const auditLogRepository = require('../repositories/auditLogRepository');
 const approvalEvents = require('../events/approvalEvents');
 const approvalCards = require('../services/approvalCards');
 const riskEvaluate = require('../risk/evaluate');
@@ -191,12 +189,13 @@ async function submit(bot, chatId, userId) {
   const requestId = session.requestId;
   try {
     const risk = await riskEvaluate.evaluate({ action: aj.action, userId });
-    const { created } = await approvalQueueRepository.appendOnce({
-      requestId, user: userId, actionJSON: aj,
-      riskReason: risk.reason || 'dual_admin_required', status: 'pending',
+    // APG-1 — raised through the gate (the session's id: one id = one row).
+    const { created } = await require('../services/approvalGate').raise({
+      requestId, userId, actionJSON: aj, guard: false,
+      riskReason: risk.reason || 'dual_admin_required',
+      auditMeta: { customer_id: aj.customer_id, reason: aj.reason },
     });
     if (created) {
-      await auditLogRepository.append('approval_queued', { requestId, action: aj.action, customer_id: aj.customer_id, reason: aj.reason }, userId);
       const userLabel = await approvalCards.resolveUserLabel(userId);
       await approvalEvents.notifyAdminsApprovalRequest(
         bot, requestId, userLabel, approvalCards.buildRemoveCustomerCard(aj), risk.reason, auth.isAdmin(userId) ? userId : undefined,

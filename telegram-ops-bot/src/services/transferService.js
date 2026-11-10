@@ -222,11 +222,14 @@ async function createTransferRequest({ from, to, lines, requestedBy, dispatcher,
       ...(idemKey ? { idemKey: String(idemKey) } : {}),
       ...(twin ? { duplicateOf: twin.requestId } : {}),
     };
-    const { created } = await approvalQueueRepository.appendOnce({
-      requestId, user: String(requestedBy || ''),
+    // APG-1 — the ONE queue write goes through the gate. The transfer keeps
+    // its own lifecycle: its reference is its id (one id = one row), its
+    // twin rule is the Send guard above, its audit line is `transfer.requested`.
+    const { created } = await require('./approvalGate').raise({
+      requestId, userId: String(requestedBy || ''),
       actionJSON: aj,
       riskReason: 'Warehouse transfer — dispatcher + receiver confirmation chain.',
-      status: 'pending',
+      audit: false, guard: false, twin: false,
     });
     // A taken reference means NOTHING was written (a same-day id minted by an
     // earlier process that fell back to a random floor). Reporting success

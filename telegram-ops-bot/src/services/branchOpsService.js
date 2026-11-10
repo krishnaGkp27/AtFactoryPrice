@@ -33,7 +33,6 @@
  */
 
 const branchOpsLogRepository = require('../repositories/branchOpsLogRepository');
-const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const usersRepository = require('../repositories/usersRepository');
 const idGenerator = require('../utils/idGenerator');
@@ -261,10 +260,13 @@ async function submitExpenseBatch({ userId, items }) {
     items: cleaned, total_amount: total,
   };
   const risk = await riskEvaluate.evaluate({ action: 'record_office_expense', userId });
-  await approvalQueueRepository.append({
-    requestId, user: String(userId), actionJSON: aj,
-    riskReason: risk.reason || 'admin_approval_required', status: 'pending',
+  // APG-1 — raised through the gate: a double tap is one request, and the
+  // second tap writes no second set of pending rows.
+  const raised = await require('./approvalGate').raise({
+    requestId, fresh: true, audit: false, userId: String(userId), actionJSON: aj,
+    riskReason: risk.reason || 'admin_approval_required',
   });
+  if (!raised.created) return { requestId: raised.requestId, branch, manager, total, items: cleaned, duplicate: true };
   // Eager pending rows so the manager's "Today" lens reflects what's in flight.
   // EXP-1 — each row keeps its own kind; subject stays the concise title.
   // EXP-1b — best-effort: the QUEUE row is the source of truth, and

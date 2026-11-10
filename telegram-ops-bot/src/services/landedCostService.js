@@ -34,7 +34,6 @@
 const containerChargesRepository = require('../repositories/containerChargesRepository');
 const { todayInLagos } = require('../utils/dates');
 const goodsReceiptsRepository    = require('../repositories/goodsReceiptsRepository');
-const approvalQueueRepository    = require('../repositories/approvalQueueRepository');
 const auditLogRepository         = require('../repositories/auditLogRepository');
 const settingsRepository         = require('../repositories/settingsRepository');
 const idGenerator                = require('../utils/idGenerator');
@@ -240,10 +239,12 @@ async function submitForApproval({ grnId, userId, usdPerYard, charges, fxRate })
     allocation,              // also snapshotted for the approval card
   };
   const risk = await riskEvaluate.evaluate({ action: 'finalize_landed_cost', userId });
-  await approvalQueueRepository.append({
-    requestId, user: userId, actionJSON: aj,
-    riskReason: risk.reason || 'dual_admin_required', status: 'pending',
+  // APG-1 — raised through the gate: a double tap is one request.
+  const raised = await require('./approvalGate').raise({
+    requestId, fresh: true, audit: false, userId, actionJSON: aj,
+    riskReason: risk.reason || 'dual_admin_required',
   });
+  if (!raised.created) return { requestId: raised.requestId, allocation, duplicate: true };
   await goodsReceiptsRepository.markPendingLandedCost(grnId, requestId);
   await auditLogRepository.append('approval_queued',
     { requestId, action: 'finalize_landed_cost', grnId, ngnPerYard: allocation.ngnLandedPerYard }, userId);

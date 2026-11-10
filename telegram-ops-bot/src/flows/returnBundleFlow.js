@@ -42,7 +42,6 @@ const dateCalendar = require('../utils/dateCalendar');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const unitDisplayService = require('../services/unitDisplayService');
 const customerEntity = require('../services/customerEntity');
-const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const idGenerator = require('../utils/idGenerator');
 const { fmtQty } = require('../utils/format');
@@ -552,13 +551,11 @@ async function submit(bot, chatId, userId, session) {
   const requestId = idGenerator.requestId();
   const { label } = await snapshotFor(userId);
   const actionJSON = buildActionJSON(session, label);
+  let raised;
   try {
-    await approvalQueueRepository.append({
-      requestId,
-      user: String(userId),
-      actionJSON,
-      riskReason: RISK_REASON,
-      status: 'pending',
+    // APG-1 — raised through the gate: a double tap is one request.
+    raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, userId: String(userId), actionJSON, riskReason: RISK_REASON, audit: false,
     });
   } catch (e) {
     logger.error(`[returnBundleFlow] queue append failed: ${e.message}`);
@@ -568,6 +565,7 @@ async function submit(bot, chatId, userId, session) {
     });
     return;
   }
+  if (!raised.created) return;
   try {
     await auditLogRepository.append('approval_queued', {
       requestId,

@@ -8214,49 +8214,35 @@ async function runS54() {
     }
   }
 
-  // ---- S-APG — APG-1: no NEW door raises a request outside the gate ----
+  // ---- S-APG — APG-1: NO door raises a request outside the gate ----
   // Owner, 10-Nov-2026: "every gate and channel will have its own method /
-  // path." The foundation is `approvalGate.raise`; the doors move onto it
-  // one at a time. Until they have, this freezes the direct
-  // queue writes (`append(` / `appendOnce(`): a file may LOSE calls (it
-  // moved to the gate) but may never gain one, and no new file may appear.
-  // To raise a request in new code, call approvalGate.raise.
+  // path." The foundation is `approvalGate.raise`. The census that day found
+  // 44 direct queue writes in 26 files; phases 1–3 moved every one of them
+  // (the last on 10-Nov-2026). From here the rule is absolute: only the
+  // gate and the repository itself may call the queue's `append(` /
+  // `appendOnce(`. To raise a request in new code, call approvalGate.raise.
   {
-    const FROZEN = {
-      // counted 10-Nov-2026: 44 direct queue writes in 26 files
-      'controllers/catalogFlowController.js': 3, 'controllers/telegramController.js': 14,
-      'flows/bulkReceiveFlow.js': 1, 'flows/contactNetworkFlow.js': 2, 'flows/customerMergeFlow.js': 1,
-      'flows/customerRemoveFlow.js': 1, 'flows/designCategoryFlow.js': 1, 'flows/editBaleFlow.js': 1,
-      'flows/goodsReceiptFlow.js': 1, 'flows/photoReceiveFlow.js': 1, 'flows/reminderConfigFlow.js': 1,
-      'flows/returnBundleFlow.js': 1, 'flows/returnFlow.js': 1, 'flows/shadePhotoFlow.js': 1,
-      'flows/snapSaleFlow.js': 2, 'flows/taskFlow.js': 1, 'flows/unitDisplayFlow.js': 1,
-      'flows/userAddFlow.js': 1, 'flows/userManageFlow.js': 1, 'flows/warehouseFlow.js': 1,
-      'services/branchOpsService.js': 1, 'services/bundleSaleService.js': 1, 'services/inventoryService.js': 2,
-      'services/landedCostService.js': 1, 'services/linkedSupplyService.js': 1, 'services/transferService.js': 1,
-      // moved to the gate (PAY-5) — must stay at zero
-      'flows/paymentFlow.js': 0,
-    };
     const srcRoot = path.join(__dirname, '../src');
     const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory()
       ? walk(path.join(dir, d.name)) : (d.name.endsWith('.js') ? [path.join(dir, d.name)] : [])));
     const over = [];
-    const seen = {};
+    let raises = 0;
     for (const f of walk(srcRoot)) {
       const rel = path.relative(srcRoot, f).replace(/\\/g, '/');
+      const src = fs.readFileSync(f, 'utf8');
+      raises += (src.match(/approvalGate['"]?\)?\.raise\(|\bgate\.raise\(/g) || []).length;
       if (rel === 'repositories/approvalQueueRepository.js' || rel === 'services/approvalGate.js') continue;
-      const n = (fs.readFileSync(f, 'utf8').match(/approvalQueue\w*\.(append|appendOnce)\(/g) || []).length;
-      if (!n) continue;
-      seen[rel] = n;
-      const cap = Object.prototype.hasOwnProperty.call(FROZEN, rel) ? FROZEN[rel] : -1;
-      if (cap < 0) over.push(`${rel}: ${n} direct append(s) in a file that had none — raise through approvalGate.raise`);
-      else if (n > cap) over.push(`${rel}: ${n} direct appends, frozen at ${cap} — raise through approvalGate.raise`);
+      const n = (src.match(/approvalQueue\w*\.(append|appendOnce)\(/g) || []).length;
+      if (n) over.push(`${rel}: ${n} direct queue write(s) — raise through approvalGate.raise`);
     }
     const gateSrc = fs.readFileSync(path.join(srcRoot, 'services/approvalGate.js'), 'utf8');
-    const gateOk = /approvalQueueRepository\.appendOnce\(/.test(gateSrc) && /async function raise\(/.test(gateSrc);
+    const gateOk = /queueRepo\(\)\.append\(/.test(gateSrc) && /async function raise\(/.test(gateSrc)
+      && /apq-append:/.test(gateSrc) && /doubleTapMs/.test(gateSrc);
     const routeOk = /prefixes: \['apg:'\]/.test(fs.readFileSync(path.join(srcRoot, 'controllers/telegramController.js'), 'utf8'));
     if (over.length) over.forEach((d) => fail('S-APG: a request is raised outside the approval gate', d));
-    else if (!gateOk || !routeOk) fail('S-APG: the approval gate is not wired', `raise/appendOnce=${gateOk} apg-route=${routeOk}`);
-    else pass(`S-APG: no new door raises outside the approval gate (${Object.keys(seen).length} legacy files frozen, payments on the gate)`);
+    else if (!gateOk || !routeOk) fail('S-APG: the approval gate is not wired', `raise/append/lock/double-tap=${gateOk} apg-route=${routeOk}`);
+    else if (raises < 40) fail('S-APG: the doors are not on the gate', `${raises} approvalGate.raise call sites found, expected 40+`);
+    else pass(`S-APG: every request is raised through the approval gate (${raises} call sites, 0 direct queue writes)`);
   }
 
   // ---- S54.16 — RET-4: the ↩️ Return goods card is wired end to end ----

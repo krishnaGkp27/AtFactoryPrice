@@ -90,9 +90,7 @@ const procurementOrdersRepo = require('../repositories/procurementOrdersReposito
 const settingsRepository = require('../repositories/settingsRepository');
 const goodsReceiptsRepo = require('../repositories/goodsReceiptsRepository');
 const inventoryRepository = require('../repositories/inventoryRepository');
-const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const approvalEvents = require('../events/approvalEvents');
-const auditLogRepository = require('../repositories/auditLogRepository');
 const idGenerator = require('../utils/idGenerator');
 const riskEvaluate = require('../risk/evaluate');
 const auth = require('../middlewares/auth');
@@ -967,14 +965,15 @@ async function submit(bot, chatId, userId) {
 
   const risk = await riskEvaluate.evaluate({ action: 'bulk_receive_goods', userId });
   const requestId = idGenerator.requestId();
-  await approvalQueueRepository.append({
-    requestId, user: userId, actionJSON: aj,
-    riskReason: risk.reason || 'dual_admin_required', status: 'pending',
+  // APG-1 — raised through the gate: a double tap is one request.
+  const raised = await require('../services/approvalGate').raise({
+    requestId, fresh: true, userId, actionJSON: aj, riskReason: risk.reason || 'dual_admin_required',
+    auditMeta: {
+      reason: risk.reason, source: aj.source, fileHash: aj.fileHash,
+      bales: aj.totalBales, thans: aj.totalThans, edited: aj.editedRows.length,
+    },
   });
-  await auditLogRepository.append('approval_queued', {
-    requestId, reason: risk.reason, source: aj.source, fileHash: aj.fileHash,
-    bales: aj.totalBales, thans: aj.totalThans, edited: aj.editedRows.length,
-  }, userId);
+  if (!raised.created) return;
 
   const isAdm = auth.isAdmin(userId);
   const approverLabel = isAdm ? '2nd admin' : 'admin';

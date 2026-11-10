@@ -23,7 +23,6 @@ const sessionStore = require('../utils/sessionStore');
 const { makeRenderer, mdEscape } = require('../utils/flowKit');
 const customersRepository = require('../repositories/customersRepository');
 const customerEntity = require('../services/customerEntity');
-const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const idGenerator = require('../utils/idGenerator');
 const auth = require('../middlewares/auth');
@@ -101,17 +100,18 @@ async function showConfirm(bot, chatId, userId, session) {
 
 async function submit(bot, chatId, userId, session) {
   const requestId = idGenerator.requestId();
-  await approvalQueueRepository.append({
-    requestId,
-    user: userId,
+  // APG-1 — raised through the gate: a double tap is one request.
+  const raised = await require('../services/approvalGate').raise({
+    requestId, fresh: true, audit: false,
+    userId: userId,
     actionJSON: {
       action: 'merge_customers',
       typoId: session.typo.id, typoName: session.typo.name,
       canonicalId: session.canonical.id, canonicalName: session.canonical.name,
     },
     riskReason: 'Merging customers moves ledger identity — dual-admin.',
-    status: 'pending',
   });
+  if (!raised.created) return;
   await auditLogRepository.append('approval_queued',
     { requestId, action: 'merge_customers', typo: session.typo.name, canonical: session.canonical.name }, userId);
   const approvalEvents = require('../events/approvalEvents');

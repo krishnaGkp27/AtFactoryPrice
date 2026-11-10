@@ -27,8 +27,6 @@
  */
 
 const inventoryRepository = require('../repositories/inventoryRepository');
-const approvalQueueRepository = require('../repositories/approvalQueueRepository');
-const auditLogRepository = require('../repositories/auditLogRepository');
 const idGenerator = require('../utils/idGenerator');
 const { num } = require('../utils/text');
 
@@ -336,23 +334,21 @@ async function submitForApproval({ cart, sale, user, riskReason, requestId: pres
     amountPaid: num(sale.amountPaid) || 0,
   };
   const actionJSON = { ...payload, enrichment, requestId };
-  const { created, existing } = await approvalQueueRepository.appendOnce({
+  // APG-1 — raised through the gate: one id = one row (the SUB-1 guarantee),
+  // a double tap under a second id is merged, the audit line is the gate's.
+  const raised = await require('./approvalGate').raise({
     requestId,
-    user: String((user && (user.id || user.userId)) || ''),
+    fresh: !presetId,
+    userId: String((user && (user.id || user.userId)) || ''),
     actionJSON,
     riskReason: riskReason || 'All sale operations require admin approval.',
-    status: 'pending',
+    auditMeta: { flow: 'BUNDLE-SALE-C1', thans: cart.lines.length },
   });
-  if (!created) {
+  if (!raised.created) {
     // The row already exists — this call is a re-entry. Report it so the
     // flow can skip the admin notify instead of producing a second card.
-    return { requestId, actionJSON: (existing && existing.actionJSON) || actionJSON, duplicate: true };
+    return { requestId: raised.requestId, actionJSON: raised.actionJSON || actionJSON, duplicate: true };
   }
-  try {
-    await auditLogRepository.append('approval_queued',
-      { requestId, action: 'sale_bundle', flow: 'BUNDLE-SALE-C1', thans: cart.lines.length },
-      String((user && (user.id || user.userId)) || 'system'));
-  } catch (_) { /* audit failures must never block the sale */ }
   return { requestId, actionJSON, duplicate: false };
 }
 

@@ -123,6 +123,10 @@ const DEFAULTS = {
   // 0 = nothing is refused, admin cards keep their ⚠️ Possible duplicate
   // line. An emergency valve, live within the settings cache, no deploy.
   APPROVAL_TWIN_GUARD: 1,
+  // APG-1 — seconds within which the SAME person raising the SAME request
+  // again is treated as a double tap: the second tap is handed the first
+  // one's request, and no second row or admin card is made. 0 = off.
+  APPROVAL_DOUBLE_TAP_SECONDS: 20,
   // TXT-1 (owner, 01-Nov-2026) — may the AI read a typed sentence for the
   // sheet? 0 = never: the three local script lines (sell / return /
   // transfer) or the chips card, OpenAI is not called; `reads` = the AI

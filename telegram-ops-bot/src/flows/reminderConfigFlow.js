@@ -19,7 +19,6 @@
 const sessionStore = require('../utils/sessionStore');
 const auth = require('../middlewares/auth');
 const departmentsRepository = require('../repositories/departmentsRepository');
-const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const usersRepository = require('../repositories/usersRepository');
 const reminderPolicy = require('../services/reminderPolicy');
@@ -119,10 +118,12 @@ async function submitChange(bot, chatId, userId, hours) {
     scope: s.scope, dept: s.dept || '', hours,
     setting_key: reminderPolicy.keyFor(s.scope, s.dept),
   };
-  await approvalQueueRepository.append({
-    requestId, user: String(userId), actionJSON,
-    riskReason: 'Reminder changes require admin approval.', status: 'pending',
+  // APG-1 — raised through the gate: a double tap is one request.
+  const raised = await require('../services/approvalGate').raise({
+    requestId, fresh: true, audit: false, userId: String(userId), actionJSON,
+    riskReason: 'Reminder changes require admin approval.',
   });
+  if (!raised.created) return;
   await auditLogRepository.append('approval_queued',
     { requestId, action: 'set_reminder_config', scope: s.scope, dept: s.dept, hours }, userId);
   try {

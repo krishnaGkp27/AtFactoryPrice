@@ -195,10 +195,12 @@ async function submit(bot, chatId, userId) {
   const risk = await riskEvaluate.evaluate({ action: ACTION, userId });
   const requestId = idGenerator.requestId();
   try {
-    await approvalQueueRepository.append({
-      requestId, user: String(userId), actionJSON: aj,
-      riskReason: risk.reason || 'dual_admin_required', status: 'pending',
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: String(userId), actionJSON: aj,
+      riskReason: risk.reason || 'dual_admin_required',
     });
+    if (!raised.created) return;
     await auditLogRepository.append('approval_queued', { requestId, action: ACTION, design, category }, String(userId));
 
     const isAdm = auth.isAdmin(String(userId));

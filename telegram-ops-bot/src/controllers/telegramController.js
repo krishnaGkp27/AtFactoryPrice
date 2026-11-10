@@ -219,9 +219,11 @@ async function requireApproval(bot, chatId, msg, userId, action, actionJSON, sum
   const risk = await riskEvaluate.evaluate({ action, userId });
   if (risk.risk !== 'approval_required') return false;
   const requestId = genId();
-  await approvalQueueRepository.append({
-    requestId, user: userId, actionJSON, riskReason: risk.reason, status: 'pending',
+  // APG-1 — raised through the gate: a double tap is one request.
+  const raised = await require('../services/approvalGate').raise({
+    requestId, fresh: true, audit: false, userId: userId, actionJSON, riskReason: risk.reason,
   });
+  if (!raised.created) return true;
   await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
   // ANL-2 — approval_queued is now tracked inside approvalQueueRepository
   // .append (the seam ALL ~25 producers share); a second emit here would
@@ -869,11 +871,13 @@ async function handleAddBankFlowText(bot, chatId, userId, text) {
     }
 
     const requestId = genId();
-    await approvalQueueRepository.append({
-      requestId, user: userId,
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: userId,
       actionJSON: { action: 'add_bank', bank_name: entry },
-      riskReason: 'New bank addition requires admin approval', status: 'pending',
+      riskReason: 'New bank addition requires admin approval',
     });
+    if (!raised.created) return true;
     await auditLogRepository.append('approval_queued', { requestId, reason: 'add_bank', bank: entry }, userId);
 
     if (session.flowMessageId) {
@@ -1077,8 +1081,9 @@ async function handleSampleFlowText(bot, chatId, userId, text) {
     });
 
     const requestId = genId();
-    await approvalQueueRepository.append({
-      requestId, user: userId,
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: userId,
       actionJSON: {
         // APU-1 3.1: was 'new_customer_registration' — a dead action name
         // with no executor; 'new_customer' is what the approve/reject
@@ -1088,8 +1093,8 @@ async function handleSampleFlowText(bot, chatId, userId, text) {
         requesterUserId: userId, from: 'sample_flow',
       },
       riskReason: 'New customer requires admin approval',
-      status: 'pending',
     });
+    if (!raised.created) return true;
     await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'sample_flow' }, userId);
 
     session.pendingCustomerId = customerId;
@@ -3149,8 +3154,9 @@ async function handleOrderFlowText(bot, chatId, userId, text) {
     });
 
     const requestId = genId();
-    await approvalQueueRepository.append({
-      requestId, user: userId,
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: userId,
       actionJSON: {
         // APU-1 3.1: was 'new_customer_registration' — a dead action name
         // with no executor; 'new_customer' is what the approve/reject
@@ -3160,8 +3166,8 @@ async function handleOrderFlowText(bot, chatId, userId, text) {
         requesterUserId: userId, from: 'order_flow',
       },
       riskReason: 'New customer requires admin approval',
-      status: 'pending',
     });
+    if (!raised.created) return true;
     await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'order_flow' }, userId);
 
     session.pendingCustomerId = customerId;
@@ -3341,8 +3347,9 @@ async function handleReceiptFlowText(bot, chatId, userId, text) {
       status: 'Pending',
     });
     const requestId = genId();
-    await approvalQueueRepository.append({
-      requestId, user: userId,
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: userId,
       actionJSON: {
         // APU-1 3.1: was 'new_customer_registration' — a dead action name
         // with no executor; 'new_customer' is what the approve/reject
@@ -3352,8 +3359,8 @@ async function handleReceiptFlowText(bot, chatId, userId, text) {
         requesterUserId: userId, from: 'receipt_flow',
       },
       riskReason: 'New customer requires admin approval',
-      status: 'pending',
     });
+    if (!raised.created) return true;
     await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'receipt_flow' }, userId);
     session.pendingCustomerId = customerId;
     session.customerApprovalId = requestId;
@@ -4534,11 +4541,13 @@ async function handleMessage(bot, msg) {
           return;
         }
         const requestId = genId();
-        await approvalQueueRepository.append({
-          requestId, user: userId,
+        // APG-1 — raised through the gate: a double tap is one request.
+        const raised = await require('../services/approvalGate').raise({
+          requestId, fresh: true, audit: false, userId: userId,
           actionJSON: { action: 'update_price', filters, price: intent.price },
-          riskReason: '2nd admin approval required for price update', status: 'pending',
+          riskReason: '2nd admin approval required for price update',
         });
+        if (!raised.created) return;
         await auditLogRepository.append('approval_queued', { requestId, reason: 'price_update_approval' }, userId);
         const userLabel = await getRequesterDisplayName(userId, msg);
         const summary = `Price Update Request\n${label}\nNew price: ${money.saleRate(intent.price)}`;
@@ -7434,12 +7443,13 @@ async function executeSale(bot, chatId, userId) {
       : {};
     const backdatedNote = isBackdated ? `Backdated sale (${daysBack} day${daysBack === 1 ? '' : 's'} in past). ` : '';
     const effectiveRiskReason = backdatedNote + (risk.reason || (isBackdated ? 'All backdated sales require admin approval.' : 'All sale operations require admin approval.'));
-    await approvalQueueRepository.append({
-      requestId, user: userId,
+    // APG-1 — raised through the gate (a double tap is one request).
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, userId,
       actionJSON: { action: 'sale_bundle', items: session.items, customer: session.collected.customer, salesDate: sDate, salesPerson: details.salesPerson, paymentMode: details.paymentMode, backdated: isBackdated, daysBack, totalYards, yardsByDesign, ...saleDocInfo },
-      riskReason: effectiveRiskReason, status: 'pending',
+      riskReason: effectiveRiskReason, auditMeta: { reason: risk.reason },
     });
-    await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
+    if (!raised.created) return;
 
     const userLabel = await getRequesterDisplayName(userId, null);
     const isSubmitterAdmin = config.access.adminIds.includes(userId);
@@ -8362,8 +8372,9 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     };
 
     const requestId = genId();
-    await approvalQueueRepository.append({
-      requestId, user: uid,
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: uid,
       actionJSON: {
         action: 'add_contact',
         type: session.personType || 'other',
@@ -8376,8 +8387,8 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         ...(Array.isArray(session.stores) && session.stores.length ? { stores: session.stores } : {}),
       },
       riskReason: 'New contact requires admin approval',
-      status: 'pending',
     });
+    if (!raised.created) return;
     await auditLogRepository.append('approval_queued',
       { requestId, reason: 'add_contact', type: session.personType || 'other' }, uid);
 
@@ -8463,11 +8474,13 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Submitting...' });
 
     const requestId = genId();
-    await approvalQueueRepository.append({
-      requestId, user: uid,
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: uid,
       actionJSON: { action: 'remove_bank', bank_name: bankName },
-      riskReason: 'Bank removal requires admin approval', status: 'pending',
+      riskReason: 'Bank removal requires admin approval',
     });
+    if (!raised.created) return;
     await auditLogRepository.append('approval_queued', { requestId, reason: 'remove_bank', bank: bankName }, uid);
 
     await editOrSend(bot, chatId, callbackQuery.message.message_id,
@@ -8587,11 +8600,13 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     const filters = { design: session.design };
     if (session.shade && session.shade !== '__all__') filters.shade = session.shade;
     const requestId = genId();
-    await approvalQueueRepository.append({
-      requestId, user: uid,
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: uid,
       actionJSON: { action: 'update_price', filters, price: session.newPrice },
-      riskReason: '2nd admin approval required for price update', status: 'pending',
+      riskReason: '2nd admin approval required for price update',
     });
+    if (!raised.created) return;
     await auditLogRepository.append('approval_queued', { requestId, reason: 'price_update_approval', via: 'tap_flow' }, uid);
     const shadeLabel = session.shade === '__all__' ? 'All shades' : session.shade;
     if (session.flowMessageId) {
@@ -8690,11 +8705,13 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     const approverLabel = isAdm ? '2nd admin' : 'admin';
     const riskReason = `All return operations require ${approverLabel} approval.`;
     const requestId = genId();
-    await approvalQueueRepository.append({
-      requestId, user: uid,
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: uid,
       actionJSON: { action: 'return_than', packageNo: session.packageNo, thanNo: session.thanNo, warehouse: session.warehouse || '' },
-      riskReason, status: 'pending',
+      riskReason,
     });
+    if (!raised.created) return;
     await auditLogRepository.append('approval_queued', { requestId, reason: 'return_than', via: 'tap_flow' }, uid);
     if (session.flowMessageId) {
       await bot.editMessageText(
@@ -8778,11 +8795,13 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     // APU-2: canonical DD-MMM-YYYY date (owner mandate 14-Jul) and the
     // card reason matches the queued riskReason.
     const summary = `Sample Request\nDesign: ${session.design}${session.shade ? ' Shade ' + session.shade : ''}\nType: ${session.sample_type}\nCustomer: ${session.customer}\nQty: ${session.quantity} pcs\nFollow-up: ${fmtDate(session.followup_date)}`;
-    await approvalQueueRepository.append({
-      requestId, user: uid,
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: uid,
       actionJSON: { action: 'give_sample', design: session.design, shade: session.shade, sample_type: session.sample_type, customer: session.customer, quantity: session.quantity, followup_date: session.followup_date },
-      riskReason: 'Sample requires admin approval', status: 'pending',
+      riskReason: 'Sample requires admin approval',
     });
+    if (!raised.created) return;
     await auditLogRepository.append('approval_queued', { requestId, reason: 'sample_approval' }, uid);
     const userLabel = await getRequesterDisplayName(uid, null);
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'Sample requires admin approval',
@@ -11339,9 +11358,11 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     // times (admin_review = ready for 2nd-admin tap).
     actionJSON.stage = 'dispatch_review';
 
-    await approvalQueueRepository.append({
-      requestId, user: uid, actionJSON, riskReason: approvalReason, status: 'pending',
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: uid, actionJSON, riskReason: approvalReason,
     });
+    if (!raised.created) return;
     await auditLogRepository.append('approval_queued', { requestId, reason: approvalReason }, uid);
 
     const userLabel = await getRequesterDisplayName(uid, null);
@@ -12054,9 +12075,10 @@ async function submitDesignAssetForApproval(bot, chatId, userId, msg) {
   }
 
   // Risk: design_asset_upload always requires 2-admin approval (anyone uploads).
-  await approvalQueueRepository.append({
-    requestId,
-    user: userId,
+  // APG-1 — raised through the gate: a double tap is one request.
+  const raised = await require('../services/approvalGate').raise({
+    requestId, fresh: true, audit: false,
+    userId: userId,
     actionJSON: {
       action: 'design_asset_upload',
       design: staged.design,
@@ -12073,8 +12095,8 @@ async function submitDesignAssetForApproval(bot, chatId, userId, msg) {
       catalogMode: session.catalogMode === 'add_page' ? 'add_page' : 'replace',
     },
     riskReason: 'Product-photo asset must be approved before it appears to consumers.',
-    status: 'pending',
   });
+  if (!raised.created) return;
   await auditLogRepository.append('approval_queued', { requestId, action: 'design_asset_upload', design: staged.design }, userId);
 
   const userLabel = await getRequesterDisplayName(userId, msg);

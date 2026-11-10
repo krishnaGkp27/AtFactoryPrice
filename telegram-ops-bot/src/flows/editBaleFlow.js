@@ -341,14 +341,13 @@ async function submit(bot, chatId, userId) {
   const risk = await require('../risk/evaluate').evaluate({ action: ACTION, userId: String(userId) });
   const requestId = require('../utils/idGenerator').requestId();
   try {
-    await approvalQueueRepository.append({
-      requestId, user: String(userId), actionJSON: aj,
-      riskReason: risk.reason || 'dual_admin_required', status: 'pending',
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, userId: String(userId), actionJSON: aj,
+      riskReason: risk.reason || 'dual_admin_required',
+      auditMeta: { packageNo: session.packageNo, changes: baleEdit.describePlan(plan) },
     });
-    try {
-      await require('../repositories/auditLogRepository').append('approval_queued',
-        { requestId, action: ACTION, packageNo: session.packageNo, changes: baleEdit.describePlan(plan) }, String(userId));
-    } catch (_) { /* best effort */ }
+    if (!raised.created) return;
     const approvalCards = require('../services/approvalCards');
     const summary = `✏️ Edit bale ${session.packageNo} · ${h.design || '?'} · ${session.warehouse || '?'} — ${plan.changeCount} change(s): ${baleEdit.describePlan(plan).join('; ')}`;
     const opts = session.photoKind === 'photo' && session.photoFileId

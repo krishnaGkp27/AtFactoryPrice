@@ -48,7 +48,6 @@ const usersRepo = require('../repositories/usersRepository');
 const pendingUsersRepo = require('../repositories/pendingUsersRepository');
 const warehouseFlow = require('./warehouseFlow');
 const branchService = require('../services/branchService');
-const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const approvalEvents = require('../events/approvalEvents');
 const riskEvaluate = require('../risk/evaluate');
@@ -686,10 +685,12 @@ async function submit(bot, chatId, userId) {
   const risk = await riskEvaluate.evaluate({ action: 'add_user', userId });
   const requestId = idGenerator.requestId();
   try {
-    await approvalQueueRepository.append({
-      requestId, user: userId, actionJSON: aj,
-      riskReason: risk.reason || 'dual_admin_required', status: 'pending',
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, audit: false, userId: userId, actionJSON: aj,
+      riskReason: risk.reason || 'dual_admin_required',
     });
+    if (!raised.created) return;
     await auditLogRepository.append('approval_queued', { requestId, action: 'add_user' }, userId);
     const isAdm = auth.isAdmin(userId);
     const excludeId = isAdm ? userId : undefined;

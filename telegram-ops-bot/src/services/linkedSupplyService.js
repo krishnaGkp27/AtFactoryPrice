@@ -83,10 +83,12 @@ async function raise(bot, info, lines) {
   };
 
   const approvalQueueRepository = require('../repositories/approvalQueueRepository');
-  await approvalQueueRepository.appendOnce({
-    requestId, user: telegramId, actionJSON,
-    riskReason: 'Admin approval required', status: 'pending',
+  // APG-1 — raised through the gate: a double tap is one request.
+  const raised = await require('./approvalGate').raise({
+    requestId, fresh: true, audit: false, userId: telegramId, actionJSON,
+    riskReason: 'Admin approval required',
   });
+  if (!raised.created) return { ok: true, requestId: raised.requestId };
   try {
     await require('../repositories/auditLogRepository').append('approval_queued',
       { requestId, reason: 'supply_request', via: 'my_products', link_type: info.type }, telegramId);

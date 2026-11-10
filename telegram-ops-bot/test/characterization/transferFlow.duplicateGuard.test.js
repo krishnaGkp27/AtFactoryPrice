@@ -181,11 +181,14 @@ test('leaving the confirm card to EDIT ends the identity; a key never binds a di
 test('a taken reference is refused, never reported as sent', async () => {
   armQueue(); sessionStore.clear('777');
   const transferService = require(path.join(SRC, 'services/transferService'));
-  const realOnce = approvalQueueRepository.appendOnce;
-  approvalQueueRepository.appendOnce = async () => ({ created: false, existing: { requestId: 'TR-x' } });
+  // APG-1 — the transfer's one queue write goes through the gate, which
+  // looks the reference up before writing: a row already holding it means
+  // nothing is written and the service refuses.
+  const realOnce = approvalQueueRepository.getByRequestId;
+  approvalQueueRepository.getByRequestId = async (id) => ({ requestId: id, status: 'pending', actionJSON: { action: 'transfer_stock' } });
   try {
     await assert.rejects(() => transferService.createTransferRequest({ from: 'Lagos', to: 'Kano office', requestedBy: '777', dispatcher: 'abdul', receiver: 'musa', lines: [{ design: '9006', shade: '3', qty: 1 }] }), /already taken/);
-  } finally { approvalQueueRepository.appendOnce = realOnce; }
+  } finally { approvalQueueRepository.getByRequestId = realOnce; }
 });
 
 test('an employee cannot force: trf:send:force from a non-admin is still the guard', async () => {

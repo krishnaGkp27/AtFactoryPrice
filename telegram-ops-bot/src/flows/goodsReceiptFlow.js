@@ -57,9 +57,7 @@ const goodsReceiptsRepo = require('../repositories/goodsReceiptsRepository');
 const auth = require('../middlewares/auth');
 const config = require('../config');
 const riskEvaluate = require('../risk/evaluate');
-const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const approvalEvents = require('../events/approvalEvents');
-const auditLogRepository = require('../repositories/auditLogRepository');
 const idGenerator = require('../utils/idGenerator');
 const logger = require('../utils/logger');
 const { editOrSend, isNotModified } = require('../utils/telegramUI');
@@ -477,10 +475,11 @@ async function submit(bot, chatId, userId, msgOrNull) {
   // drifted (07-Aug audit, door #8 note).
   {
     const requestId = idGenerator.requestId();
-    await approvalQueueRepository.append({
-      requestId, user: userId, actionJSON: aj, riskReason: risk.reason, status: 'pending',
+    // APG-1 — raised through the gate: a double tap is one request.
+    const raised = await require('../services/approvalGate').raise({
+      requestId, fresh: true, userId, actionJSON: aj, riskReason: risk.reason, auditMeta: { reason: risk.reason },
     });
-    await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
+    if (!raised.created) return;
     const isAdm = auth.isAdmin(userId);
     const approverLabel = isAdm ? '2nd admin' : 'admin';
     const excludeId = isAdm ? userId : undefined;

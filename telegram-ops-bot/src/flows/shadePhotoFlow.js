@@ -453,17 +453,16 @@ async function submit(bot, chatId, userId) {
     } catch (e) { await fail('save the shade photos', e); return; }
   }
   const shades = list.map((s) => ({ number: s.shadeNo, name: s.shadeName }));
-  const approvalQueueRepository = require('../repositories/approvalQueueRepository');
   try {
-    await approvalQueueRepository.appendOnce({
-      requestId, user: userId,
+    // APG-1 — raised through the gate (one request id = one row).
+    await require('../services/approvalGate').raise({
+      requestId, audit: false, guard: false, userId,
       actionJSON: {
         action: 'design_asset_upload', kind: 'shade',
         design: session.design, arrivalBatch: session.arrivalBatch || '',
         shadeCount: shades.length, shades, uploaderUserId: userId,
       },
       riskReason: 'Shade photos must be approved before they appear to customers, marketers and sales.',
-      status: 'pending',
     });
   } catch (e) { await fail('queue the approval', e); return; }
   try {

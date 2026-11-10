@@ -46,6 +46,7 @@ let NOTIFIED = [];
 let REJECTED = [];
 approvalQueueRepository.getAllPending = async () => QUEUE.filter((q) => q.status === 'pending');
 approvalQueueRepository.getByRequestId = async (id) => QUEUE.find((q) => String(q.requestId) === String(id)) || null;
+approvalQueueRepository.append = async (rec) => { QUEUE.push({ createdAt: new Date().toISOString(), ...rec }); };
 approvalQueueRepository.appendOnce = async (rec) => {
   if (QUEUE.some((q) => q.requestId === rec.requestId)) return { created: false, existing: QUEUE.find((q) => q.requestId === rec.requestId) };
   QUEUE.push({ createdAt: new Date().toISOString(), ...rec });
@@ -64,7 +65,7 @@ approvalEvents.notifyAdminsApprovalRequest = async (...a) => { NOTIFIED.push(a);
 approvalEvents.handleApprovalCallback = async (bot, cq, action) => { REJECTED.push({ data: cq.data, action }); };
 
 const PAY = { payee_name: 'Muhammad', payee_type: 'employee', amount_ngn: 70000, account_number: '7044196792', bank: 'OPAY', reason: 'Salary' };
-function reset() { QUEUE = []; AUDIT = []; SETTINGS = {}; NOTIFIED = []; REJECTED = []; gate._internals.twinSources.clear(); }
+function reset() { QUEUE = []; AUDIT = []; SETTINGS = {}; NOTIFIED = []; REJECTED = []; gate._internals.twinSources.clear(); gate._internals.recent.clear(); }
 const cq = (from, data) => ({ id: 'q1', data, from: { id: Number(from) }, message: { chat: { id: Number(from) }, message_id: 9 } });
 
 test('registry: an unknown type gets the safe default; payments declare account number + name + amount, while open, refused for the same person only', () => {
@@ -166,6 +167,56 @@ test('raise: the SAME person\'s repeat is refused and writes nothing; ANOTHER pe
   assert.equal(later.actionJSON.twinFlag.requestId, 'REQ-3');
 });
 
+test('raise: a double tap is ONE request — the second tap is handed the first one\'s, whatever the type', async () => {
+  reset();
+  // two taps of one Submit, both past the door's session check, each with its own freshly minted id
+  const [a, b] = await Promise.all([
+    gate.raise({ userId: '555', action: 'give_sample', payload: { design: '9006', shade: '3', customer: 'Abba' }, requestId: 'S-1' }),
+    gate.raise({ userId: '555', action: 'give_sample', payload: { design: '9006', shade: '3', customer: 'Abba' }, requestId: 'S-2' }),
+  ]);
+  assert.equal(QUEUE.length, 1, 'one row');
+  assert.equal(AUDIT.length, 1, 'one audit line');
+  assert.equal(a.created, true);
+  assert.equal(b.created, false);
+  assert.equal(b.duplicate, true);
+  assert.equal(b.doubleTap, true);
+  assert.equal(b.requestId, 'S-1', 'the second tap carries on with the first request');
+
+  // the door's actionJSON form is the same call
+  const c = await gate.raise({ userId: '555', actionJSON: { action: 'give_sample', design: '9006', shade: '3', customer: 'Abba' } });
+  assert.equal(c.doubleTap, true);
+  assert.equal(QUEUE.length, 1);
+
+  // another person, another payload, a door with its own reference, or the window over: a new request each
+  assert.equal((await gate.raise({ userId: '556', action: 'give_sample', payload: { design: '9006', shade: '3', customer: 'Abba' } })).created, true);
+  assert.equal((await gate.raise({ userId: '555', action: 'give_sample', payload: { design: '9006', shade: '4', customer: 'Abba' } })).created, true);
+  assert.equal((await gate.raise({ userId: '555', action: 'give_sample', payload: { design: '9006', shade: '3', customer: 'Abba' }, guard: false })).created, true);
+  for (const v of gate._internals.recent.values()) v.at -= 21 * 1000;
+  assert.equal((await gate.raise({ userId: '555', action: 'give_sample', payload: { design: '9006', shade: '3', customer: 'Abba' } })).created, true);
+  assert.equal(QUEUE.length, 5);
+
+  // once the first is decided, the same thing asked again seconds later is a new request
+  QUEUE.forEach((q) => { q.status = 'approved'; });
+  assert.equal((await gate.raise({ userId: '555', action: 'give_sample', payload: { design: '9006', shade: '3', customer: 'Abba' } })).created, true);
+
+  // the switch: 0 seconds = no merge
+  reset();
+  SETTINGS = { APPROVAL_DOUBLE_TAP_SECONDS: 0 };
+  await gate.raise({ userId: '555', action: 'give_sample', payload: { design: '9006' } });
+  await gate.raise({ userId: '555', action: 'give_sample', payload: { design: '9006' } });
+  assert.equal(QUEUE.length, 2);
+});
+
+test('raise: the door may keep its own audit line, or name the event and its fields', async () => {
+  reset();
+  await gate.raise({ userId: '555', action: 'edit_bale', payload: { packageNo: '6061' }, audit: false });
+  assert.equal(AUDIT.length, 0);
+  await gate.raise({ userId: '555', action: 'catalog_supply', payload: { design: '9037' }, auditEvent: 'catalog_supply_request', auditMeta: { design: '9037' } });
+  assert.equal(AUDIT[0].kind, 'catalog_supply_request');
+  assert.equal(AUDIT[0].meta.design, '9037');
+  assert.equal(AUDIT[0].meta.action, 'catalog_supply');
+});
+
 test('raise: an admin may send a refused twin anyway — marked ⧉ on the row and in the audit', async () => {
   reset();
   await gate.raise({ userId: '555', action: 'request_payment', payload: PAY, requestId: 'REQ-1' });
@@ -190,11 +241,13 @@ test('raise: a type\'s own twin source sees what the queue cannot (approved, not
 test('raise: an undeclared type is never refused, and the valve switches the refusal off', async () => {
   reset();
   const a = await gate.raise({ userId: '555', action: 'edit_bale', payload: { packageNo: '6061' }, requestId: 'E-1' });
+  for (const v of gate._internals.recent.values()) v.at -= 60 * 1000; // a minute later — not a double tap
   const b = await gate.raise({ userId: '555', action: 'edit_bale', payload: { packageNo: '6061' }, requestId: 'E-2' });
   assert.equal(a.ok && b.ok, true, 'flag is the default: both queue, the admin card warns');
   assert.equal(QUEUE.length, 2);
   await gate.raise({ userId: '555', action: 'request_payment', payload: PAY, requestId: 'REQ-1' });
   SETTINGS = { APPROVAL_TWIN_GUARD: 0 };
+  for (const v of gate._internals.recent.values()) v.at -= 60 * 1000; // not a double tap
   const open = await gate.raise({ userId: '555', action: 'request_payment', payload: PAY, requestId: 'REQ-2' });
   assert.equal(open.ok, true, 'APPROVAL_TWIN_GUARD = 0 → nothing is refused');
   assert.equal(open.actionJSON.twinFlag.requestId, 'REQ-1', '…but it is still raised FLAGGED, so the admin can refuse it');

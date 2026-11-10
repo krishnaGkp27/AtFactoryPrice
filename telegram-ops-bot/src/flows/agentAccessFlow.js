@@ -175,7 +175,7 @@ async function handleCallback(bot, callbackQuery) {
   }
   if (act === 'offyes') {
     await answer();
-    let n = 0;
+    let n;
     try { n = await agentKeyService.revoke({ byUserId: userId }); } catch (e) {
       logger.warn(`agentAccessFlow: revoke failed: ${e.message}`);
       await home(bot, chatId, messageId, '⚠️ The key could not be switched off just now. It is still live.');

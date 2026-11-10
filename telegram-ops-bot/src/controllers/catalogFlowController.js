@@ -7,7 +7,6 @@ const catalogLedgerRepo = require('../repositories/catalogLedgerRepository');
 const marketersRepo = require('../repositories/marketersRepository');
 const customersRepo = require('../repositories/customersRepository');
 const inventoryRepo = require('../repositories/inventoryRepository');
-const approvalQueueRepo = require('../repositories/approvalQueueRepository');
 const auditLogRepo = require('../repositories/auditLogRepository');
 const usersRepo = require('../repositories/usersRepository');
 const { notifyAdminsApprovalRequest } = require('../events/approvalEvents');
@@ -16,7 +15,6 @@ const { downloadTelegramFile } = require('../utils/telegramFiles');
 const fmtDate = require('../utils/formatDate');
 const config = require('../config');
 const logger = require('../utils/logger');
-const idGenerator = require('../utils/idGenerator');
 const { editOrSend, safeDelete, cbSafe } = require('../utils/telegramUI');
 
 const DESIGNS_PER_PAGE = 12;
@@ -181,7 +179,9 @@ async function submitMarketer(bot, chatId, userId, session) {
   // opens the bot and 📦 My Products is already theirs.
   if (session.pendingTelegramId) actionJSON.pendingTelegramId = session.pendingTelegramId;
 
-  await approvalQueueRepo.append({ requestId, user: String(userId), actionJSON, riskReason: 'New marketer registration requires approval', status: 'pending' });
+  // APG-1 — raised through the gate: a double tap is one request.
+  const raised = await require('../services/approvalGate').raise({ requestId, fresh: true, audit: false, userId: String(userId), actionJSON, riskReason: 'New marketer registration requires approval'});
+  if (!raised.created) return;
 
   for (const adminId of config.access.adminIds) {
     if (String(adminId) === String(userId)) continue;
@@ -493,7 +493,9 @@ async function submitCatFlow(bot, chatId, userId, session, fc) {
     recipientType: fc.recipientType, recipientName: session.recipientName,
     requestedBy: String(userId), date: new Date().toISOString().split('T')[0],
   };
-  await approvalQueueRepo.append({ requestId, user: String(userId), actionJSON, riskReason: `${fc.action} requires approval`, status: 'pending' });
+  // APG-1 — raised through the gate: a double tap is one request.
+  const raised = await require('../services/approvalGate').raise({ requestId, fresh: true, audit: false, userId: String(userId), actionJSON, riskReason: `${fc.action} requires approval`});
+  if (!raised.created) return;
   const sizeIcon = session.catalogSize === 'Big' ? '📘' : '📗';
   const summary = `${fc.action}: ${session.design} ${sizeIcon}${session.catalogSize} ×${session.quantity} → ${session.recipientName} (${session.warehouse})`;
   await notifyAdminsApprovalRequest(bot, requestId, displayName, summary, `${fc.action} requires approval`, String(userId));
@@ -797,7 +799,9 @@ async function submitReturn(bot, chatId, userId, session) {
     returnWarehouse: session.returnWarehouse, requestedBy: String(userId),
     date: new Date().toISOString().split('T')[0],
   };
-  await approvalQueueRepo.append({ requestId, user: String(userId), actionJSON, riskReason: 'Catalog return requires approval', status: 'pending' });
+  // APG-1 — raised through the gate: a double tap is one request.
+  const raised = await require('../services/approvalGate').raise({ requestId, fresh: true, audit: false, userId: String(userId), actionJSON, riskReason: 'Catalog return requires approval'});
+  if (!raised.created) return;
   // APU-1: itemize WHICH catalogs come back — the count-only card asked
   // admins to approve items they couldn't see.
   const itemLines = selectedItems.slice(0, 15)

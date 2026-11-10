@@ -32,7 +32,7 @@
  * authority on who signs.
  *
  * Doors move here one at a time (payments first — PAY-5). The smoke lint
- * S-APG freezes the direct `approvalQueueRepository.append` sites so no NEW
+ * S-APG freezes the direct `queueRepo().append` sites so no NEW
  * door can raise outside the gate.
  *
  * A twin that is NOT refused — raised by another person on someone's
@@ -44,15 +44,21 @@
  * twins are raised and flagged), live within the settings cache, no deploy.
  */
 
-const settingsRepository = require('../repositories/settingsRepository');
-const approvalQueueRepository = require('../repositories/approvalQueueRepository');
-const auditLogRepository = require('../repositories/auditLogRepository');
+// The three repositories are resolved at CALL time, never bound at load:
+// the gate is one module shared by every door, and the offline harnesses
+// swap a repository in the require cache per section — a reference taken
+// here would keep pointing at whichever one was loaded first.
+const queueRepo = () => require('../repositories/approvalQueueRepository');
+const auditRepo = () => require('../repositories/auditLogRepository');
+const settingsRepo = () => require('../repositories/settingsRepository');
 const registry = require('./approvalRegistry');
 const progress = require('./approvalProgress');
 const idGenerator = require('../utils/idGenerator');
 const usageTracker = require('./usageTracker');
 const config = require('../config');
 const logger = require('../utils/logger');
+const mutex = require('../utils/asyncMutex');
+const duplicateApprovals = require('../utils/duplicateApprovals');
 
 const NS = 'apg';
 const HOUR_MS = 3600 * 1000;
@@ -70,12 +76,41 @@ function registerTwinSource(action, fn) {
 }
 
 async function settings() {
-  try { return (await settingsRepository.getAll()) || {}; } catch (_) { return {}; }
+  try { return (await settingsRepo().getAll()) || {}; } catch (_) { return {}; }
 }
 
 async function guardEnabled() {
   const s = await settings();
   return Number(s.APPROVAL_TWIN_GUARD ?? 1) !== 0;
+}
+
+/**
+ * The double-tap window, in ms. Two taps on Submit that both got past a
+ * door's own session check used to be two requests — the incident that
+ * started APG-1. 0 switches the guard off.
+ */
+async function doubleTapMs() {
+  const s = await settings();
+  const n = Number(s.APPROVAL_DOUBLE_TAP_SECONDS ?? 20);
+  return Number.isFinite(n) && n > 0 ? n * 1000 : 0;
+}
+
+/** tap key → { at, requestId, actionJSON } — the requests raised in the last window. */
+const recent = new Map();
+
+/** Who + what + the payload as canonical text (volatile keys dropped). */
+function doubleTapKey(uid, action, payload) {
+  try {
+    return `${uid}|${action}|${duplicateApprovals._internals.canonical({ ...(payload || {}), action })}`;
+  } catch (_) { return null; }
+}
+
+function rememberTap(key, entry, windowMs) {
+  if (!key || !windowMs) return;
+  recent.set(key, entry);
+  if (recent.size > 500) {
+    for (const [k, v] of recent) if (entry.at - v.at > windowMs) recent.delete(k);
+  }
 }
 
 /** Hours between two 🔔 reminders on one request (owner, 10-Nov-2026: a day). 0 = off. */
@@ -144,7 +179,7 @@ async function findOpenTwin({ action, payload, userId, excludeRequestId } = {}) 
   const key = registry.twinKeyOf(aj);
   if (!key) return null; // an undeclared type is compared at notify time (flag), never refused
   let pending;
-  try { pending = await approvalQueueRepository.getAllPending(); } catch (e) {
+  try { pending = await queueRepo().getAllPending(); } catch (e) {
     logger.warn(`approvalGate: queue read for twin check failed (allowing): ${e.message}`);
     return null;
   }
@@ -173,22 +208,66 @@ async function findOpenTwin({ action, payload, userId, excludeRequestId } = {}) 
  * @param {string} [p.forcedBy]
  * @param {Function} [p.prepare]     async () => extra payload fields — the door's own record,
  *                                   written only once the twin check has passed
+ * @param {object} [p.actionJSON]   a door that already builds its whole row passes it here
+ *                                   instead of `action` + `payload`
+ * @param {false} [p.audit]          the door writes its own audit line
+ * @param {string} [p.auditEvent]    default 'approval_queued'
+ * @param {object|Function} [p.auditMeta]
+ * @param {false} [p.guard]          skip the double-tap merge (a door with its own reference)
+ * @param {true} [p.fresh]           `requestId` was minted for THIS call, so it cannot be on
+ *                                   the queue yet — the two by-id reads are skipped
+ * @param {false} [p.twin]           skip the twin check (a door with its own twin rule)
  * @returns {Promise<{ok:true, requestId, created, duplicate, actionJSON, twin}|{ok:false, refused:'twin', twin}>}
  */
 async function raise(p) {
   const uid = String(p.userId);
-  const action = String(p.action);
+  const base = p.payload || p.actionJSON || {};
+  const action = String(p.action || base.action || '');
+  const tapKey = (p.guard === false || p.force) ? null : doubleTapKey(uid, action, base);
+  const run = () => raiseOnce(p, { uid, base, action, tapKey });
+  // Two taps of one Submit are serialised, so the second finds the first.
+  return tapKey ? mutex.runExclusive(`apg-tap:${tapKey}`, run) : run();
+}
+
+async function readById(id) {
+  try { return await queueRepo().getByRequestId(id); } catch (_) { return null; }
+}
+
+async function raiseOnce(p, { uid, base, action, tapKey }) {
   const entry = registry.entryFor(action);
   const id = p.requestId || idGenerator.requestId();
 
-  // A retry of a request that is already queued (same id) is that request.
-  let existing;
-  try { existing = await approvalQueueRepository.getByRequestId(id); } catch (_) { existing = null; }
-  if (existing) {
-    return { ok: true, requestId: id, created: false, duplicate: true, actionJSON: existing.actionJSON || {}, twin: null };
+  // A retry of a request that is already queued (the door passed the SAME
+  // id) is that request. An id minted here is new by construction, so the
+  // read is skipped — one Sheets read saved on every ordinary raise.
+  const checkId = Boolean(p.requestId) && !p.fresh;
+  if (checkId) {
+    const existing = await readById(id);
+    if (existing) {
+      return { ok: true, requestId: id, created: false, duplicate: true, actionJSON: existing.actionJSON || {}, existing, twin: null };
+    }
   }
 
-  const twin = await findOpenTwin({ action, payload: p.payload, userId: uid, excludeRequestId: id });
+  // The double tap: the same person, the same request, seconds apart, under
+  // a different id. The second call is handed the first one's request.
+  const windowMs = tapKey ? await doubleTapMs() : 0;
+  if (tapKey && windowMs) {
+    const prev = recent.get(tapKey);
+    // …but only while that first request is on the queue and still waiting:
+    // once it is decided, the same thing asked again is a new request, and a
+    // row that cannot be read is never assumed (fail-open: raise it).
+    const stillOpen = async () => {
+      const row = await readById(prev.requestId);
+      return Boolean(row) && String(row.status || 'pending') === 'pending';
+    };
+    if (prev && Date.now() - prev.at < windowMs && String(prev.requestId) !== String(id) && await stillOpen()) {
+      usageTracker.track({ userId: uid, surface: 'approval', feature: action, event: 'double_tap_merged', requestId: prev.requestId });
+      return { ok: true, requestId: prev.requestId, created: false, duplicate: true, doubleTap: true, actionJSON: prev.actionJSON, twin: null };
+    }
+  }
+
+  const twin = p.twin === false ? null
+    : await findOpenTwin({ action, payload: base, userId: uid, excludeRequestId: id });
   if (twin && twin.refused && !p.force) {
     usageTracker.track({ userId: uid, surface: 'approval', feature: action, event: 'twin_refused', requestId: twin.requestId, meta: { kind: twin.kind, state: twin.state } });
     return { ok: false, refused: 'twin', twin };
@@ -209,21 +288,37 @@ async function raise(p) {
 
   const extra = typeof p.prepare === 'function' ? ((await p.prepare()) || {}) : {};
   const actionJSON = {
-    ...(p.payload || {}), ...extra, action,
+    ...base, ...extra, action,
     ...(twin && p.force ? { twinOf: twin.requestId, sentAnywayBy: String(p.forcedBy || uid) } : {}),
     ...(twinFlag ? { twinFlag } : {}),
   };
-  const res = await approvalQueueRepository.appendOnce({
-    requestId: id, user: uid, actionJSON, riskReason: p.riskReason || '', status: 'pending',
+  // One request id = one row. The exported `append` is called under the
+  // repository's own per-id lock, after a second look for the id — the same
+  // guarantee as `appendOnce`, through the function the doors always used.
+  const record = { requestId: id, user: uid, actionJSON, riskReason: p.riskReason || '', status: 'pending' };
+  const res = await mutex.runExclusive(`apq-append:${id}`, async () => {
+    if (checkId) {
+      const again = await readById(id);
+      if (again) return { created: false, existing: again };
+    }
+    await queueRepo().append(record);
+    return { created: true, existing: null };
   });
-  if (res && res.created) {
-    try {
-      await auditLogRepository.append('approval_queued',
-        { requestId: id, action, ...(actionJSON.twinOf ? { twinOf: actionJSON.twinOf } : {}),
-          ...(typeof p.auditMeta === 'function' ? (p.auditMeta(actionJSON) || {}) : (p.auditMeta || {})) }, uid);
-    } catch (e) { logger.warn(`approvalGate: audit for ${id} failed: ${e.message}`); }
+  if (res.created) {
+    rememberTap(tapKey, { at: Date.now(), requestId: id, actionJSON }, windowMs);
+    if (p.audit !== false) {
+      try {
+        await auditRepo().append(p.auditEvent || 'approval_queued',
+          { requestId: id, action, ...(actionJSON.twinOf ? { twinOf: actionJSON.twinOf } : {}),
+            ...(typeof p.auditMeta === 'function' ? (p.auditMeta(actionJSON) || {}) : (p.auditMeta || {})) }, uid);
+      } catch (e) { logger.warn(`approvalGate: audit for ${id} failed: ${e.message}`); }
+    }
   }
-  return { ok: true, requestId: id, created: !!(res && res.created), duplicate: !(res && res.created), actionJSON, twin: twin || null };
+  return {
+    ok: true, requestId: id, created: res.created, duplicate: !res.created,
+    actionJSON: res.created ? actionJSON : ((res.existing && res.existing.actionJSON) || actionJSON),
+    existing: res.existing || null, twin: twin || null,
+  };
 }
 
 /* ── the requester's side ─────────────────────────────────────────────── */
@@ -268,7 +363,7 @@ function receiptRow(requestId) {
  * have not signed. One per REQUEST_NUDGE_HOURS per request; creates nothing.
  */
 async function nudge({ bot, requestId, byUserId, now = Date.now() }) {
-  const row = await approvalQueueRepository.getByRequestId(requestId);
+  const row = await queueRepo().getByRequestId(requestId);
   if (!row) return { ok: false, reason: 'not_found' };
   const status = String(row.status || '').toLowerCase();
   if (status !== 'pending') return { ok: false, reason: 'resolved', status };
@@ -301,7 +396,7 @@ async function nudge({ bot, requestId, byUserId, now = Date.now() }) {
   await require('../events/approvalEvents').notifyAdminsApprovalRequest(
     bot, requestId, label, card, row.riskReason || 'Pending approval', undefined,
     { prependNote: note, excludeIds: admins.filter((a) => !targets.includes(a)), ...(kb ? { keyboard: kb } : {}) });
-  await approvalQueueRepository.updateActionJSON(requestId, { nudges: [...nudges, { by: uid, at: new Date(now).toISOString() }] });
+  await queueRepo().updateActionJSON(requestId, { nudges: [...nudges, { by: uid, at: new Date(now).toISOString() }] });
   usageTracker.track({ userId: uid, surface: 'approval', feature: aj.action || 'request', event: 'request_nudged', requestId, meta: { n: nudges.length + 1 } });
   const reminded = [];
   for (const t of targets) reminded.push(await nameOf(t, bot));
@@ -322,7 +417,7 @@ function nudgeToast(r) {
 }
 
 async function showStatus(bot, chatId, userId, requestId) {
-  const row = await approvalQueueRepository.getByRequestId(requestId);
+  const row = await queueRepo().getByRequestId(requestId);
   const uid = String(userId);
   const auth = require('../middlewares/auth');
   if (!row || (String(row.user) !== uid && !auth.isAdmin(uid))) {
@@ -359,12 +454,12 @@ async function rejectAsDuplicate(bot, callbackQuery, requestId) {
     try { await bot.answerCallbackQuery(callbackQuery.id, { text, show_alert: !!alert }); } catch (_) { /* stale query */ }
   };
   if (!auth.isAdmin(uid)) { await answer('Admins only.', true); return; }
-  const row = await approvalQueueRepository.getByRequestId(requestId);
+  const row = await queueRepo().getByRequestId(requestId);
   if (!row || String(row.status || '').toLowerCase() !== 'pending') { await answer('Already resolved — nothing to do.', true); return; }
   let others = [];
   try {
     const { duplicateIndex } = require('../utils/duplicateApprovals');
-    const pending = await approvalQueueRepository.getAllPending();
+    const pending = await queueRepo().getAllPending();
     const s = await settings();
     const group = duplicateIndex(pending, Number(s.DUPLICATE_WINDOW_MINUTES) || undefined).get(String(requestId)) || [];
     others = group.filter((g) => String(g.requestId) !== String(requestId));
@@ -379,7 +474,7 @@ async function rejectAsDuplicate(bot, callbackQuery, requestId) {
     // remembers. It stops being a duplicate only if that twin was rejected.
     const flag = (row.actionJSON || {}).twinFlag;
     let t = null;
-    if (flag && flag.requestId) { try { t = await approvalQueueRepository.getByRequestId(flag.requestId); } catch (_) { t = null; } }
+    if (flag && flag.requestId) { try { t = await queueRepo().getByRequestId(flag.requestId); } catch (_) { t = null; } }
     const st = String((t && t.status) || '').toLowerCase();
     if (t && st === 'pending') note = `Duplicate of ${progress.ref(t.requestId)}, which is still open`;
     else if (t && st === 'approved') note = `Duplicate of ${progress.ref(t.requestId)}, which was already approved`;
@@ -388,7 +483,7 @@ async function rejectAsDuplicate(bot, callbackQuery, requestId) {
     await answer('Its twin is no longer open, so this is not a duplicate any more. Use ❌ Reject if you still want to refuse it.', true);
     return;
   }
-  await approvalQueueRepository.updateActionJSON(requestId, { rejectNote: note });
+  await queueRepo().updateActionJSON(requestId, { rejectNote: note });
   usageTracker.track({ userId: uid, surface: 'approval', feature: (row.actionJSON || {}).action || 'request', event: 'rejected_as_duplicate', requestId });
   await require('../events/approvalEvents').handleApprovalCallback(
     bot, { ...callbackQuery, data: `reject:${requestId}` }, 'reject');
@@ -472,5 +567,5 @@ module.exports = {
   nudge, nudgeHours, guardEnabled, requiredFor,
   receiptRow, twinCardText, showStatus, rejectAsDuplicate,
   handleCallback,
-  _internals: { nudgeToast, ageWords, twinSources },
+  _internals: { nudgeToast, ageWords, twinSources, recent, doubleTapKey },
 };

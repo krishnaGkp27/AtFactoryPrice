@@ -56,11 +56,6 @@ async function resolveReturnCustomer(soldTo) {
   return { name: raw, id: '' };
 }
 
-function generateId() {
-  try { return require('crypto').randomUUID(); }
-  catch { return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`; }
-}
-
 /**
  * Check stock with flexible filters: design, shade, warehouse, packageNo.
  * Returns aggregated totals for available thans matching the filters.
@@ -164,14 +159,14 @@ async function sellThan(packageNo, thanNo, customer, userId, salesDate, opts = {
   });
 
   if (risk.risk === 'approval_required') {
-    const requestId = generateId();
-    await approvalQueueRepository.append({
-      requestId, user: userId,
+    // APG-1 — raised through the gate; `duplicate` tells the caller the
+    // request already exists (a double send) so it sends no second card.
+    const raised = await require('./approvalGate').raise({
+      userId,
       actionJSON: { action: 'sell_than', packageNo, thanNo, customer, yards: than.yards, design: than.design, shade: than.shade, warehouse: than.warehouse || '', salesDate: salesDate || null },
-      riskReason: risk.reason, status: 'pending',
+      riskReason: risk.reason, auditMeta: { reason: risk.reason },
     });
-    await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
-    return { status: 'approval_required', requestId, reason: risk.reason };
+    return { status: 'approval_required', requestId: raised.requestId, reason: risk.reason, duplicate: !raised.created };
   }
 
   const result = await stockEngine.sellThan(packageNo, thanNo, customer, salesDate, { warehouse: than.warehouse }, { event: 'sale', adminId: userId });
@@ -225,14 +220,13 @@ async function sellPackage(packageNo, customer, userId, salesDate, opts = {}) {
   });
 
   if (risk.risk === 'approval_required') {
-    const requestId = generateId();
-    await approvalQueueRepository.append({
-      requestId, user: userId,
+    // APG-1 — raised through the gate (see sellThan above).
+    const raised = await require('./approvalGate').raise({
+      userId,
       actionJSON: { action: 'sell_package', packageNo, customer, yards: totalYards, thans: available.length, design: available[0].design, shade: available[0].shade, warehouse: saleWarehouse, salesDate: salesDate || null },
-      riskReason: risk.reason, status: 'pending',
+      riskReason: risk.reason, auditMeta: { reason: risk.reason },
     });
-    await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
-    return { status: 'approval_required', requestId, reason: risk.reason };
+    return { status: 'approval_required', requestId: raised.requestId, reason: risk.reason, duplicate: !raised.created };
   }
 
   const results = await stockEngine.sellPackage(packageNo, customer, salesDate, { warehouse: saleWarehouse || undefined }, { event: 'sale', adminId: userId });
