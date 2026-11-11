@@ -708,6 +708,36 @@ added through railway variables."*
     them sign cannot be paid by either. The configuration, not the rule,
     is what has to give: a third admin, or a finance id that never
     approves.
+  - **The completing signature is saved before the payment is approved
+    (11-Nov-2026, PAY-4b + PAY-6).** The pair of approvers is written to
+    the request BEFORE the payment row is set approved; if that write is
+    refused, nothing is approved and the admin is told to tap again. A
+    signature that cannot be recorded can therefore never leave its owner
+    free to pay.
+- **THE PAYING ACCOUNT IS NAMED BY THE LAST APPROVER, AND FINANCE SEES
+  BOTH ACCOUNTS (owner ruling, 11-Nov-2026: "the account through which the
+  payment will go through shall also be mentioned with the bank name, so
+  that each transaction is clubbed with the source and the recipient, both
+  visible to Financer (the person who will pay)").** PAY-6.
+  - **Who decides:** the admin who gives the LAST approval taps the company
+    account the money is paid from (asked when two or more are listed; one
+    account is stamped without asking; none listed = no paying account, as
+    before). Until that tap nothing is approved.
+  - **Finance cannot change it.** The finance card shows `📤 From` and
+    `📥 To` together; finance has ✔ Mark Done and ✖ Decline only. If the
+    money cannot leave from the named account, finance declines with the
+    reason and the request is raised again.
+  - **Accounts are kept by NAME** (owner: "It will be maintained through
+    name, later will be shown as qr code information when tapped on chips.
+    But this will be polished later"): `BANK — ACCOUNT NAME`, no account
+    number, from Settings `PAYMENT_SOURCE_ACCOUNTS`, else the named entries
+    already in `BANK_LIST` (🏦 Manage Banks). Account numbers and the QR
+    detail on tap are a later release.
+  - **Recorded as a snapshot** in PaymentRequests column T `paid_from`, in
+    the same write that approves the payment (owner's go for the one
+    trailing column). It is text as chosen that day, never a lookup.
+  - **An unreadable account list stops the approval** rather than letting
+    a payment through with no paying account.
 ## 14 · Removing a person is a status flip, never a deletion
 
 **Locked 16-Aug-2026** (owner, after the removal impact analysis): *"I can
