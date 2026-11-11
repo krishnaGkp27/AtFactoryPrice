@@ -7,7 +7,6 @@ const OpenAI = require('openai');
 const { todayInLagos, lagosDayPlus } = require('../utils/dates');
 const stockBuckets = require('../utils/stockBuckets');
 const inventoryRepository = require('../repositories/inventoryRepository');
-const customersRepo = require('../repositories/customersRepository');
 const analytics = require('../ai/analytics');
 const config = require('../config');
 const { fmtQty } = require('../utils/format');

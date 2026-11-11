@@ -85,13 +85,6 @@ async function lookupLedgerBalance(customer, balanceCache) {
   return row ? row.balance : null;
 }
 
-function statusOrder(status) {
-  // pending → accepted → delivered. Other (rare) statuses sort last.
-  if (status === 'pending_accept') return 0;
-  if (status === 'accepted') return 1;
-  if (status === 'delivered') return 2;
-  return 9;
-}
 
 function pendingDays(iso) {
   if (!iso) return null;

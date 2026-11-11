@@ -191,10 +191,6 @@ function getPriority(task) {
   return task.priority || dec.priority || 'normal';
 }
 
-function getDescriptionText(task) {
-  const dec = decodeLegacyDescription(task.description);
-  return dec.text || '';
-}
 
 async function anchor(bot, chatId, userId, text, opts = {}) {
   const session = sessionStore.get(userId);

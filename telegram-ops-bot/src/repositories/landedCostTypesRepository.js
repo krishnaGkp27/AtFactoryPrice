@@ -13,7 +13,6 @@
  */
 
 const sheets = require('./sheetsClient');
-const idGenerator = require('../utils/idGenerator');
 const { str } = require('../utils/text');
 
 const SHEET = 'LandedCostTypes';

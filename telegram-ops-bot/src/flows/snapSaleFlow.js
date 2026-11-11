@@ -28,7 +28,7 @@
  */
 
 const sessionStore = require('../utils/sessionStore');
-const { makeRenderer, chunk, mdEscape, beginSubmit, endSubmit } = require('../utils/flowKit');
+const { makeRenderer, chunk, mdEscape, beginSubmit } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const usersRepository = require('../repositories/usersRepository');

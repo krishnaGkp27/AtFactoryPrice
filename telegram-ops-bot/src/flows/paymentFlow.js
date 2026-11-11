@@ -906,7 +906,6 @@ async function showWaiting(bot, chatId, userId) {
   const mine = new Set();
   for (const p of rows.slice(0, 20)) {
     try {
-      // eslint-disable-next-line no-await-in-loop
       const gate = await paymentService.canExecute(userId, p);
       if (!gate.ok && gate.reason === 'approved_it') mine.add(String(p.payment_id));
     } catch (_) { /* unknown = not marked; the tap is still refused */ }

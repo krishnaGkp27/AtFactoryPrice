@@ -962,7 +962,6 @@ async function markPackageAvailable(packageNo, opts = {}) {
   for (const [buyer, rows] of byBuyer) {
     // Sequential: baleMovementsRepository.append serializes on its own mutex
     // and each call sweeps the Current flag, so parallel calls would race.
-    // eslint-disable-next-line no-await-in-loop
     await movement.record(rows, {
       to: 'available', on: opts.on, kind: opts.kind || 'return',
       ref: buyer, user: opts.user,
@@ -1020,7 +1019,6 @@ async function markRowsAvailable(rows, opts = {}) {
   const movement = require('../services/baleMovementLog');
   for (const group of groupByWarehouse(before)) {
     // Sequential: baleMovementsRepository.append serialises on its own mutex.
-    // eslint-disable-next-line no-await-in-loop
     await movement.record(group, {
       to: 'available', on: opts.on, kind: opts.kind || 'restart',
       ref: opts.ref !== undefined && opts.ref !== null ? opts.ref : (group[0].soldTo || ''), user: opts.user,

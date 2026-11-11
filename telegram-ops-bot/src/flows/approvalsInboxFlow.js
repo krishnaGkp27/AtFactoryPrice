@@ -665,29 +665,7 @@ function whCode(w) {
 // instead of splattering the raw UUID across a chip.
 const shortTransferId = approvalCards.shortTransferRef;
 
-/** Bales riding a transfer: logged bales, else dispatched sum, else the
- *  requested line quantities (pre-dispatch nothing is logged yet). */
-function transferBaleCount(aj) {
-  if (Array.isArray(aj.bales) && aj.bales.length) return aj.bales.length;
-  if (Array.isArray(aj.dispatched) && aj.dispatched.length) {
-    return aj.dispatched.reduce((s, d) => s + (Number(d.sent) || 0), 0);
-  }
-  if (Array.isArray(aj.lines) && aj.lines.length) {
-    return aj.lines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
-  }
-  return 0;
-}
 
-/** LOOSE thans riding a transfer as their own cargo (owner 01-Aug: "3B, 5T"
- *  means 3 whole bales AND 5 loose thans — NOT the thans inside the bales).
- *  The staged bale pipeline carries none today; legacy transfer_than rows
- *  and any future loose-than lines surface here. */
-function transferThanCount(aj) {
-  if (Array.isArray(aj.thans) && aj.thans.length) return aj.thans.length;
-  if (Array.isArray(aj.thanItems) && aj.thanItems.length) return aj.thanItems.length;
-  if (String(aj.action || '') === 'transfer_than') return 1;
-  return 0;
-}
 
 // TRF-20 (3/8) — the one row every surface draws (services/transferRow):
 // date · dot · route · quantity, the owner's shape of 22-Sep-2026.

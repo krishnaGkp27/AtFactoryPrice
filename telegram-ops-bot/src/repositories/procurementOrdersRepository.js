@@ -27,15 +27,7 @@ const { str, num } = require('../utils/text');
 const HEADER_SHEET = 'ProcurementOrders';
 const LINES_SHEET  = 'ProcurementOrderLines';
 
-const HEADER_HEADERS = [
-  'po_id', 'supplier', 'supplier_id', 'expected_date', 'status',
-  'created_by', 'created_at', 'updated_at', 'photo_file_id', 'notes',
-];
 
-const LINE_HEADERS = [
-  'line_id', 'po_id', 'design', 'shade', 'qty_bales', 'qty_yards',
-  'unit_price', 'received_bales', 'received_yards',
-];
 
 const STATUSES = Object.freeze({
   DRAFT: 'draft',

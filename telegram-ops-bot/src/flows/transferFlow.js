@@ -74,7 +74,6 @@ const BALE_PREVIEW_MAX = 8;
 const LIST_MAX = 15;
 
 const SESSION_TYPE = 'transfer_flow';
-const STEPS = ['source', 'design', 'shade', 'qty', 'dest', 'dispatcher', 'receiver', 'confirm'];
 const QTY_CHIPS = [1, 2, 5, 10];
 
 const render = makeRenderer({ requireSession: true });

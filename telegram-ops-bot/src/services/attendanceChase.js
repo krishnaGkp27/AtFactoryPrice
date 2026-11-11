@@ -210,7 +210,7 @@ async function startChase(bot, { by, targets, scopeLabel, intervalMin = 0, auto 
       }])),
     };
     _chases.set(chase.id, chase);
-    for (const t of chase.targets.values()) await sendCard(bot, chase, t); // eslint-disable-line no-await-in-loop
+    for (const t of chase.targets.values()) await sendCard(bot, chase, t);
     await audit('attendance.chase_started', {
       chaseId: chase.id, scope: chase.scopeLabel, intervalMin: chase.intervalMin, until: chase.until,
       auto: chase.auto, targets: [...chase.targets.keys()],
@@ -285,7 +285,7 @@ async function tick(bot, now = new Date()) {
       const done = new Set(rows.map((r) => String(r.telegram_id)));
       for (const t of pending(chase)) {
         if (done.has(t.id)) { t.markedAt = t.markedAt || now.toISOString(); continue; }
-        if (await sendCard(bot, chase, t)) sent += 1; // eslint-disable-line no-await-in-loop
+        if (await sendCard(bot, chase, t)) sent += 1;
       }
       chase.nextAt = now.getTime() + chase.intervalMin * 60000;
       if (!pending(chase).length) endChase(chase, 'all_marked');

@@ -35,7 +35,6 @@
 const crypto = require('crypto');
 const pool = require('../db/postgresPool');
 const settingsRepository = require('../repositories/settingsRepository');
-const customersRepository = require('../repositories/customersRepository');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const usageMeter = require('./usageMeterService');
 const channelGateway = require('./channelGateway');

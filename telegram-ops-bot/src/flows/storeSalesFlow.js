@@ -43,7 +43,6 @@ const sessionStore = require('../utils/sessionStore');
 const { makeRenderer, rowsFor, chunk, disposeAux } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const unitDisplayService = require('../services/unitDisplayService');
-const auth = require('../middlewares/auth');
 const { baleGroupKey, cmpNumericAware } = require('../utils/inventoryPickers');
 const { normalizeSalesDate } = require('../utils/dates');
 const salesAccessService = require('../services/salesAccessService');

@@ -41,7 +41,6 @@ const sessionStore = require('../utils/sessionStore');
 const { makeRenderer, rowsFor } = require('../utils/flowKit');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const unitDisplayService = require('../services/unitDisplayService');
-const { baleGroupKey } = require('../utils/inventoryPickers');
 const auth = require('../middlewares/auth');
 const logger = require('../utils/logger');
 const saleDocReconcile = require('../services/saleDocReconcile');

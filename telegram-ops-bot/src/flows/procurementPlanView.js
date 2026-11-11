@@ -30,13 +30,12 @@
 'use strict';
 
 const sessionStore = require('../utils/sessionStore');
-const { todayInLagos, lagosDayPlus } = require('../utils/dates');
+const { lagosDayPlus } = require('../utils/dates');
 const inventoryRepository = require('../repositories/inventoryRepository');
 const procurementOrdersRepo = require('../repositories/procurementOrdersRepository');
 const contactsRepository = require('../repositories/contactsRepository');
 const settingsRepository = require('../repositories/settingsRepository');
 const auth = require('../middlewares/auth');
-const config = require('../config');
 const logger = require('../utils/logger');
 const { editOrSend, isNotModified } = require('../utils/telegramUI');
 const { fmtQty } = require('../utils/format');

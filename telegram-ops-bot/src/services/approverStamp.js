@@ -97,7 +97,6 @@ async function labelFor({ actionJSON, actorId, bot, actorAlways = false } = {}) 
     const { resolveUserLabel } = require('./approvalCards');
     const names = [];
     for (const id of ids) {
-      // eslint-disable-next-line no-await-in-loop
       const label = await resolveUserLabel(id, bot);
       names.push(label && label !== 'Unknown' ? label : id);
     }

@@ -91,7 +91,6 @@ const customersRepository = require('../repositories/customersRepository');
 const shadesRepository    = require('../repositories/shadesRepository');
 const usersRepository     = require('../repositories/usersRepository');
 const designAssetsRepository = require('../repositories/designAssetsRepository');
-const transactionsRepository = require('../repositories/transactionsRepository');
 const bundleSaleService   = require('../services/bundleSaleService');
 const approvalEvents      = require('../events/approvalEvents');
 const auth                = require('../middlewares/auth');
@@ -882,16 +881,6 @@ async function renderBaleDetail(bot, chatId, userId) {
 /*  Smart-Pack                                                          */
 /* ───────────────────────────────────────────────────────────────────── */
 
-async function renderSmartPackPrompt(bot, chatId, userId) {
-  const session = sessionStore.get(userId);
-  if (!session) return;
-  session.step = 'await_smartpack_target';
-  sessionStore.set(userId, session);
-  await render(bot, chatId, userId,
-    `🎯 *Smart-Pack*\n\nType the target yardage and I'll suggest a basket from *${escapeMd(session.design)}*.\n\nExample: \`75\` (yards). I'll favour oldest stock first.`,
-    [backRow(), cancelRow()],
-  );
-}
 
 async function applySmartPack(bot, chatId, userId, target) {
   const session = sessionStore.get(userId);

@@ -383,7 +383,6 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   const item = pending.find((p) => p.requestId === requestId);
   if (!item) return { ok: false, message: 'Request not found or already resolved.' };
   const aj = item.actionJSON || {};
-  const accountingService = require('./accountingService');
   // Fix B — captured by the sale_bundle branch so the caller can surface
   // partially-applied sales.
   let bundleReport = null;
@@ -589,7 +588,6 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         if (wantId && !isMine) {
           if (!idCache.has(spelling)) {
             try {
-              // eslint-disable-next-line no-await-in-loop
               const c = await require('./customerEntity').resolve({ name: spelling });
               idCache.set(spelling, c ? String(c.customer_id) : '');
             } catch (_) { idCache.set(spelling, ''); }
@@ -623,7 +621,6 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       // RET-3 — `on` carries the day the goods actually came back. `baleUid`
       // pins the exact physical row so findThan cannot pick a same-numbered
       // live duplicate (§5); it is optional and ignored when absent.
-      // eslint-disable-next-line no-await-in-loop
       const r = await stockEngine.returnThan(aj.packageNo, row.thanNo,
         { warehouse: aj.warehouse, on: aj.returnedOn || undefined, baleUid: row.baleUid },
         { event: 'return', approvalId: requestId, adminId: approvedBy });

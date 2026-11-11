@@ -8,7 +8,6 @@ const { todayInLagos } = require('../utils/dates');
 const customersRepo = require('../repositories/customersRepository');
 const usersRepo = require('../repositories/usersRepository');
 const settingsRepo = require('../repositories/settingsRepository');
-const inventoryService = require('./inventoryService');
 const { fmtQty: fmtQtyBase } = require('../utils/format');
 
 /**
@@ -23,8 +22,6 @@ const { fmtQty: fmtQtyBase } = require('../utils/format');
  */
 const SALE_FIELDS = ['salesperson', 'salesDate'];
 
-// Sales flow shows fractional yards (e.g. 12.5 yds), so we keep two decimals.
-function fmtQty(n) { return fmtQtyBase(n, { maxFraction: 2 }); }
 
 async function getBankList() {
   const all = await settingsRepo.getAll();
@@ -81,7 +78,6 @@ async function validateField(field, value) {
       const users = await usersRepo.getAll();
       const match = users.find((u) => u.name.toLowerCase() === v.toLowerCase());
       if (!match) {
-        const envAuth = require('../middlewares/auth');
         if (v.toLowerCase() === 'admin') return { valid: true, value: 'Admin' };
         return { valid: false, message: `Salesperson "${v}" not registered. Registered users: ${users.map((u) => u.name).join(', ') || 'none yet'}` };
       }

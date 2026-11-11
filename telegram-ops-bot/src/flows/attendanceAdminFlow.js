@@ -89,7 +89,6 @@ async function render(bot, chatId, userId, text, keyboardRows) {
 
 const { menuRow: homeRow } = require('../utils/flowKit').rowsFor('atd_adm');
 function backRow() { return [{ text: '⬅ Back to Attendance', callback_data: 'atd_adm:home' }]; }
-function rowOf(cells) { return cells; }
 
 // ---------------------------------------------------------------------------
 // Entry — top-level hub card

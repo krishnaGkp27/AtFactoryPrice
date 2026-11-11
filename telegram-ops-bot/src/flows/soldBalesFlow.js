@@ -50,7 +50,6 @@ const designAssetsRepository = require('../repositories/designAssetsRepository')
 const designCategoriesRepository = require('../repositories/designCategoriesRepository');
 const pricingService      = require('../services/pricingService');
 const auth                = require('../middlewares/auth');
-const logger              = require('../utils/logger');
 const { buildShadeNameMap, formatShadeRef } = require('../utils/shadeButtons');
 const { baleGroupKey } = require('../utils/inventoryPickers');
 const saleDocReconcile = require('../services/saleDocReconcile');

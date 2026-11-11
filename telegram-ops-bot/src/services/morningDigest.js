@@ -27,7 +27,6 @@ const logger = require('../utils/logger');
 const { LAGOS_TZ } = require('../utils/dates');
 
 const CHECK_INTERVAL_MS = 60 * 1000;
-const NOTES_CAP = 15;
 /**
  * TSK-V2 — is this task past its time?
  *
@@ -53,7 +52,6 @@ function taskIsOverdue(t, todayIso, nowMs) {
 }
 
 const LIST_CAP = 10;
-const LOWSTOCK_CAP = 20;
 const MAX_BUTTONS = 5;
 
 let _timer = null;

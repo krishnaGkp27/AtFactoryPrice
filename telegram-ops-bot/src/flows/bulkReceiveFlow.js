@@ -45,7 +45,6 @@ const path = require('path');
 
 const sessionStore = require('../utils/sessionStore');
 const auth = require('../middlewares/auth');
-const config = require('../config');
 const idGenerator = require('../utils/idGenerator');
 const riskEvaluate = require('../risk/evaluate');
 const approvalEvents = require('../events/approvalEvents');
