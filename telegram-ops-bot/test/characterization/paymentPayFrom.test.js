@@ -386,7 +386,7 @@ test('PAY-6: after a pick — the Paid notice, finance\'s confirmation, the reop
     .filter((c) => ['sendMessage', 'editMessageText'].includes(c.method)).map((c) => c.args.text).pop();
   assert.equal(confirmation, [
     '✅ *Paid* — ₦25,000 to Abdul',
-    'From: GTBANK — BLACK PANTHER',
+    '📤 From: GTBANK — BLACK PANTHER',
     `\`${paymentId}\``,
     '',
     `_Recorded ${done.done_at}._`,

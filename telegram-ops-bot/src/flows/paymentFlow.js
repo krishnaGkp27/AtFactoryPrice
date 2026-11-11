@@ -77,7 +77,7 @@
  *                                says so instead)
  * When the row carries a paying account (PaymentRequests column T
  * `paid_from`) the Paid notice prints `📤 From: <account>` / `📥 To: <bank>
- * <number>` and the ✅ Paid confirmation prints `From: <account>`.
+ * <number>` and the ✅ Paid confirmation prints `📤 From: <account>`.
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -825,7 +825,7 @@ async function finishDone(bot, chatId, userId, proof) {
   sessionStore.clear(userId, 'completed');
   await render(bot, chatId, userId,
     `✅ *Paid* — ${mdEscape(paymentService.fmtNaira(pay.amount_ngn))} to ${mdEscape(pay.payee_name)}\n`
-    + (pay.paid_from ? `From: ${mdEscape(pay.paid_from)}\n` : '') // PAY-6
+    + (pay.paid_from ? `📤 From: ${mdEscape(pay.paid_from)}\n` : '') // PAY-6 — the notice's own wording
     + `\`${mdEscape(paymentId)}\`\n\n_Recorded ${mdEscape(pay.done_at || fmtDate.withTime(new Date().toISOString()))}._`
     + (hasProof ? '\n📎 Proof attached' : ''),
     []);

@@ -195,7 +195,7 @@ what it printed before (so every existing pin still holds).
 | Finance card (first send, reminder re-send, opened from 💳 Waiting for me to pay) | the payee line `🏦 0123456789 · GTBank` becomes two lines: `📤 From: ZENITH — BLACK PANTHER` / `📥 To: 0123456789 · GTBank` |
 | The approving admin's result and the requester's closing card (the executor's note) | `... — now with finance to pay.` gains ` Paying from ZENITH — BLACK PANTHER.` |
 | Paid notice (plain text: requester + both approvers) | `📤 From: ZENITH — BLACK PANTHER` directly above the payee line, and the payee line reads `📥 To: 0123456789 · GTBank`, the finance card's order (without an account it stays `🏦 GTBank 0123456789`) |
-| Finance's own `✅ Paid` confirmation | the same From line, directly under the first line |
+| Finance's own `✅ Paid` confirmation | `📤 From: ZENITH — BLACK PANTHER`, directly under the first line |
 | 🛂 Approvals → 💳 Payments record: the status line (`With finance to pay` / `Paid by ...`) | ` · from ZENITH — BLACK PANTHER` at the end of the line |
 | 🛂 Approvals record body (rebuilt from the queue payload) | `Pay from: ZENITH — BLACK PANTHER` under `Account:` (a label true whether the payment waits, was paid or was declined) |
 
