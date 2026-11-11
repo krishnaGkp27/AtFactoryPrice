@@ -36,6 +36,10 @@ const riskEvaluate = require(path.join(SRC, 'risk/evaluate'));
 auditLogRepository.append = async () => {};
 approvalQueueRepository.updateStatus = async () => true;
 approvalQueueRepository.setStatus = async () => true;
+// PAY-6 review — the payment executor SAVES the approver pair on the queue
+// row before it approves (four eyes, durable); the queue row is stubbed
+// through getAllPending here, so its write is stubbed as succeeding too.
+approvalQueueRepository.updateActionJSON = async () => true;
 
 /** Reach the executor the way approvalEvents does: by request id. */
 async function execute(action, requestId, aj = {}) {
@@ -158,19 +162,32 @@ test('PAY-4b: approving a payment parks BOTH approver ids on the request row', a
     actionJSON: { action: 'request_payment', payment_id: 'PAY-9', approvals: ['777'] },
   }]);
   const parked = [];
+  const order = [];
+  requestsRepo.update = async (id, patch) => { order.push('row'); Object.assign(row, patch); return row; };
   const orig = approvalQueueRepository.updateActionJSON;
-  approvalQueueRepository.updateActionJSON = async (id, patch) => { parked.push({ id, patch }); return true; };
+  approvalQueueRepository.updateActionJSON = async (id, patch) => { order.push('pair'); parked.push({ id, patch }); return true; };
   try {
     const res = await inventoryService.executeApprovedAction('R9', '888');
     assert.equal(row.status, 'approved');
     assert.ok(res.message.includes('now with finance to pay'));
     assert.deepEqual(parked, [{ id: 'R9', patch: { approverIds: ['777', '888'] } }]);
-    // A refused row write never costs the approval: the trail carries the pair.
-    row.status = 'pending_approval';
-    approvalQueueRepository.updateActionJSON = async () => { throw new Error('quota'); };
-    const again = await inventoryService.executeApprovedAction('R9', '888');
-    assert.equal(row.status, 'approved');
-    assert.ok(again.message.includes('now with finance to pay'));
+    assert.deepEqual(order, ['pair', 'row'], 'the pair is saved BEFORE the payment is approved');
+    // RE-PINNED ON PURPOSE (PAY-6 review, BUSINESS_RULES §13 — no knob, no
+    // override): this used to pin "a refused park never costs the approval".
+    // With the Postgres trail also down nothing then remembered the second
+    // approver, who could pay it. Now a pair that cannot be SAVED approves
+    // NOTHING, as DUAL-1b does for the first signature.
+    for (const refuse of [async () => { throw new Error('quota'); }, async () => false]) {
+      row.status = 'pending_approval';
+      order.length = 0;
+      approvalQueueRepository.updateActionJSON = refuse;
+      const again = await inventoryService.executeApprovedAction('R9', '888');
+      assert.equal(again.ok, false);
+      assert.equal(again.code, 'APPROVAL_NOT_RECORDED');
+      assert.equal(again.message, 'Could not record your approval — nothing was approved. Tap ✅ Approve again in a minute.');
+      assert.equal(row.status, 'pending_approval', 'the payment row is untouched');
+      assert.deepEqual(order, [], 'no row write');
+    }
   } finally {
     approvalQueueRepository.updateActionJSON = orig;
   }
@@ -203,23 +220,34 @@ test('PAY-6: the paying account is stamped in the SAME row write as the approval
     assert.deepEqual(events[0].detail,
       { approverIds: ['777', '888'], approverLabel: 'Ajeet ‖ John', paid_from: 'ZENITH — BLACK PANTHER' },
       'the existing `approved` event carries the label — no new kind');
-    assert.deepEqual(parked, [{
-      id: 'R10',
-      patch: {
-        approverIds: ['777', '888'],
-        // `by` is the admin the executor was called for — the completing
-        // approver — whatever the caller put in the parameter.
-        payFrom: { label: 'ZENITH — BLACK PANTHER', by: '888', at: '2026-11-11T09:00:00.000Z' },
+    assert.deepEqual(parked, [
+      // The pair first (before the row write — four eyes), then the account.
+      { id: 'R10', patch: { approverIds: ['777', '888'] } },
+      {
+        id: 'R10',
+        patch: {
+          // `by` is the admin the executor was called for — the completing
+          // approver — whatever the caller put in the parameter.
+          payFrom: { label: 'ZENITH — BLACK PANTHER', by: '888', at: '2026-11-11T09:00:00.000Z' },
+        },
       },
-    }]);
+    ]);
 
-    // A refused park never costs the approval: column T is the record.
+    // A refused park of the ACCOUNT never costs the approval: column T is the record.
     row.status = 'pending_approval';
-    approvalQueueRepository.updateActionJSON = async () => { throw new Error('quota'); };
+    approvalQueueRepository.updateActionJSON = async (id, patch) => { if (patch.payFrom) throw new Error('quota'); return true; };
     const again = await inventoryService.executeApprovedAction('R10', '888', { payFrom: { label: 'ZENITH — BLACK PANTHER' } });
     assert.equal(row.status, 'approved');
     assert.equal(row.paid_from, 'ZENITH — BLACK PANTHER');
     assert.ok(again.note.endsWith('Paying from ZENITH — BLACK PANTHER.'));
+    // A refused PAIR approves nothing and stamps nothing.
+    row.status = 'pending_approval';
+    row.paid_from = '';
+    approvalQueueRepository.updateActionJSON = async () => { throw new Error('quota'); };
+    const refused = await inventoryService.executeApprovedAction('R10', '888', { payFrom: { label: 'GTBANK — BLACK PANTHER' } });
+    assert.equal(refused.ok, false);
+    assert.equal(row.status, 'pending_approval');
+    assert.equal(row.paid_from, '');
   } finally {
     approvalQueueRepository.updateActionJSON = orig;
   }
@@ -264,6 +292,14 @@ test('PAY-6: a payment that is already approved is never re-stamped by a second 
   assert.equal(patches.length, 0, 'nothing written');
   assert.equal(row.paid_from, 'ZENITH — BLACK PANTHER');
   assert.match(res.message, /already approved — nothing changed/);
+  // PAY-6 review — both result cards say what IS recorded (the retry of a
+  // half-finished approval), the account chosen then included.
+  row.approved_by = 'Ajeet ‖ John';
+  const told = await inventoryService.executeApprovedAction('R12', '555');
+  assert.equal(told.note, 'ℹ️ Payment PAY-12 was already approved by Ajeet ‖ John — paying from ZENITH — BLACK PANTHER. Nothing changed.');
+  row.paid_from = '';
+  assert.equal((await inventoryService.executeApprovedAction('R12', '555')).note,
+    'ℹ️ Payment PAY-12 was already approved by Ajeet ‖ John. Nothing changed.', 'no paying part when there is none');
 });
 
 // Owner ruling 10-Sep-2026: the sheet row is the complete record of an

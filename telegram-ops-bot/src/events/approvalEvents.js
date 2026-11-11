@@ -2267,7 +2267,7 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
   if (action === 'approve' && item && item.actionJSON && item.actionJSON.action === 'request_payment') {
     const step = await require('../services/paymentCards')
       .payFromStep(bot, callbackQuery, requestId, item, opts && opts.payFromKey);
-    if (step.ask) return;
+    if (step.ask) return { asked: true }; // the inbox keeps its card as it is
     payFrom = step.payFrom || null;
   }
 
@@ -2369,6 +2369,12 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
         // PAY-2 §2 C — the executor's own closing line (which pair approved a
         // payment, and that it is now with finance) rides the same way.
         const noteTail = result.note ? `\n${result.note}` : '';
+        // PAY-6 — a pick from the picker: the approval card it answered
+        // (the picker is a reply to it) loses its buttons too. Best-effort.
+        const cardMsg = opts && opts.payFromKey !== undefined && callbackQuery.message.reply_to_message;
+        if (cardMsg) {
+          try { await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: cardMsg.message_id }); } catch (_) { /* stale card */ }
+        }
         await bot.sendMessage(chatIdCb, approvedMsg + creditTail + noteTail);
         // APG-1 — the requester's closing card: every signer by name and
         // time, the count the request needed, then what the approval did.
@@ -2456,6 +2462,18 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
             await bot.sendMessage(chatIdCb, `📒 *${customer}* — Outstanding as of today: ${money.sale(outstandingAsOfToday)}`);
           } catch (_) {}
         }
+      } else if (result.message === 'Request not found or already resolved.') {
+        // Two completing taps at the same instant: the other one decided it.
+        // Not a failure — and the requester already has the real outcome.
+        await bot.sendMessage(chatIdCb, 'Already decided — nothing to do.');
+      } else if (result.code === 'APPROVAL_NOT_RECORDED') {
+        // PAY-4 — the signature could not be saved, so nothing was approved:
+        // say exactly that, give the tapped card its buttons back so "tap
+        // again" is possible, and tell the requester nothing (nothing changed).
+        if (callbackQuery.message.reply_markup) {
+          try { await bot.editMessageReplyMarkup(callbackQuery.message.reply_markup, { chat_id: chatIdCb, message_id: msgIdCb }); } catch (_) { /* stale card */ }
+        }
+        await bot.sendMessage(chatIdCb, `⚠️ ${result.message}`);
       } else {
         await bot.sendMessage(chatIdCb, `⚠️ Approved but execution failed: ${result.message || 'Unknown error'}`);
         await notifyEmployee(bot, requestingUser, requestId, `⚠️ Your request (${requestId}) was approved but could not be completed. Admin has been notified. Please follow up.`);

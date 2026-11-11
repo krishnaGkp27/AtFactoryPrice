@@ -96,7 +96,8 @@ function buildApprovalSummary(pay) {
   ];
   // PAY-6 — the paying account, parked on the queue payload by the approval
   // executor (`payFrom`), so it exists only on a DECIDED request's record.
-  if (pay.payFrom && pay.payFrom.label) out.push(`Paid from: ${pay.payFrom.label}`);
+  // `Pay from:` — true whether the payment waits, was paid or was declined.
+  if (pay.payFrom && pay.payFrom.label) out.push(`Pay from: ${pay.payFrom.label}`);
   // PAY-2 — the reason rides the queue payload, so the inbox and the
   // reminder rebuild print it exactly as the notify-time card did.
   if (pay.reason) out.push(`Reason: ${pay.reason}`);
@@ -158,6 +159,7 @@ function buildAccountSummary(acct) {
 const PAY_FROM_CHANGED = 'That list has changed — pick again.';
 const PAY_FROM_ASK_TOAST = 'Choose the account to pay from.';
 const PAY_FROM_FAILED = '⚠️ Could not show the paying accounts — nothing was approved. Tap ✅ Approve again in a minute.';
+const PAY_FROM_UNREADABLE = '⚠️ Could not read the paying accounts — nothing was approved. Tap ✅ Approve again in a minute.';
 const PAY_FROM_NOT_NOW = 'Nothing was approved. The request still waits for its last approval.';
 const PAY_FROM_EMPTY = 'That list has changed — no paying account is listed any more.\n'
   + 'Nothing was approved. Tap ✅ Approve on the request again.';
@@ -206,7 +208,13 @@ function buildPayFromPicker(requestId, aj, accounts, opts = {}) {
  * A key that no longer names the account at its position (the list was
  * edited under an open picker) never stamps anything: the picker is
  * redrawn. Any failure to draw stops the approval — it is said, and the
- * request stays as it was.
+ * request stays as it was. A Settings read that FAILS is not "none
+ * configured": it stops the approval too (`PAY_FROM_UNREADABLE`).
+ *
+ * A payment whose row is no longer waiting for approval (a half-finished
+ * approval — the row approved, the queue row not marked — tapped again) is
+ * never asked: `{ ask:false, payFrom:null }`, and the executor says what
+ * is already recorded.
  *
  * @param {object} bot
  * @param {object} callbackQuery the approve tap, or the picker chip's tap
@@ -216,16 +224,35 @@ function buildPayFromPicker(requestId, aj, accounts, opts = {}) {
  * @returns {Promise<{ask:boolean, payFrom?:{label:string, by:string, at:string}|null}>}
  */
 async function payFromStep(bot, callbackQuery, requestId, item, chosenKey) {
-  const accounts = await paymentService.sourceAccounts();
+  const toast = async (text, alert) => {
+    try { await bot.answerCallbackQuery(callbackQuery.id, { text, show_alert: !!alert }); } catch (_) { /* stale query */ }
+  };
+  // Already past approval (the retry of a half-finished one): the account
+  // was chosen then and sits on the row — never ask again. Unreadable:
+  // carry on; the executor reads the row again before it writes anything.
+  try {
+    const payRow = await paymentRequestsRepo.findByApprovalRequestId(requestId);
+    if (payRow && payRow.status !== 'pending_approval') return { ask: false, payFrom: null };
+  } catch (_) { /* see above */ }
+  let accounts;
+  try {
+    accounts = await paymentService.sourceAccounts();
+  } catch (e) {
+    // Fail closed: "could not read the list" is not "no account listed".
+    logger.error(`PAY-6 paying-account list unreadable for ${requestId} — nothing approved: ${e.message}`);
+    await toast(PAY_FROM_UNREADABLE, true);
+    return { ask: true };
+  }
   const fromPicker = chosenKey !== undefined && chosenKey !== null;
   if (!accounts.length && !fromPicker) return { ask: false, payFrom: null };
   const adminId = String(callbackQuery.from.id);
   const stamp = (a) => ({ label: a.label, by: adminId, at: new Date().toISOString() });
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
-  const toast = async (text, alert) => {
-    try { await bot.answerCallbackQuery(callbackQuery.id, { text, show_alert: !!alert }); } catch (_) { /* stale query */ }
-  };
+  // The approval card the picker answers (the picker is sent as a reply to
+  // it), so approvalEvents can take that card's buttons down once the pick
+  // has approved the request.
+  const cardId = callbackQuery.message.reply_to_message && callbackQuery.message.reply_to_message.message_id;
   try {
     if (fromPicker) {
       const picked = paymentService.resolveSourceAccount(accounts, chosenKey);
@@ -244,13 +271,19 @@ async function payFromStep(bot, callbackQuery, requestId, item, chosenKey) {
         await bot.editMessageText(again.text,
           { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: again.reply_markup });
       } catch (_) {
-        await bot.sendMessage(chatId, again.text, { parse_mode: 'Markdown', reply_markup: again.reply_markup });
+        await bot.sendMessage(chatId, again.text, { parse_mode: 'Markdown', reply_markup: again.reply_markup,
+          ...(cardId ? { reply_to_message_id: cardId, allow_sending_without_reply: true } : {}) });
       }
       return { ask: true };
     }
     if (accounts.length === 1) return { ask: false, payFrom: stamp(accounts[0]) };
     const picker = buildPayFromPicker(requestId, item && item.actionJSON, accounts);
-    await bot.sendMessage(chatId, picker.text, { parse_mode: 'Markdown', reply_markup: picker.reply_markup });
+    await bot.sendMessage(chatId, picker.text, {
+      parse_mode: 'Markdown',
+      reply_markup: picker.reply_markup,
+      reply_to_message_id: messageId,
+      allow_sending_without_reply: true,
+    });
     await toast(PAY_FROM_ASK_TOAST);
     return { ask: true };
   } catch (e) {
@@ -388,4 +421,5 @@ module.exports = {
   buildPayFromPicker,
   payFromStep,
   PAY_FROM_NOT_NOW,
+  PAY_FROM_UNREADABLE,
 };

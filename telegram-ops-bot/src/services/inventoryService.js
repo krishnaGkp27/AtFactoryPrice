@@ -1940,6 +1940,13 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     if (!pay) return { ok: false, message: 'Payment request row not found for this request.' };
     if (pay.status !== 'pending_approval') {
       customMessage = `ℹ️ Payment ${pay.payment_id} is already ${pay.status} — nothing changed.`;
+      // PAY-6 review — the retry of a half-finished approval (the row was
+      // approved, the queue row could not be marked): both result cards say
+      // what IS recorded, including the account chosen then.
+      if (pay.status === 'approved') {
+        paymentNote = `ℹ️ Payment ${pay.payment_id} was already approved by ${pay.approved_by || 'an admin'}`
+          + (pay.paid_from ? ` — paying from ${pay.paid_from}` : '') + '. Nothing changed.';
+      }
     } else {
       // PAY-2 §2 C — `approved_by` stores the PAIR ("Ajeet ‖ John"): the
       // first signature parked on the queue payload plus this deciding tap,
@@ -1963,8 +1970,23 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         ? { label: payFromLabel, by: String(approvedBy), at: String(enrichment.payFrom.at || new Date().toISOString()) }
         : null;
       if (payFrom) patch.paid_from = payFrom.label;
-      await paymentRequestsRepo.update(pay.payment_id, patch);
       const approverIdList = stamp.approverIds(aj, approvedBy);
+      // PAY-4 four eyes, durable (PAY-6 review; BUSINESS_RULES §13 — no
+      // knob, no override): the completing signature is SAVED on the queue
+      // row before the payment is approved, exactly as DUAL-1b saves the
+      // first one. A refused or missed write approves nothing — otherwise,
+      // with the Postgres trail also down, nothing would remember that this
+      // admin approved it and the finance gate would let them pay it.
+      let pairSaved = false;
+      try {
+        pairSaved = await approvalQueueRepository.updateActionJSON(requestId, { approverIds: approverIdList }) !== false;
+      } catch (e) {
+        logger.error(`PAY-4: could not save the approver pair on ${requestId} — nothing approved: ${e.message}`);
+      }
+      if (!pairSaved) {
+        return { ok: false, code: 'APPROVAL_NOT_RECORDED', message: 'Could not record your approval — nothing was approved. Tap ✅ Approve again in a minute.' };
+      }
+      await paymentRequestsRepo.update(pay.payment_id, patch);
       // The trail row rides AFTER the sheet write and fails open (§1).
       await recordPaymentEvent({
         paymentId: pay.payment_id, approvalRequestId: requestId, kind: 'approved',
@@ -1974,22 +1996,21 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
           : { approverIds: approverIdList, approverLabel: pairLabel },
       });
       // PAY-4b (11-Nov-2026) — four eyes: the gate reads the approver ids
-      // off this request's own row, where only the FIRST signature was
-      // parked, so the second approver could still pay. Park the pair.
-      // Best-effort: the trail above carries the same ids and the gate
-      // reads both, so a refused write never costs the approval.
+      // off this request's own row; the pair was saved above, before the
+      // payment row was approved.
       // PAY-6 — the paying account is parked beside them (`payFrom`: the
-      // label, who named it, when) so the inbox record can print it and the
-      // four-eyes gate has one more record of the completing approver.
-      // Column T above is the record; this copy is best-effort too.
-      try {
-        const parked = await approvalQueueRepository.updateActionJSON(requestId,
-          payFrom ? { approverIds: approverIdList, payFrom } : { approverIds: approverIdList });
-        if (payFrom && parked === false) {
-          logger.warn(`PAY-6: could not park the paying account on ${requestId}: the queue row was not found`);
+      // label, who named it, when) so the inbox record can print it. It
+      // rides AFTER the row write, so a pending card never shows it; column
+      // T above is the record and this copy is best-effort.
+      if (payFrom) {
+        try {
+          const parked = await approvalQueueRepository.updateActionJSON(requestId, { payFrom });
+          if (parked === false) {
+            logger.warn(`PAY-6: could not park the paying account on ${requestId}: the queue row was not found`);
+          }
+        } catch (e) {
+          logger.warn(`PAY-6: could not park the paying account on ${requestId}: ${e.message}`);
         }
-      } catch (e) {
-        logger.warn(`PAY-4b: could not park approver ids${payFrom ? ' and the paying account' : ''} on ${requestId}: ${e.message}`);
       }
       const paymentService = require('./paymentService');
       // Plain text — it is appended to plain-text replies on both sides (§2 I).

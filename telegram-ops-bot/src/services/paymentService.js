@@ -283,31 +283,31 @@ async function isAboveThreshold(amount) {
  * The company's paying accounts, BY NAME (owner: "It will be maintained
  * through name"; numbers and QR details are a later release).
  *
- *   1. Settings `PAYMENT_SOURCE_ACCOUNTS` — entries separated by `;`, a new
- *      line or a comma, each written the way the house writes a company bank
- *      account, `BANK — ACCOUNT NAME` (src/utils/bankEntry.js; a plain name
- *      with no dash is accepted as written).
+ *   1. Settings `PAYMENT_SOURCE_ACCOUNTS` — entries separated by `;` or a
+ *      new line (a single-line cell with neither is split on commas), each
+ *      written the way the house writes a company bank account,
+ *      `BANK — ACCOUNT NAME` (src/utils/bankEntry.js; a plain name with no
+ *      dash is accepted as written). So `ZENITH — BLACK PANTHER CO., LTD;
+ *      GTBANK — BLACK PANTHER` is two accounts, the comma kept in the name.
  *   2. That cell blank → the entries of Settings `BANK_LIST` that NAME an
  *      account (`ZENITH — BLACK PANTHER`). A plain bank name (`GTBank`) is a
  *      payee bank, not a company account, and is never offered.
  *
- * De-duplicated (case / space-insensitive), in the order written. NEVER
- * throws: a Settings read that fails is an empty list — exactly "no paying
- * account configured", which approves and prints as before PAY-6.
+ * De-duplicated (case / space-insensitive), in the order written.
+ *
+ * THROWS when the Settings sheet cannot be read (PAY-6 review): a failed
+ * read is not "no paying account configured" — reading it so would approve
+ * a payment with no paying account while two are listed. The caller
+ * (paymentCards.payFromStep) fails closed: nothing is approved. An empty
+ * list means the read succeeded and named no account.
  *
  * @returns {Promise<Array<{label:string, bank:string, account:string}>>}
  */
 async function sourceAccounts() {
-  let s;
-  try {
-    s = (await settingsRepository.getAll()) || {};
-  } catch (e) {
-    logger.warn(`paymentService.sourceAccounts: Settings read failed — ${e.message}`);
-    return [];
-  }
+  const s = (await settingsRepository.getAllStrict()) || {};
   const own = String(s.PAYMENT_SOURCE_ACCOUNTS == null ? '' : s.PAYMENT_SOURCE_ACCOUNTS).trim();
   const entries = own
-    ? own.split(/[;\n\r,]+/)
+    ? own.split(/[;\n\r]/.test(own) ? /[;\n\r]+/ : /,+/)
     : String(s.BANK_LIST == null ? '' : s.BANK_LIST).split(',');
   const out = [];
   const seen = new Set();

@@ -50,6 +50,11 @@ let executed = 0;
 inventoryService.executeApprovedAction = async () => { executed += 1; return execResult; };
 inventoryService.rejectApproval = async () => ({ ok: true });
 paymentCards.sendFinanceCard = async () => ({ sent: 1, failed: 0 });
+// PAY-6 — no company paying account is configured (the world these pins
+// were written for). The completing payment approval reads the list through
+// the STRICT Settings reader, which fails closed on a sheet it cannot read.
+require('../../../src/repositories/settingsRepository').getAllStrict = async () => ({});
+require('../../../src/repositories/paymentRequestsRepository').findByApprovalRequestId = async () => null;
 
 const cbq = (fromId, data) => ({ id: 'q', data, from: { id: Number(fromId) }, message: { chat: { id: Number(fromId) }, message_id: 3 } });
 const textsTo = (bot, chatId) => bot.calls.filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === String(chatId)).map((c) => c.args.text);

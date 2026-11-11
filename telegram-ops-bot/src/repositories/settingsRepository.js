@@ -293,29 +293,47 @@ function invalidateCache() {
   _cacheTs = 0;
 }
 
+/**
+ * The Settings map, read through the same 30 s cache as getAll(), but a
+ * sheet read that FAILS throws instead of answering the in-code DEFAULTS.
+ * For a caller that must tell "could not be read" from "not configured"
+ * (PAY-6: the paying-account list — a payment is never approved without
+ * the account choice just because Sheets refused a read). Same style as
+ * paymentAccountsRepository.getAllStrict.
+ */
+async function getAllStrict() {
+  const now = Date.now();
+  if (_cache && now - _cacheTs < CACHE_TTL_MS) return { ..._cache };
+  return readFresh();
+}
+
+async function readFresh() {
+  const rows = await sheets.readRange(SHEET, 'A2:C');
+  const map = { ...DEFAULTS };
+  rows.forEach((r) => {
+    const k = (r[0] || '').toString().trim();
+    let v = (r[1] || '').toString().trim();
+    // set() writes values with a leading apostrophe (text-quote) so Sheets
+    // never number-formats them. FORMATTED_VALUE reads don't return the
+    // apostrophe in production, but strip ONE defensively: it self-heals any
+    // historical cell where a literal apostrophe landed, and test fakes echo
+    // writes verbatim. Number() coercion happens AFTER the strip.
+    if (v.startsWith("'")) v = v.slice(1);
+    // An empty cell is never the number 0 — see blankValue (last row
+    // still wins: an empty last row resets an earlier duplicate's value).
+    if (k && v.trim() === '') { map[k] = blankValue(k); return; }
+    if (k) map[k] = isNaN(Number(v)) ? v : Number(v);
+  });
+  _cache = map;
+  _cacheTs = Date.now();
+  return { ...map };
+}
+
 async function getAll() {
   const now = Date.now();
   if (_cache && now - _cacheTs < CACHE_TTL_MS) return { ..._cache };
   try {
-    const rows = await sheets.readRange(SHEET, 'A2:C');
-    const map = { ...DEFAULTS };
-    rows.forEach((r) => {
-      const k = (r[0] || '').toString().trim();
-      let v = (r[1] || '').toString().trim();
-      // set() writes values with a leading apostrophe (text-quote) so Sheets
-      // never number-formats them. FORMATTED_VALUE reads don't return the
-      // apostrophe in production, but strip ONE defensively: it self-heals any
-      // historical cell where a literal apostrophe landed, and test fakes echo
-      // writes verbatim. Number() coercion happens AFTER the strip.
-      if (v.startsWith("'")) v = v.slice(1);
-      // An empty cell is never the number 0 — see blankValue (last row
-      // still wins: an empty last row resets an earlier duplicate's value).
-      if (k && v.trim() === '') { map[k] = blankValue(k); return; }
-      if (k) map[k] = isNaN(Number(v)) ? v : Number(v);
-    });
-    _cache = map;
-    _cacheTs = Date.now();
-    return { ...map };
+    return await readFresh();
   } catch (e) {
     // Errors are NOT cached — next caller retries the sheet.
     // Log it: silently reverting to in-code DEFAULTS means every owner-set
@@ -357,4 +375,4 @@ async function set(key, value) {
   });
 }
 
-module.exports = { getAll, set, invalidateCache, ensureHeader, DEFAULTS };
+module.exports = { getAll, getAllStrict, set, invalidateCache, ensureHeader, DEFAULTS };

@@ -34,10 +34,14 @@ const paymentCards = require(path.join(SRC, 'services/paymentCards'));
 const approvalCards = require(path.join(SRC, 'services/approvalCards'));
 
 let SETTINGS = {};
-settingsRepository.getAll = async () => {
+// sourceAccounts reads through the STRICT reader (a failed read throws);
+// getAll is stubbed the same so nothing else in the module sees the sheet.
+const readSettings = async () => {
   if (SETTINGS instanceof Error) throw SETTINGS;
   return { ...SETTINGS };
 };
+settingsRepository.getAll = readSettings;
+settingsRepository.getAllStrict = readSettings;
 
 const ZENITH = { label: 'ZENITH — BLACK PANTHER', bank: 'ZENITH', account: 'BLACK PANTHER' };
 const GTB = { label: 'GTBANK — BLACK PANTHER', bank: 'GTBANK', account: 'BLACK PANTHER' };
@@ -45,8 +49,8 @@ const REQUEST_ID = '3f2b8c1e-9a4d-4e6f-8b1a-0c9d7e6f5a4b'; // the shape idGenera
 
 /* ── 1. the list ───────────────────────────────────────────────────── */
 
-test('PAY-6: PAYMENT_SOURCE_ACCOUNTS is the list — `;`, a new line and a comma all separate entries', async () => {
-  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: 'ZENITH — BLACK PANTHER; GTBANK — BLACK PANTHER\nOPAY — AFP LTD, Access - Black Panther\r\nPetty cash' };
+test('PAY-6: PAYMENT_SOURCE_ACCOUNTS is the list — `;` and a new line separate entries', async () => {
+  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: 'ZENITH — BLACK PANTHER; GTBANK — BLACK PANTHER\nOPAY — AFP LTD\r\nAccess - Black Panther;Petty cash' };
   assert.deepEqual(await paymentService.sourceAccounts(), [
     ZENITH,
     GTB,
@@ -58,8 +62,19 @@ test('PAY-6: PAYMENT_SOURCE_ACCOUNTS is the list — `;`, a new line and a comma
   ]);
 });
 
+test('PAY-6 review: a comma separates only in a single-line cell with no `;` — otherwise it stays in the name', async () => {
+  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: 'ZENITH — BLACK PANTHER CO., LTD; GTBANK — BLACK PANTHER' };
+  assert.deepEqual((await paymentService.sourceAccounts()).map((a) => a.label),
+    ['ZENITH — BLACK PANTHER CO., LTD', 'GTBANK — BLACK PANTHER'], 'two accounts, not three');
+  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: 'ZENITH — BLACK PANTHER CO., LTD\nGTBANK — BLACK PANTHER' };
+  assert.deepEqual((await paymentService.sourceAccounts()).map((a) => a.label),
+    ['ZENITH — BLACK PANTHER CO., LTD', 'GTBANK — BLACK PANTHER'], 'one per line');
+  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: 'ZENITH — BLACK PANTHER, GTBANK — BLACK PANTHER' };
+  assert.deepEqual(await paymentService.sourceAccounts(), [ZENITH, GTB], 'a single comma-only line still splits');
+});
+
 test('PAY-6: entries are de-duplicated whatever the case or spacing, in the order written; empties are dropped', async () => {
-  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: ' ; ZENITH — BLACK PANTHER ;; zenith  —  black panther ,\n, GTBANK — BLACK PANTHER; Zenith - Black Panther ' };
+  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: ' ; ZENITH — BLACK PANTHER ;; zenith  —  black panther \n\n GTBANK — BLACK PANTHER; Zenith - Black Panther ' };
   assert.deepEqual(await paymentService.sourceAccounts(), [ZENITH, GTB]);
   // "X — X" is the plain bank X (BANK-3), and so is one entry, not two.
   SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: 'OPAY — OPAY; OPAY' };
@@ -83,15 +98,36 @@ test('PAY-6: nothing configured is an empty list — plain banks only, no banks,
     SETTINGS = s;
     assert.deepEqual(await paymentService.sourceAccounts(), [], JSON.stringify(s));
   }
-  settingsRepository.getAll = async () => null;
+  settingsRepository.getAllStrict = async () => null;
   try { assert.deepEqual(await paymentService.sourceAccounts(), []); } finally {
-    settingsRepository.getAll = async () => { if (SETTINGS instanceof Error) throw SETTINGS; return { ...SETTINGS }; };
+    settingsRepository.getAllStrict = readSettings;
   }
 });
 
-test('PAY-6: a failing Settings read yields an empty list — never a throw', async () => {
+test('PAY-6 review: a failing Settings read THROWS — it is never read as "no account configured"', async () => {
   SETTINGS = new Error('quota exceeded');
-  assert.deepEqual(await paymentService.sourceAccounts(), []);
+  await assert.rejects(() => paymentService.sourceAccounts(), /quota exceeded/);
+});
+
+test('PAY-6 review: settingsRepository.getAllStrict throws on a refused read, serves a good cached read, and getAll still falls back', async () => {
+  const sheetsClient = require(path.join(SRC, 'repositories/sheetsClient'));
+  const real = require(path.join(SRC, 'repositories/settingsRepository'));
+  // The module's own functions, not this file's stubs.
+  delete require.cache[require.resolve(path.join(SRC, 'repositories/settingsRepository'))];
+  const fresh = require(path.join(SRC, 'repositories/settingsRepository'));
+  const orig = sheetsClient.readRange;
+  try {
+    sheetsClient.readRange = async () => { throw new Error('Quota exceeded for quota metric Read requests'); };
+    await assert.rejects(() => fresh.getAllStrict(), /Quota exceeded/);
+    assert.equal((await fresh.getAll()).PAYMENT_SOURCE_ACCOUNTS, '', 'getAll keeps answering the defaults');
+    sheetsClient.readRange = async () => [['PAYMENT_SOURCE_ACCOUNTS', 'ZENITH — BLACK PANTHER']];
+    assert.equal((await fresh.getAllStrict()).PAYMENT_SOURCE_ACCOUNTS, 'ZENITH — BLACK PANTHER');
+    sheetsClient.readRange = async () => { throw new Error('down'); };
+    assert.equal((await fresh.getAllStrict()).PAYMENT_SOURCE_ACCOUNTS, 'ZENITH — BLACK PANTHER', 'a good read inside the 30 s cache');
+  } finally {
+    sheetsClient.readRange = orig;
+    require.cache[require.resolve(path.join(SRC, 'repositories/settingsRepository'))].exports = real;
+  }
 });
 
 test('PAY-6: a cell Settings handed over as a NUMBER is still read as written', async () => {
@@ -218,6 +254,9 @@ test('PAY-6: two accounts — the picker is a NEW message, the tap gets the toas
   const sent = bot.calls[0].args;
   assert.equal(String(sent.chatId), '888');
   assert.equal(sent.opts.parse_mode, 'Markdown');
+  // PAY-6 review — a reply to the card that was tapped, so the pick can take that card's buttons down.
+  assert.equal(sent.opts.reply_to_message_id, 72);
+  assert.equal(sent.opts.allow_sending_without_reply, true);
   assert.equal(sent.text, paymentCards.buildPayFromPicker(REQUEST_ID, PAYLOAD, [ZENITH, GTB]).text);
   assert.deepEqual(bot.calls[1].args.opts, { text: 'Choose the account to pay from.', show_alert: false });
 });
@@ -273,6 +312,40 @@ test('PAY-6: a picker that cannot be drawn stops the approval and says so — it
     text: '⚠️ Could not show the paying accounts — nothing was approved. Tap ✅ Approve again in a minute.',
     show_alert: true,
   });
+});
+
+test('PAY-6 review: an unreadable account list stops the approval with its own alert — never "no account"', async () => {
+  SETTINGS = new Error('Quota exceeded for quota metric Read requests');
+  for (const key of [undefined, paymentService.sourceAccountKey([ZENITH, GTB], 0)]) {
+    const bot = createFakeBot();
+    assert.deepEqual(await paymentCards.payFromStep(bot, tap(), REQUEST_ID, ITEM, key), { ask: true });
+    assert.deepEqual(bot.calls.map((c) => c.method), ['answerCallbackQuery']);
+    assert.deepEqual(bot.calls[0].args.opts, {
+      text: '⚠️ Could not read the paying accounts — nothing was approved. Tap ✅ Approve again in a minute.',
+      show_alert: true,
+    });
+  }
+});
+
+test('PAY-6 review: a payment no longer waiting for approval is never asked again (the retry of a half-finished approval)', async () => {
+  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: 'ZENITH — BLACK PANTHER; GTBANK — BLACK PANTHER' };
+  const requestsRepo = require(path.join(SRC, 'repositories/paymentRequestsRepository'));
+  const orig = requestsRepo.findByApprovalRequestId;
+  try {
+    requestsRepo.findByApprovalRequestId = async () => ({ payment_id: 'PAY-1', status: 'approved', paid_from: 'ZENITH — BLACK PANTHER' });
+    for (const key of [undefined, paymentService.sourceAccountKey([ZENITH, GTB], 1)]) {
+      const bot = createFakeBot();
+      assert.deepEqual(await paymentCards.payFromStep(bot, tap(), REQUEST_ID, ITEM, key), { ask: false, payFrom: null });
+      assert.equal(bot.calls.length, 0, 'no picker, no stamp: the account chosen then stands');
+    }
+    // An unreadable row asks as usual — the executor reads it again before writing.
+    requestsRepo.findByApprovalRequestId = async () => { throw new Error('down'); };
+    const bot = createFakeBot();
+    assert.deepEqual(await paymentCards.payFromStep(bot, tap(), REQUEST_ID, ITEM, undefined), { ask: true });
+    assert.equal(bot.callsTo('sendMessage').length, 1);
+  } finally {
+    requestsRepo.findByApprovalRequestId = orig;
+  }
 });
 
 /* ── 5. every card line, with and without ──────────────────────────── */
@@ -335,7 +408,7 @@ test('PAY-6: the decided record names the paying account under Account; a pendin
     'Payment request: ₦4,000',
     'Payee: Abdul (employee)',
     'Account: 7048940378 · OPAY',
-    'Paid from: ZENITH — BLACK PANTHER',
+    'Pay from: ZENITH — BLACK PANTHER',
     'Reason: Transport to Idumota',
   ].join('\n');
   assert.equal(paymentCards.buildApprovalSummary(decided), after);

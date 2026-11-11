@@ -73,8 +73,11 @@
  *                                Approve carrying the key — approves nothing
  *                                by itself
  *   pay:fromx:<requestId>        ✖ Not now — close the picker, nothing changes
- * The Paid notice and the ✅ Paid confirmation print `From: <account>` when
- * the row carries one (PaymentRequests column T `paid_from`).
+ *                                (a picker whose request was decided meanwhile
+ *                                says so instead)
+ * When the row carries a paying account (PaymentRequests column T
+ * `paid_from`) the Paid notice prints `📤 From: <account>` / `📥 To: <bank>
+ * <number>` and the ✅ Paid confirmation prints `From: <account>`.
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -769,10 +772,10 @@ async function markDone(bot, chatId, userId, paymentId, cbId, cardMessageId) {
   const notice = [
     `💸 Paid — ${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name}${pay.payee_type ? ` (${pay.payee_type})` : ''}`,
     reason ? `📝 ${reason}` : '',
-    // PAY-6 — source and recipient together; absent on a payment that has
-    // no paying account, which reads exactly as before.
-    pay.paid_from ? `From: ${pay.paid_from}` : '',
-    `🏦 ${[pay.bank, pay.account_number].filter(Boolean).join(' ')}`,
+    // PAY-6 — source and recipient together, in the finance card's words;
+    // a payment that has no paying account reads exactly as before.
+    pay.paid_from ? `📤 From: ${pay.paid_from}` : '',
+    `${pay.paid_from ? '📥 To:' : '🏦'} ${[pay.bank, pay.account_number].filter(Boolean).join(' ')}`,
     `Paid by ${doneBy} · ${doneAt}`,
     `Ref ${pay.payment_id}${pay.approved_by ? ` · approved by ${pay.approved_by}` : ''}`,
   ].filter(Boolean).join('\n');
@@ -975,17 +978,46 @@ async function pickPayFrom(bot, callbackQuery, body) {
   const cut = body.lastIndexOf(':');
   const requestId = cut > 0 ? body.slice(0, cut) : body;
   const key = cut > 0 ? body.slice(cut + 1) : '';
+  // Only a payment has a paying account (an unreadable row: the handler's
+  // own guards decide).
+  let row;
+  try { row = await approvalQueueRepository.getByRequestId(requestId); } catch (_) { row = null; }
+  if (row && (row.actionJSON || {}).action !== 'request_payment') { await answer(bot, callbackQuery.id, 'Not a payment request.'); return; }
+  // The picker answers the card it was sent under. When that card is the
+  // admin's open 🛂 inbox card, the pick goes back through the inbox, so it
+  // ends the way an inbox decision does (the card wiped, the "still
+  // pending" footer with the way back to the list).
+  const card = callbackQuery.message && callbackQuery.message.reply_to_message;
+  const inbox = require('./approvalsInboxFlow');
+  const live = sessionStore.get(String(callbackQuery.from.id));
+  if (card && live && live.type === inbox.SESSION_TYPE && String(live.flowMessageId) === String(card.message_id)) {
+    await inbox.delegateDecision(bot, callbackQuery, String(callbackQuery.from.id), requestId, 'approve', { payFromKey: key });
+    return;
+  }
   const delegated = Object.assign(Object.create(Object.getPrototypeOf(callbackQuery)), callbackQuery, {
     data: `approve:${requestId}`,
   });
   await require('../events/approvalEvents').handleApprovalCallback(bot, delegated, 'approve', { payFromKey: key });
 }
 
-/** `✖ Not now` on the picker: nothing was written when it was drawn, so nothing is undone. */
-async function closePayFromPicker(bot, callbackQuery) {
+/**
+ * `✖ Not now` on the picker: nothing was written when it was drawn, so
+ * nothing is undone. A picker whose request was decided meanwhile says so
+ * instead (an unreadable row keeps the usual sentence).
+ */
+async function closePayFromPicker(bot, callbackQuery, requestId) {
+  if (!auth.isAdmin(String(callbackQuery.from.id))) { await answer(bot, callbackQuery.id, 'Only admins can approve.'); return; }
   await answer(bot, callbackQuery.id);
+  let st = 'pending';
   try {
-    await bot.editMessageText(paymentCards.PAY_FROM_NOT_NOW, {
+    const row = await approvalQueueRepository.getByRequestId(requestId);
+    if (row) st = String(row.status || 'pending').toLowerCase();
+  } catch (_) { /* unreadable: the usual sentence */ }
+  const text = st === 'approved' || st === 'rejected'
+    ? `This request was already ${st} — nothing to do.`
+    : paymentCards.PAY_FROM_NOT_NOW;
+  try {
+    await bot.editMessageText(text, {
       chat_id: callbackQuery.message.chat.id,
       message_id: callbackQuery.message.message_id,
       reply_markup: { inline_keyboard: [] },
@@ -1218,7 +1250,7 @@ async function handleCallback(bot, callbackQuery) {
   if (rest.startsWith('dec:')) { await startDecline(bot, chatId, userId, rest.slice(4), cbId, cardMessageId); return true; }
   // PAY-6 — the "Pay from which account?" picker, drawn by the completing
   // approval (paymentCards.payFromStep). Session-free like the two above.
-  if (rest.startsWith('fromx:')) { await closePayFromPicker(bot, callbackQuery); return true; }
+  if (rest.startsWith('fromx:')) { await closePayFromPicker(bot, callbackQuery, rest.slice(6)); return true; }
   if (rest.startsWith('from:')) { await pickPayFrom(bot, callbackQuery, rest.slice(5)); return true; }
 
   if (rest === 'cancel') {

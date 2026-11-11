@@ -82,7 +82,10 @@ let AUDIT = [];
 
 usersRepository.getAll = async () => USERS;
 usersRepository.findByUserId = async (id) => USERS.find((u) => u.user_id === String(id)) || null;
+const realGetAllStrict = settingsRepository.getAllStrict;
 settingsRepository.getAll = async () => ({ ...SETTINGS });
+// The paying-account list is read through the STRICT reader (PAY-6 review).
+settingsRepository.getAllStrict = async () => ({ ...SETTINGS });
 approvalCards.resolveUserLabel = async (id) => NAMES[String(id)] || String(id);
 auditLogRepository.append = async (event, payload, by) => { AUDIT.push({ event, payload, by }); };
 // The Postgres trail, as in-memory rows (it is fail-open and optional live).
@@ -180,6 +183,12 @@ async function openPicker(bot, requestId, admin = JOHN, cardMsgId = 72) {
   assert.equal(drawn.length, 1, 'one picker message');
   return drawn[0];
 }
+
+/** A picker chip's tap: the picker is a reply to the approval card it answers. */
+const chipCb = (data, uid, msgId, cardId, extra = {}) => ({
+  ...cb(data, uid, msgId),
+  message: { chat: { id: uid }, message_id: msgId, reply_to_message: { message_id: cardId }, ...extra },
+});
 
 const financeCard = (lines, row) => [
   '💳 *Payment* — Abdul · employee',
@@ -346,8 +355,8 @@ test('PAY-6: after a pick — the Paid notice, finance\'s confirmation, the reop
   const notice = [
     '💸 Paid — ₦25,000 to Abdul (employee)',
     '📝 Transport to Idumota',
-    'From: GTBANK — BLACK PANTHER',
-    '🏦 GTBank 0123456789',
+    '📤 From: GTBANK — BLACK PANTHER',
+    '📥 To: GTBank 0123456789',
     `Paid by Office · ${done.done_at}`,
     `Ref ${paymentId} · approved by Ajeet ‖ John`,
   ].join('\n');
@@ -383,7 +392,7 @@ test('PAY-6: after a pick — the Paid notice, finance\'s confirmation, the reop
     'Payment request: ₦25,000',
     'Payee: Abdul (employee)',
     'Account: 0123456789 · GTBank',
-    'Paid from: GTBANK — BLACK PANTHER',
+    'Pay from: GTBANK — BLACK PANTHER',
     'Reason: Transport to Idumota',
   ]);
   assert.match(recLines[6], /^✅ _Already approved by Ajeet \+ John · .+ — no action needed\._$/);
@@ -657,19 +666,221 @@ test('PAY-6: ✅ Approve in the 🛂 inbox reaches the picker too; the inbox sti
   await controller.handleCallbackQuery(bot, cb('abx:cat:payments', JOHN));
   await controller.handleCallbackQuery(bot, cb('abx:i:0', JOHN));
 
+  const card = sessionStore.get(JOHN).flowMessageId;
   const from = bot.calls.length;
-  await controller.handleCallbackQuery(bot, cb(`abx:ok:${requestId}`, JOHN, 80));
+  await controller.handleCallbackQuery(bot, cb(`abx:ok:${requestId}`, JOHN, card));
   const drawn = pickersTo(bot, JOHN, from);
   assert.equal(drawn.length, 1);
   assert.equal(drawn[0].text, PICKER_TEXT);
+  assert.equal(drawn[0].opts.reply_to_message_id, card, 'a reply to the inbox card');
   assert.deepEqual(toasts(bot, from), ['Choose the account to pay from.']);
   assert.deepEqual(wipes(bot, from), [], 'the inbox card keeps ✅ Approve and ❌ Reject');
   assert.equal(snapshot(), before);
-  const footer = textsTo(bot, JOHN, from).pop();
-  assert.equal(footer, '🛂 💳 Payments — *1* still pending.');
+  // PAY-6 review — nothing was decided, so the inbox posts no "still
+  // pending" footer under the question: the picker is the last message and
+  // the inbox card stays the anchor.
+  assert.deepEqual(textsTo(bot, JOHN, from), [PICKER_TEXT]);
+  assert.equal(sessionStore.get(JOHN).flowMessageId, card);
 
-  await controller.handleCallbackQuery(bot, cb(drawn[0].chips[0].callback_data, JOHN, 1500));
+  // The pick ends the way an inbox decision does: the card loses its
+  // buttons, the result, then the footer with the way back.
+  const after = bot.calls.length;
+  await controller.handleCallbackQuery(bot, chipCb(drawn[0].chips[0].callback_data, JOHN, 1500, card));
   assert.equal(queueRow()[4], 'approved');
   assert.equal(payRow()[T], ZENITH);
+  assert.deepEqual(wipes(bot, after), [`${JOHN}:1500`, `${JOHN}:${card}`], 'the picker, then the inbox card');
+  const told = textsTo(bot, JOHN, after);
+  assert.match(told[0], /^✅ Request .+ approved by Ajeet \+ John\. Changes applied\.\n.+Paying from ZENITH — BLACK PANTHER\.$/);
+  assert.equal(told[told.length - 1], '🛂 💳 Payments — *0* still pending.');
+  const footerKb = sentTo(bot, JOHN, after).pop().args.opts.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.deepEqual(footerKb, ['abx:back', 'act:__back__']);
   sessionStore.clear(JOHN);
+});
+
+/* ── 7. the first review round (PAY-6 review) ───────────────────────── */
+
+test('PAY-6 review: a Settings read that FAILS at the completing Approve approves nothing — it is never "no account"', async () => {
+  reset(TWO);
+  const bot = createFakeBot();
+  const { requestId } = await raiseAndSignOnce(bot);
+  const before = snapshot();
+  // The REAL strict reader, on a Settings sheet listing two accounts, whose read Google refuses.
+  fake._store.set('Settings', [['Key', 'Value', 'UpdatedAt'], ['PAYMENT_SOURCE_ACCOUNTS', `${ZENITH}; ${GTB}`, '']]);
+  settingsRepository.getAllStrict = realGetAllStrict;
+  settingsRepository.invalidateCache();
+  const origRead = sheetsClient.readRange;
+  sheetsClient.readRange = async (sheet, ...rest) => {
+    if (sheet === 'Settings') throw new Error('Quota exceeded for quota metric Read requests');
+    return origRead(sheet, ...rest);
+  };
+  try {
+    const from = bot.calls.length;
+    await controller.handleCallbackQuery(bot, cb(`approve:${requestId}`, JOHN, 72));
+    assert.deepEqual(bot.calls.slice(from).map((c) => c.method), ['answerCallbackQuery']);
+    assert.deepEqual(bot.calls[bot.calls.length - 1].args.opts, {
+      text: '⚠️ Could not read the paying accounts — nothing was approved. Tap ✅ Approve again in a minute.',
+      show_alert: true,
+    });
+    assert.equal(snapshot(), before, 'nothing approved, nothing stamped');
+    assert.equal(payRow()[STATUS], 'pending_approval');
+    // The sheet answers again: the same tap now asks.
+    sheetsClient.readRange = origRead;
+    const drawn = await openPicker(bot, requestId);
+    assert.equal(drawn.text, PICKER_TEXT);
+  } finally {
+    sheetsClient.readRange = origRead;
+    settingsRepository.getAllStrict = async () => ({ ...SETTINGS });
+    settingsRepository.invalidateCache();
+  }
+});
+
+test('PAY-6 review: the retry of a half-finished approval is not asked again — the account chosen then stands, and is named', async () => {
+  reset(TWO);
+  const bot = createFakeBot();
+  const { requestId } = await raiseAndSignOnce(bot);
+  const picker = await openPicker(bot, requestId);
+  // John picks ZENITH; the payment row is approved but the queue row cannot be marked (QTA-1).
+  const approvalQueueRepository = require(path.join(SRC, 'repositories/approvalQueueRepository'));
+  const origUS = approvalQueueRepository.updateStatus;
+  approvalQueueRepository.updateStatus = async () => { const e = new Error('Quota exceeded'); e.code = 'SHEETS_QUOTA'; throw e; };
+  try {
+    await controller.handleCallbackQuery(bot, chipCb(picker.chips[0].callback_data, JOHN, 1500, 72));
+  } finally { approvalQueueRepository.updateStatus = origUS; }
+  assert.equal(queueRow()[4], 'pending');
+  assert.equal(payRow()[STATUS], 'approved');
+  assert.equal(payRow()[T], ZENITH);
+
+  // Musa taps ✅ Approve on his own copy: no picker, the queue row closes, and he is told what is recorded.
+  const from = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb(`approve:${requestId}`, MUSA, 73));
+  assert.equal(pickersTo(bot, MUSA, from).length, 0, 'never asked again');
+  assert.equal(queueRow()[4], 'approved');
+  assert.equal(payRow()[T], ZENITH, 'column T is not re-stamped');
+  const told = textsTo(bot, MUSA, from);
+  assert.equal(told.length, 1);
+  assert.match(told[0], new RegExp(`\\nℹ️ Payment ${payRow()[0]} was already approved by Ajeet ‖ John — paying from ZENITH — BLACK PANTHER\\. Nothing changed\\.$`));
+});
+
+test('PAY-6 review: a completing signature that cannot be SAVED approves nothing — the admin is told so, the requester nothing', async () => {
+  reset(TWO);
+  const bot = createFakeBot();
+  const { requestId } = await raiseAndSignOnce(bot);
+  const picker = await openPicker(bot, requestId);
+  const before = snapshot();
+  const events = EVENTS.length;
+  const approvalQueueRepository = require(path.join(SRC, 'repositories/approvalQueueRepository'));
+  const origUA = approvalQueueRepository.updateActionJSON;
+  approvalQueueRepository.updateActionJSON = async () => { throw new Error('Quota exceeded'); };
+  const from = bot.calls.length;
+  try {
+    await controller.handleCallbackQuery(bot, chipCb(picker.chips[0].callback_data, JOHN, 1500, 72,
+      { reply_markup: picker.opts.reply_markup }));
+  } finally { approvalQueueRepository.updateActionJSON = origUA; }
+  assert.equal(snapshot(), before, 'the payment row and the queue row are as they were');
+  assert.equal(payRow()[STATUS], 'pending_approval');
+  assert.equal(EVENTS.length, events, 'no approved trail row');
+  assert.deepEqual(textsTo(bot, JOHN, from),
+    ['⚠️ Could not record your approval — nothing was approved. Tap ✅ Approve again in a minute.'],
+    'the sentence as it is — never "Approved but execution failed"');
+  assert.equal(sentTo(bot, ABDUL, from).length, 0, 'the requester is told nothing: nothing changed');
+  assert.equal(sentTo(bot, OFFICE, from).length, 0, 'no finance card');
+  // The picker gets its chips back, so "tap again" can be done — and works.
+  const restored = bot.calls.slice(from).filter((c) => c.method === 'editMessageReplyMarkup').pop();
+  assert.deepEqual(restored.args.replyMarkup, picker.opts.reply_markup);
+  assert.equal(restored.args.opts.message_id, 1500);
+  assert.deepEqual(wipes(bot, from).filter((w) => w === `${JOHN}:72`), [], 'the approval card keeps its buttons');
+  await controller.handleCallbackQuery(bot, chipCb(picker.chips[0].callback_data, JOHN, 1500, 72));
+  assert.equal(payRow()[STATUS], 'approved');
+  assert.deepEqual(queueJson().approverIds, [AJEET, JOHN]);
+});
+
+test('PAY-6 review: the picker is a reply to the card tapped; a pick takes that card\'s buttons down too', async () => {
+  reset(TWO);
+  const bot = createFakeBot();
+  const { requestId } = await raiseAndSignOnce(bot);
+  const picker = await openPicker(bot, requestId, JOHN, 72);
+  assert.equal(picker.opts.reply_to_message_id, 72);
+  assert.equal(picker.opts.allow_sending_without_reply, true);
+  const from = bot.calls.length;
+  await controller.handleCallbackQuery(bot, chipCb(picker.chips[1].callback_data, JOHN, 1500, 72));
+  assert.equal(payRow()[T], GTB);
+  assert.deepEqual(wipes(bot, from), [`${JOHN}:1500`, `${JOHN}:72`], 'the picker, then the approval card it answered');
+  // A card that cannot be edited any more changes nothing else.
+  reset(TWO);
+  const bot2 = createFakeBot();
+  const ids = await raiseAndSignOnce(bot2);
+  const p2 = await openPicker(bot2, ids.requestId, JOHN, 72);
+  const rawWipe = bot2.editMessageReplyMarkup;
+  bot2.editMessageReplyMarkup = async (kb, opts) => { if (opts.message_id === 72) throw new Error('message to edit not found'); return rawWipe.call(bot2, kb, opts); };
+  await controller.handleCallbackQuery(bot2, chipCb(p2.chips[0].callback_data, JOHN, 1500, 72));
+  assert.equal(payRow()[STATUS], 'approved');
+  assert.equal(payRow()[T], ZENITH);
+});
+
+test('PAY-6 review: ✖ Not now on a picker whose request was decided meanwhile says so', async () => {
+  reset(TWO);
+  const bot = createFakeBot();
+  const { requestId } = await raiseAndSignOnce(bot);
+  const first = await openPicker(bot, requestId, JOHN, 72);
+  const second = await openPicker(bot, requestId, JOHN, 72);
+  await controller.handleCallbackQuery(bot, chipCb(first.chips[0].callback_data, JOHN, 1500, 72));
+  assert.equal(queueRow()[4], 'approved');
+  let from = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb(second.chips[2].callback_data, JOHN, 1501));
+  let edit = bot.calls.slice(from).find((c) => c.method === 'editMessageText').args;
+  assert.equal(edit.text, 'This request was already approved — nothing to do.');
+  assert.deepEqual(edit.opts.reply_markup, { inline_keyboard: [] });
+
+  reset(TWO);
+  const ids = await raiseAndSignOnce(bot);
+  const p = await openPicker(bot, ids.requestId, JOHN, 72);
+  await controller.handleCallbackQuery(bot, cb(`reject:${ids.requestId}`, MUSA, 73));
+  from = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb(p.chips[2].callback_data, JOHN, 1502));
+  edit = bot.calls.slice(from).find((c) => c.method === 'editMessageText').args;
+  assert.equal(edit.text, 'This request was already rejected — nothing to do.');
+  assert.deepEqual(edit.opts.reply_markup, { inline_keyboard: [] });
+
+  // Not an admin: refused, the message untouched.
+  from = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb(p.chips[2].callback_data, ABDUL, 1502));
+  assert.deepEqual(toasts(bot, from), ['Only admins can approve.']);
+  assert.equal(bot.calls.slice(from).filter((c) => c.method === 'editMessageText').length, 0);
+});
+
+test('PAY-6 review: a pay:from: chip carrying another request type is refused — "Not a payment request."', async () => {
+  reset(TWO);
+  const bot = createFakeBot();
+  const approvalQueueRepository = require(path.join(SRC, 'repositories/approvalQueueRepository'));
+  await approvalQueueRepository.append({
+    requestId: 'REQ-REG-1', user: ABDUL, actionJSON: { action: 'register_payment_account', approvals: [AJEET] },
+    riskReason: 'test', status: 'pending', createdAt: new Date().toISOString(),
+  });
+  const before = JSON.stringify(fake._store.get('ApprovalQueue'));
+  const from = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb('pay:from:REQ-REG-1:0.000000', JOHN, 1500));
+  assert.deepEqual(toasts(bot, from), ['Not a payment request.']);
+  assert.equal(JSON.stringify(fake._store.get('ApprovalQueue')), before);
+});
+
+test('PAY-6 review: two completing taps at the same instant — one approval; the other is told "Already decided", the requester hears no false alarm', async () => {
+  for (const settings of [NONE, ONE]) {
+    reset(settings);
+    const bot = createFakeBot();
+    const { requestId } = await raiseAndSignOnce(bot);
+    const from = bot.calls.length;
+    await Promise.all([
+      controller.handleCallbackQuery(bot, cb(`approve:${requestId}`, JOHN, 72)),
+      controller.handleCallbackQuery(bot, cb(`approve:${requestId}`, MUSA, 73)),
+    ]);
+    assert.equal(queueRow()[4], 'approved');
+    assert.equal(EVENTS.filter((e) => e.kind === 'approved').length, 1, 'ONE execution');
+    const all = [...textsTo(bot, JOHN, from), ...textsTo(bot, MUSA, from)];
+    assert.equal(all.filter((t) => /Changes applied/.test(t)).length, 1, 'one winner');
+    assert.equal(all.filter((t) => t === 'Already decided — nothing to do.').length, 1, 'the loser is told the truth');
+    assert.ok(!all.some((t) => /execution failed/.test(t)));
+    const abdul = textsTo(bot, ABDUL, from);
+    assert.ok(!abdul.some((t) => /could not be completed/.test(t)), 'no false alarm to the requester');
+    assert.equal(abdul.filter((t) => /^✅ Approved · 2 of 2/.test(t)).length, 1);
+  }
 });

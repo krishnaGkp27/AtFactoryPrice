@@ -1113,7 +1113,7 @@ async function renderItem(bot, chatId, userId, idx) {
  * wipes this card's keyboard and reports the outcome on it, so afterwards we
  * send a fresh one-line footer with the way back into the list.
  */
-async function delegateDecision(bot, query, userId, ref, decision) {
+async function delegateDecision(bot, query, userId, ref, decision, opts) {
   const session = sessionStore.get(userId);
   // APC-1 Phase D — decision chips carry the requestId ITSELF. The old
   // index payloads resolved against session._items, which every list render
@@ -1138,8 +1138,9 @@ async function delegateDecision(bot, query, userId, ref, decision) {
   const delegated = Object.assign(Object.create(Object.getPrototypeOf(query)), query, {
     data: `${decision}:${requestId}`,
   });
+  let outcome = null;
   try {
-    await approvalEvents.handleApprovalCallback(bot, delegated, decision);
+    outcome = await approvalEvents.handleApprovalCallback(bot, delegated, decision, opts);
   } catch (e) {
     logger.error(`approvalsInbox: ${decision} of ${requestId} failed: ${e.message}`);
     try {
@@ -1148,6 +1149,10 @@ async function delegateDecision(bot, query, userId, ref, decision) {
   }
 
   if (!session) return; // decision done; no inbox to re-anchor
+  // PAY-6 — the tap only drew the "Pay from which account?" picker: nothing
+  // was decided, so this card stays as it is (its buttons, no footer). The
+  // pick comes back through here (paymentFlow.pickPayFrom) and ends below.
+  if (outcome && outcome.asked) return;
 
   // The decided card is now a record. Re-anchor the inbox onto a FRESH
   // message so the admin can carry straight on — and so this never competes
@@ -1474,6 +1479,7 @@ async function handleCallback(bot, query) {
 module.exports = {
   start,
   handleCallback,
+  delegateDecision, // PAY-6 — a paying-account pick that began on an inbox card
   SESSION_TYPE,
   _internals: {
     categoryOf, ageDays, ageDot, CATEGORIES, TRANSFER_ACTIONS, STALE_DAYS,

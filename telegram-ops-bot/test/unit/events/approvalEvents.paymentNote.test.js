@@ -43,6 +43,11 @@ let execResult = { ok: true };
 inventoryService.executeApprovedAction = async () => execResult;
 let financeCards = [];
 paymentCards.sendFinanceCard = async (bot, paymentId, opts) => { financeCards.push({ paymentId, opts }); return { sent: 1, failed: 0 }; };
+// PAY-6 — no company paying account is configured (the world these pins
+// were written for). The completing payment approval reads the list through
+// the STRICT Settings reader, which fails closed on a sheet it cannot read.
+require('../../../src/repositories/settingsRepository').getAllStrict = async () => ({});
+require('../../../src/repositories/paymentRequestsRepository').findByApprovalRequestId = async () => null;
 
 function cbq(fromId, requestId) {
   return {

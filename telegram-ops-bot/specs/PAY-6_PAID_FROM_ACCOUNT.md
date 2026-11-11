@@ -23,12 +23,21 @@ column T. Tests: `test/unit/services/paymentPayFrom.test.js`,
 `test/unit/services/paymentApproval.test.js` and
 `test/unit/repositories/paymentRequestsRepository.test.js`.
 
+First review round closed the same day (§8): an unreadable account list fails
+closed, the retry of a half-finished approval is not asked again, the completing
+signature is saved before the payment is approved, the inbox keeps its card while the
+picker is open, a stale `✖ Not now` says the truth, the record label is neutral, the
+picker is a reply to the card it answers, commas, the Paid notice's From / To, and
+two simultaneous completing taps.
+
 ## 1. The paying accounts (by name)
 
-`paymentService.sourceAccounts()` -> an ordered list of `{ label, bank, account }`,
-never throws:
+`paymentService.sourceAccounts()` -> an ordered list of `{ label, bank, account }`:
 - Settings `PAYMENT_SOURCE_ACCOUNTS` (new key, text, default blank). Entries are
-  separated by `;`, a new line, or a comma. Each entry is written the way the house
+  separated by `;` or a new line. A comma separates entries ONLY in a single-line
+  cell with no `;` — otherwise it stays inside the name, so
+  `ZENITH — BLACK PANTHER CO., LTD; GTBANK — BLACK PANTHER` is two accounts. Owner:
+  one account per line is the safe way to write the cell. Each entry is written the way the house
   already writes a company bank account, `BANK — ACCOUNT NAME` (the grammar of
   `src/utils/bankEntry.js`; a hyphen is read as the dash; a plain name with no dash
   is accepted as written).
@@ -39,9 +48,13 @@ never throws:
   offered. These named entries are already maintained in the bot through 🏦 Manage
   Banks, behind approval.
 - De-duplicated with `bankEntry.key`; `label` is `bankEntry.normalize(entry)`.
-- A Settings read that fails is an empty list (the Settings reader itself answers
-  its in-code defaults on a failed read): the approval then runs as with no account
-  configured.
+- It reads Settings through `settingsRepository.getAllStrict()` (the same 30 s
+  cache as `getAll`; a good cached read is served) which THROWS when the sheet read
+  fails, so `sourceAccounts` throws too. "Could not be read" is never "none
+  configured": the completing approval stops with the alert
+  `⚠️ Could not read the paying accounts — nothing was approved. Tap ✅ Approve again in a minute.`
+  and nothing is approved. An empty list means the read succeeded and named no
+  account. The read sits in `payFromStep`, outside the two-admin gate's try/catch.
 - The new key has a class (text) in test/unit/repositories/settingsBlankCells.test.js
   and a DEFAULTS entry ('').
 
@@ -51,13 +64,22 @@ In `approvalEvents.handleApprovalCallback`, for action `request_payment` only, a
 the point where the tap is known to be the COMPLETING signature and nothing has been
 written, answered or edited yet (after the two-admin gate, before the `Approving...`
 toast and the keyboard wipe; outside the gate's try/catch). The seam calls
-`paymentCards.payFromStep` and returns when it answers `ask`.
+`paymentCards.payFromStep` and returns `{ asked: true }` when it answers `ask`.
+
+`payFromStep` first reads the payment row (by its approval request id). If it is no
+longer `pending_approval` — the retry of a half-finished approval: the row was
+approved and stamped, the queue row could not be marked — nothing is asked and no
+account is passed; the executor's already-approved branch then tells both result
+cards what is recorded:
+`ℹ️ Payment <id> was already approved by <pair> — paying from <account>. Nothing changed.`
+(without ` — paying from …` when the row has no account). An unreadable payment row
+carries on as usual; the executor reads it again before it writes.
 
 | Accounts configured | What happens on ✅ Approve |
 |---|---|
 | 0 | Exactly as before PAY-6. No From anywhere. |
 | 1 | That account is stamped without asking (one-option navigation). |
-| 2 or more | A NEW message with the picker is sent, the tap is answered with the toast `Choose the account to pay from.`, and the handler returns. **Nothing is approved, written or logged.** The approval card keeps its buttons. |
+| 2 or more | A NEW message with the picker is sent AS A REPLY to the approval card that was tapped (`reply_to_message_id`, `allow_sending_without_reply`), the tap is answered with the toast `Choose the account to pay from.`, and the handler returns. **Nothing is approved, written or logged.** The approval card keeps its buttons. |
 
 The picker (text built in paymentCards.js — the naira sign lives on side A):
 
@@ -88,10 +110,17 @@ _You are giving the last approval. Finance will be told to pay from the account 
   `That list has changed — no paying account is listed any more.` /
   `Nothing was approved. Tap ✅ Approve on the request again.` with no buttons.
 - A key that resolves is honoured whatever the list's length is by then.
-- `✖ Not now`: `pay:fromx:<requestId>` — the picker message becomes
+- `✖ Not now`: `pay:fromx:<requestId>` — the request is read first. Still pending
+  (or unreadable): the picker message becomes
   `Nothing was approved. The request still waits for its last approval.` with no
-  buttons. Session-free; nothing was written when the picker was drawn, so nothing
-  is undone.
+  buttons. Already decided meanwhile: it becomes
+  `This request was already approved — nothing to do.` /
+  `This request was already rejected — nothing to do.` with no buttons. Session-free;
+  nothing was written when the picker was drawn, so nothing is undone. A non-admin's
+  tap is answered `Only admins can approve.` and changes nothing. Not now only removes
+  the buttons: a replayed chip still meets every approval guard.
+- A `pay:from:` chip whose request id names another request type is answered
+  `Not a payment request.` and changes nothing.
 - Both are session-free and ride the existing `pay:` route (paymentFlow), so the
   controller is not touched.
 - A chip tap does not approve by itself. It re-enters `handleApprovalCallback` as an
@@ -102,6 +131,15 @@ _You are giving the last approval. Finance will be told to pay from the account 
   someone else decided answers `Already approved — nothing to do.` (or
   `Already rejected — nothing to do.`) and loses its buttons, as any stale approval
   card does.
+- After the approval has gone through on a chip tap, the approval card the picker
+  answered (`callbackQuery.message.reply_to_message`) loses its buttons too,
+  best-effort and stateless; a card that cannot be edited changes nothing else.
+- 🛂 inbox: when ✅ Approve on an inbox card only drew the picker, the inbox leaves
+  its card exactly as it is (buttons kept, no `still pending` footer) and stays
+  anchored on it. A pick whose picker answers the admin's open inbox card goes back
+  through the inbox (`approvalsInboxFlow.delegateDecision`), so it ends the way an
+  inbox decision does: the card loses its buttons, the result, then
+  `🛂 💳 Payments — *N* still pending.` with ⬅ Back / 🏠 Menu.
 - The chosen account travels to the executor as a parameter
   (`executeApprovedAction(requestId, adminId, { payFrom })`) and is stamped inside
   the executor's per-request lock together with the approval — never written before
@@ -119,13 +157,24 @@ _You are giving the last approval. Finance will be told to pay from the account 
   that sets `approved` and the approver pair. History is snapshot, not looked up.
   `update()` writes T only when the patch names it; Mark Done, Decline and the proof
   never touch it. A live 19-column sheet is widened by the one header cell `T1`.
-- ApprovalQueue `actionJSON.payFrom = { label, by, at }` (best-effort, in the same
-  row write as the PAY-4b `approverIds`), so the inbox record can print it. `by` is
-  always the admin the executor ran for — the completing approver.
+- Four eyes, durable (BUSINESS_RULES §13, no knob, no override): inside the
+  executor's per-request lock the approver pair (`approverIds`) is written to the
+  queue row BEFORE the PaymentRequests row is set approved. If that write throws or
+  finds no row, nothing is approved: the executor answers
+  `Could not record your approval — nothing was approved. Tap ✅ Approve again in a minute.`
+  and the admin sees `⚠️ ` + that sentence (never "Approved but execution failed");
+  the tapped message gets its buttons back so it can be tapped again; the requester
+  is told nothing. This replaces the PAY-4b "a refused park never costs the
+  approval" rule for payments, with or without a paying account.
+- ApprovalQueue `actionJSON.payFrom = { label, by, at }` (best-effort, a separate
+  write AFTER the row write, so a pending card never shows it), so the inbox record
+  can print it. `by` is always the admin the executor ran for — the completing
+  approver.
 - `payment_events` `approved` detail carries the label as `paid_from` (no new event
   kind, no migration).
-- `paymentService.approverIdsFor` also counts `payFrom.by` (the completing admin) —
-  four eyes is not weakened and gains one more durable source.
+- `paymentService.approverIdsFor` also counts `payFrom.by` (the completing admin).
+  The durable record of the completing approver is the `approverIds` write above;
+  `payFrom.by` is a second copy.
 
 ## 4. Every card that shows it
 
@@ -136,10 +185,10 @@ what it printed before (so every existing pin still holds).
 |---|---|
 | Finance card (first send, reminder re-send, opened from 💳 Waiting for me to pay) | the payee line `🏦 0123456789 · GTBank` becomes two lines: `📤 From: ZENITH — BLACK PANTHER` / `📥 To: 0123456789 · GTBank` |
 | The approving admin's result and the requester's closing card (the executor's note) | `... — now with finance to pay.` gains ` Paying from ZENITH — BLACK PANTHER.` |
-| Paid notice (plain text: requester + both approvers) | one more line `From: ZENITH — BLACK PANTHER` directly above the payee account line |
+| Paid notice (plain text: requester + both approvers) | `📤 From: ZENITH — BLACK PANTHER` directly above the payee line, and the payee line reads `📥 To: GTBank 0123456789` (without an account it stays `🏦 GTBank 0123456789`) |
 | Finance's own `✅ Paid` confirmation | the same From line, directly under the first line |
 | 🛂 Approvals → 💳 Payments record: the status line (`With finance to pay` / `Paid by ...`) | ` · from ZENITH — BLACK PANTHER` at the end of the line |
-| 🛂 Approvals record body (rebuilt from the queue payload) | `Paid from: ZENITH — BLACK PANTHER` under `Account:` |
+| 🛂 Approvals record body (rebuilt from the queue payload) | `Pay from: ZENITH — BLACK PANTHER` under `Account:` (a label true whether the payment waits, was paid or was declined) |
 
 Not changed: the pending approval card (the account is not known yet), the proof
 caption, the Declined notices, 📋 My requests rows, the Waiting-for-me-to-pay list rows.
@@ -157,10 +206,11 @@ Payments approved before this release have no paid-from account and read as befo
 Account numbers / QR details on the chip; registering company accounts with their
 numbers; changing the paying account after approval; a back-fill for old payments.
 
-Known and left as it is: after a pick, the admin's ORIGINAL approval card (in the
-chat or the inbox) keeps its ✅ / ❌ buttons — the picker is a separate message and
-the bot holds no state to find the card by. A later tap on it is answered
-`Already approved — nothing to do.`, as on every stale card.
+Known and left as it is: another admin's copy of the approval card (a DM or a
+reminder copy) keeps its buttons after the approval, as before PAY-6; a tap on it is
+answered `Already approved — nothing to do.`, as on every stale card. On the retry of
+a half-finished approval the closing admin's id is not added to `approverIds` (the
+pair that approved the payment is already saved).
 
 ## 7. Live check (owner)
 
@@ -171,4 +221,28 @@ the bot holds no state to find the card by. A later tap on it is answered
 3. Second admin taps ✅ Approve again and picks an account: the result names it, the
    finance phone's card shows `📤 From` and `📥 To`, the PaymentRequests row has the
    name in the new last column T.
-4. Finance taps ✔ Mark Done: the Paid notice to Abdul and both admins names the account.
+4. Finance taps ✔ Mark Done: the Paid notice to Abdul and both admins reads
+   `📤 From: …` / `📥 To: …`.
+
+## 8. First review round (11-Nov-2026)
+
+1. An unreadable account list fails closed (§1).
+2. The retry of a half-finished approval is never asked again and is told what is
+   recorded (§2).
+3. The completing signature is saved before the payment is approved; a refused save
+   approves nothing (§3). The executor test that pinned "the approval survives a
+   failed park" was re-pinned to this rule on purpose.
+4. The 🛂 inbox keeps its card while the picker is open; a pick that began there ends
+   there (§2).
+5. `✖ Not now` on a stale picker says the request was already approved / rejected (§2).
+6. The record body reads `Pay from:` (§4).
+7. The picker is a reply to the card it answers; a pick takes that card's buttons
+   down (§2).
+8. Commas separate entries only in a single-line cell with no `;` (§1).
+9. The Paid notice reads `📤 From:` / `📥 To:` (§4).
+10. Two completing taps at the same instant (any request type): the executor's
+    `Request not found or already resolved.` is the stale case — the loser is told
+    `Already decided — nothing to do.` and the requester is sent nothing (before, the
+    loser read "Approved but execution failed" and the requester a false
+    "approved but could not be completed").
+
