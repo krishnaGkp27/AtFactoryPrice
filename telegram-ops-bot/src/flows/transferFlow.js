@@ -2979,9 +2979,8 @@ async function typedBaleMap() {
  * @returns {Array<object>} the matching bales that hold available stock, in sheet order
  */
 function typedHits(bales, digits) {
-  const exact = bales.filter((b) => String(b.packageNo).replace(/\D/g, '') === digits);
-  const pool = exact.length ? exact : bales.filter((b) => String(b.packageNo).toUpperCase().endsWith(digits));
-  return pool.filter((b) => b.avail > 0);
+  // The rule itself is shared with the two sale doors — utils/baleNumberMatch.
+  return require('../utils/baleNumberMatch').balesForNumber(bales, digits).filter((b) => b.avail > 0);
 }
 
 /**

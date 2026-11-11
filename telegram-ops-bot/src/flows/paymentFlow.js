@@ -291,9 +291,10 @@ async function submitRegister(bot, chatId, userId) {
   if (!beginSubmit(session, userId)) return;
   if (!r.requestId) { r.requestId = idGenerator.requestId(); sessionStore.set(userId, session); }
   const requestId = r.requestId;
+  let saved = null;     // the PaymentAccounts row the gate's `prepare` wrote
+  let queued = false;   // the gate returned: the request is on the queue
   try {
     const risk = await riskEvaluate.evaluate({ action: 'register_payment_account', userId });
-    let saved = null;
     const raised = await approvalGate.raise({
       userId, action: 'register_payment_account', requestId,
       payload: {
@@ -316,6 +317,7 @@ async function submitRegister(bot, chatId, userId) {
         return { account_id: saved.account_id };
       },
     });
+    queued = true;
     if (raised.duplicate || !saved) {
       sessionStore.clear(userId);
       await render(bot, chatId, userId, '⏳ *Already sent for approval.*',
@@ -336,8 +338,17 @@ async function submitRegister(bot, chatId, userId) {
       [approvalGate.receiptRow(requestId), menuRow()]);
   } catch (e) {
     logger.error(`paymentFlow.submitRegister: ${e.message}`);
+    // The gate writes the account row BEFORE the queue row. When the raise
+    // failed in between, that pending row names a request nobody can ever
+    // decide and would refuse every retry as "awaiting approval": let go of
+    // it (best-effort, logged; a request that did reach the queue is kept).
+    const released = saved && !queued ? await paymentService.releaseUnqueuedAccount(requestId) : null;
     const s2 = sessionStore.get(userId);
-    if (s2) endSubmit(s2, userId);
+    if (s2) {
+      // The released row keeps the failed id — the next try is a new request.
+      if (released && s2.reg) delete s2.reg.requestId;
+      endSubmit(s2, userId);
+    }
     await render(bot, chatId, userId, `⚠️ Could not submit: ${mdEscape(e.message)}`, [menuRow()]);
   }
 }

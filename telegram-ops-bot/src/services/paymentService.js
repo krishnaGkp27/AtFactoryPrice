@@ -324,6 +324,48 @@ async function releaseRejectedAccount(requestId) {
 }
 
 /**
+ * PAY-1 — a registration whose request NEVER REACHED the approval queue
+ * lets go of its account number too.
+ *
+ * The approval gate writes the door's own record (the PaymentAccounts row,
+ * `pending`) before the queue row. When the queue write is then refused
+ * (the write quota, the network) that row names a request no admin can
+ * approve or reject, and it refused every retry as "awaiting approval".
+ * Released the same way as a rejected one: the status cell to `inactive`,
+ * the row kept.
+ *
+ * Only when the request is really absent from the queue. A queue write can
+ * report a failure after the row landed; that request IS awaiting approval
+ * and keeps its row. A queue that cannot be read is never taken for "not
+ * there" — nothing is released.
+ *
+ * Best-effort: never throws (the caller is already telling the person the
+ * submit failed); every outcome that leaves the number blocked is logged.
+ *
+ * @param {string} requestId the request the door tried to raise
+ * @returns {Promise<object|null>} the released row; null when nothing was released
+ */
+async function releaseUnqueuedAccount(requestId) {
+  if (!requestId) return null;
+  try {
+    // Strict read (throws when the sheet cannot be read), resolved at call time.
+    const onQueue = await require('../repositories/approvalQueueRepository').getByRequestId(requestId);
+    if (onQueue) {
+      logger.warn(`paymentService.releaseUnqueuedAccount: ${requestId} is on the approval queue — its PaymentAccounts row is kept`);
+      return null;
+    }
+    const released = await releaseRejectedAccount(requestId);
+    if (released) {
+      logger.warn(`paymentService.releaseUnqueuedAccount: ${requestId} never reached the approval queue — PaymentAccounts row ${released.account_id} set to inactive so the number can be registered again`);
+    }
+    return released;
+  } catch (e) {
+    logger.error(`register_payment_account raise cleanup FAILED for ${requestId}: ${e.message} — if the request is not on the approval queue, its PaymentAccounts row still reads pending and blocks that account number until its status cell is set to inactive`);
+    return null;
+  }
+}
+
+/**
  * Validate a Nigerian bank account number as far as a bot honestly can:
  * NUBAN is 10 digits. Anything else is a typo, and a typo here sends
  * real money to a stranger.
@@ -548,6 +590,7 @@ module.exports = {
   isAboveThreshold,
   payableAccountsFor,
   releaseRejectedAccount,
+  releaseUnqueuedAccount,
   validateAccountNumber,
   validateAmount,
   validateReason,

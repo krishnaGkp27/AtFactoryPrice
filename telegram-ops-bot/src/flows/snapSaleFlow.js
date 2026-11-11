@@ -39,6 +39,7 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const fmtDate = require('../utils/formatDate');
 const { rememberRequesterCard } = require('../utils/requesterCard');
+const { balesForNumber, exactBales } = require('../utils/baleNumberMatch');
 
 const SESSION_TYPE = 'snap_sale_flow';
 const NS = 'sns:';
@@ -49,7 +50,13 @@ function cancelRow() { return [{ text: '❌ Cancel', callback_data: `${NS}cancel
 
 /* ── matching ── */
 
-/** Group inventory into per-(warehouse,bale) summaries for matching. */
+/**
+ * Group inventory into per-(warehouse,bale) summaries for matching — EVERY
+ * bale on record. A bale with nothing left rides along with
+ * `availableThans: 0`, so its own number is recognised (and reported as
+ * not available) instead of being handed to a longer number; only bales
+ * with stock are ever matched or rescued.
+ */
 function groupBales(rows) {
   const map = new Map();
   for (const r of rows) {
@@ -61,7 +68,7 @@ function groupBales(rows) {
     const b = map.get(k);
     if (r.status === 'available') { b.availableThans += 1; b.availableYards += Number(r.yards) || 0; }
   }
-  return [...map.values()].filter((b) => b.availableThans > 0);
+  return [...map.values()];
 }
 
 /**
@@ -71,20 +78,27 @@ function groupBales(rows) {
 function normCode(s) { return String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, ''); }
 
 /**
- * Match the OCR'd label against available bales: bale-number digits must
- * match (exact or suffix — sheets sometimes prefix e.g. "P896"), and when
- * OCR also read a design it must agree (normalised, SNAP-6).
+ * Match the OCR'd label against available bales. The number decides first
+ * (utils/baleNumberMatch): the bale whose number IS the one read — sheets
+ * sometimes prefix it, "P896" is 896 — and, only when no bale on record
+ * carries it exactly, one whose number ends in those digits. When OCR also
+ * read a design it must agree (normalised, SNAP-6). An exact bale with
+ * nothing left matches nothing: it is never replaced by a longer number.
  */
 function matchBales(bales, ocr) {
-  const pkgDigits = String(ocr.packageNo || '').replace(/\D/g, '');
-  if (!pkgDigits) return [];
   const design = normCode(ocr.design);
-  return bales.filter((b) => {
-    const bDigits = String(b.packageNo).replace(/\D/g, '');
-    if (bDigits !== pkgDigits && !String(b.packageNo).toUpperCase().endsWith(pkgDigits)) return false;
-    if (design && normCode(b.design) !== design) return false;
-    return true;
-  });
+  return balesForNumber(bales, ocr.packageNo)
+    .filter((b) => b.availableThans > 0 && (!design || normCode(b.design) === design));
+}
+
+/**
+ * True when the label's own bale is on record — its exact number, the
+ * design agreeing when one was read — and nothing of it is left to sell.
+ */
+function labelSoldOut(bales, ocr) {
+  const design = normCode(ocr.design);
+  const own = exactBales(bales, ocr.packageNo).filter((b) => !design || normCode(b.design) === design);
+  return own.length > 0 && !own.some((b) => b.availableThans > 0);
 }
 
 /**
@@ -104,7 +118,8 @@ function matchBales(bales, ocr) {
 function rescueMatch(bales, ocr, takenKeys) {
   const design = normCode(ocr.design);
   if (!design) return { cand: null, cands: [] };
-  let cands = bales.filter((b) => !takenKeys.has(`${b.warehouse}|${b.packageNo}`) && normCode(b.design) === design);
+  let cands = bales.filter((b) => b.availableThans > 0
+    && !takenKeys.has(`${b.warehouse}|${b.packageNo}`) && normCode(b.design) === design);
   const shade = normCode(ocr.shade);
   if (shade) {
     const shaded = cands.filter((b) => normCode(b.shade) === shade);
@@ -172,6 +187,12 @@ function matchBatch(grouped, ocrBales) {
       if (exact.length > 1) {
         // Same bale number lives in more than one store — kept aside.
         skipped.push({ label, reason: `could be ${candList(exact)} — kept aside` });
+        continue;
+      }
+      if (labelSoldOut(grouped, b)) {
+        // The label's own bale is on record with nothing left: reported,
+        // never rescued onto another bale (§1 — the number is the key).
+        skipped.push({ label, reason: 'not available in the sheet' });
         continue;
       }
     }
@@ -822,5 +843,5 @@ async function handleCallback(bot, callbackQuery) {
 
 module.exports = {
   SESSION_TYPE, start, handleCallback, handleFile,
-  _internals: { buildTransferGroups, matchBatch, rescueMatch, matchBales, normCode },
+  _internals: { buildTransferGroups, matchBatch, rescueMatch, matchBales, normCode, groupBales },
 };

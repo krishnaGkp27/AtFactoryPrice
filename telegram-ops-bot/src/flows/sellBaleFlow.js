@@ -46,6 +46,7 @@ const { isNotModified } = require('../utils/telegramUI');
 // finalize/cancel (and by the janitor on abandonment), leaving only the
 // sealed receipt in the chat.
 const { trackAux, disposeAux } = require('../utils/flowKit');
+const { balesForNumber } = require('../utils/baleNumberMatch');
 
 const SESSION_TYPE = 'sell_bale_flow';
 const TTL_MS = 20 * 60 * 1000;
@@ -152,10 +153,11 @@ async function startWithBales(bot, chatId, userId, packageNos) {
     const digits = String(raw).replace(/\D/g, '');
     if (!digits || seen.has(digits)) continue;
     seen.add(digits);
-    const hits = bales.filter((b) => {
-      const bd = String(b.packageNo).replace(/\D/g, '');
-      return (bd === digits || String(b.packageNo).toUpperCase().endsWith(digits)) && b.thans > 0;
-    });
+    // The bale that IS the typed number wins outright; a longer number
+    // ending in the same digits only when no bale carries it exactly
+    // (utils/baleNumberMatch). An exact bale with nothing left is skipped
+    // below with its own reason, never replaced.
+    const hits = balesForNumber(bales, digits).filter((b) => b.thans > 0);
     if (hits.length === 1) {
       const b = hits[0];
       // TRF-INT4 — the resolved warehouse rides the cart entry so the sale

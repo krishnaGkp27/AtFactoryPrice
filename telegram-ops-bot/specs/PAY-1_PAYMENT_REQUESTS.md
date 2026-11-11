@@ -123,6 +123,10 @@ A REJECTED `register_payment_account` (11-Nov-2026) sets its own pending
 PaymentAccounts row to `inactive` — status cell only, the row is kept — so
 the same number + bank can be registered again. An `active` account and any
 other request's row are never touched (`paymentService.releaseRejectedAccount`).
+A registration whose queue write FAILED after its row was written is released
+the same way, only when the request is really absent from the queue
+(`releaseUnqueuedAccount`). Rows rejected before 11-Nov-2026: the one-off
+`scripts/release-rejected-registrations.js` (dry run; `--commit` writes).
 
 ## Flows (`src/flows/paymentFlow.js`, callback namespace `pay:` — free
 per the CLAUDE.md registry; `SESSION_TYPE: 'payment_flow'`)

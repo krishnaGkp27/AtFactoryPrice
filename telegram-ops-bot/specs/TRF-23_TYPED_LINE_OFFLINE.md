@@ -97,6 +97,9 @@ which now routes the ones with a number (change 4). The office guide
   considered: an exact bale that is sold, on the road or in another store
   is skipped with its usual reason. The ending match stays only for a
   number no bale carries exactly (`transferFlow.typedHits`).
+  FIX-BALEMATCH2, same day: the same rule now governs the two sale doors
+  that read a bale number — 📸 Snap Sale (label photo and PDF batch) and
+  the typed Sell Bale preload — through one helper, `utils/baleNumberMatch`.
 - **❌ Cancel on the preload card (and anywhere in the Transfer Stock
   wizard) now draws.** The card is replaced by `🚚 Transfer cancelled —
   nothing was moved.` + `🏠 Menu`; before, the session ended but the card
