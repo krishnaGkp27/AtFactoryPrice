@@ -80,6 +80,11 @@ chips, `sendTransferDoc` `trf:vd:r:<id>:<n>`, `handleAction` freeze, `showList` 
 `trf:rcok:<id>:<n>` · `trf:rcyes:<id>:<n>` · `trf:rcno:<id>:<n>` · `trf:vd:r:<id>:<n>`;
 session step `receipt_sendback` (admin).
 
+Amended 11-Nov-2026 (FIX-TRANSFERS): the reporter's `🔒 Receipt n — you reported it; another
+admin confirms` chip (`trf:noop`) is inert and session-free — a tap is acknowledged quietly
+and nothing is sent. Before, with no transfer session live, it answered "This transfer
+session has expired …".
+
 ## 8 · Tests
 
 `test/unit/services/transferService.receiptGate.test.js` and

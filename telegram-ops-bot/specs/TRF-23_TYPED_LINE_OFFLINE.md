@@ -87,3 +87,19 @@ which now routes the ones with a number (change 4). The office guide
    carries the ℹ️ line.
 3. Railway log after any typed stock question: if the AI is still down,
    one `intentParser: OpenAI parse failed …` line names why.
+
+## 7. Amended 11-Nov-2026 (FIX-TRANSFERS)
+
+- **The bale that IS the typed number wins.** A typed number used to match
+  any available bale whose number equals it OR ends with it, first hit on
+  the source shelf — typing `832` could load `1832`. Now, when a bale
+  carries exactly that number (any store, any status), nothing else is
+  considered: an exact bale that is sold, on the road or in another store
+  is skipped with its usual reason. The ending match stays only for a
+  number no bale carries exactly (`transferFlow.typedHits`).
+- **❌ Cancel on the preload card (and anywhere in the Transfer Stock
+  wizard) now draws.** The card is replaced by `🚚 Transfer cancelled —
+  nothing was moved.` + `🏠 Menu`; before, the session ended but the card
+  stayed on screen with its buttons.
+- Tests: `test/unit/flows/transferTypedHits.test.js`,
+  `test/characterization/transferCancelNoopExact.test.js`.

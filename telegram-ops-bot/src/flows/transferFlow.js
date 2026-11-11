@@ -2967,6 +2967,24 @@ async function typedBaleMap() {
 }
 
 /**
+ * The available bales one typed number stands for. A bale whose number IS
+ * the typed digits wins outright: when one is on record — any store, any
+ * status — a longer number that merely ENDS in those digits is never
+ * considered, so typing 832 cannot load 1832 (an exact bale that is sold,
+ * on the road or in another store is skipped with its own reason instead).
+ * The ending match stays as the fallback for a number no bale carries
+ * exactly.
+ * @param {Array<{packageNo:string, avail:number}>} bales typedBaleMap() rows
+ * @param {string} digits the typed number
+ * @returns {Array<object>} the matching bales that hold available stock, in sheet order
+ */
+function typedHits(bales, digits) {
+  const exact = bales.filter((b) => String(b.packageNo).replace(/\D/g, '') === digits);
+  const pool = exact.length ? exact : bales.filter((b) => String(b.packageNo).toUpperCase().endsWith(digits));
+  return pool.filter((b) => b.avail > 0);
+}
+
+/**
  * Preload the Transfer Stock wizard from a typed message (TRF-8b).
  * Returns true when a card was shown (preload review or the "nothing
  * matched" fallback); false when the text carries no readable numbers —
@@ -2982,15 +3000,9 @@ async function startFromText(bot, chatId, userId, rawText) {
   if (!numbers.length) return false;
 
   const bales = await typedBaleMap();
-  // First pass — available hits per typed number (SELL-T1 matching:
-  // exact digits or a packageNo ending with the typed digits).
-  const hitsByNo = numbers.map((digits) => ({
-    digits,
-    hits: bales.filter((b) => {
-      const bd = String(b.packageNo).replace(/\D/g, '');
-      return (bd === digits || String(b.packageNo).toUpperCase().endsWith(digits)) && b.avail > 0;
-    }),
-  }));
+  // First pass — available hits per typed number (exact digits first; a
+  // packageNo ending with the typed digits only when no bale is exactly it).
+  const hitsByNo = numbers.map((digits) => ({ digits, hits: typedHits(bales, digits) }));
   // Source = the warehouse holding the most of the typed bales (a transfer
   // has ONE source; bales elsewhere are skipped with a pointer).
   const tally = new Map();
@@ -3110,6 +3122,13 @@ async function handleCallback(bot, query) {
   try { await require('../services/ephemeralDocs').sweep(bot, userId); } catch (_) { /* viewer state only */ }
 
   // Session-free actions first (cards live in counterparties' / admins' DMs).
+  // The inert chips (the 🔒 "you reported it" lock, the page counter, the
+  // calendar's blank cells) sit on cards that outlive any session: a quiet
+  // acknowledgement, never the "session has expired" notice below.
+  if (data === 'trf:noop') {
+    await bot.answerCallbackQuery(query.id).catch(() => {});
+    return true;
+  }
   const m = data.match(/^trf:(acc|dec|rcv|rcvp|rej|rejc):(.+)$/);
   if (m) return handleAction(bot, query, m[2], m[1]);
   // TRF-21 — arrival picker "Not now": drop the ticks, restore the card.
@@ -3216,8 +3235,14 @@ async function handleCallback(bot, query) {
   }
 
   if (data === 'trf:cancel') {
-    sessionStore.clear(userId, 'cancelled');
-    await render(bot, chatId, userId, '🚚 Transfer cancelled — nothing was moved.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+    // Render BEFORE clearing — the renderer is session-guarded, so the other
+    // order drew nothing and left the card standing with its live buttons.
+    // The session ends even when the draw fails: Cancel always drops the order.
+    try {
+      await render(bot, chatId, userId, '🚚 Transfer cancelled — nothing was moved.', [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]]);
+    } finally {
+      sessionStore.clear(userId, 'cancelled');
+    }
     return true;
   }
   if (data === 'trf:back') { await stepBack(bot, chatId, userId); return true; }
@@ -3403,7 +3428,7 @@ module.exports = {
   myQueueSection,
   _internals: {
     candidatesFor, resolvePeople, submit, handleAction, startPrefilled,
-    parseTypedTransfer, typedBaleMap,
+    parseTypedTransfer, typedBaleMap, typedHits,
     startDispatchPicker, askDispatchDoc, completeDispatch, completeReceipt,
     receiptReviewOn, receiptReviewCard, sendReceiptReviewCards, showReceiptReview, handleReceiptConfirm, // TRF-22
     armDocGate, gateNotNow, showInfo, promptForDoc, handleFile,
