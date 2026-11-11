@@ -251,3 +251,14 @@ test('the Settings sentence replaces the default; a Markdown failure retries pla
   assert.equal(s.pending.find((p) => p.id === '2').failed, 1);
   assert.equal(s.pending.find((p) => p.id === '1').sent, 1);
 });
+
+test('a blank ATTENDANCE_CHASE_TEXT cell (the reader hands over an empty string) keeps the built-in sentence', async () => {
+  fresh();
+  settings = { ATTENDANCE_CHASE_TEXT: '' };
+  const bot = recBot();
+  const r = await chase.startChase(bot, { by: '777', targets: [{ id: '1', name: 'Abdul' }], scopeLabel: 'one', intervalMin: 0, now: T('09:00') });
+  assert.equal(r.ok, true);
+  const card = bot.of('sendMessage').find((c) => String(c.args[0]) === '1');
+  assert.ok(card, 'the card went out');
+  assert.ok(card.args[1].endsWith(chase.DEFAULT_TEXT), `the consequence line is the built-in sentence — got: ${card.args[1]}`);
+});

@@ -165,7 +165,7 @@ function listAssignableUsers(actorUser, allUsers, graph, opts = {}) {
   const actorId = actorUser?.user_id ? String(actorUser.user_id) : '';
 
   return (allUsers || []).filter((u) => {
-    if (!u || (u.status && u.status !== 'active')) return false;
+    if (!u || String(u.status || 'active').trim().toLowerCase() !== 'active') return false;
     if (excludeSelf && actorId && String(u.user_id) === actorId) return false;
     if (isAdmin) return true;
     return canAssignTo(actorUser, u, graph);

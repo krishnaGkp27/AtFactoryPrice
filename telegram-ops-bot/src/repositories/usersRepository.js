@@ -82,6 +82,17 @@ function inDepartment(user, name) {
   return String(user.department || '').trim().toLowerCase() === target;
 }
 
+/**
+ * Is this Users row active? The status cell is compared trimmed and
+ * lower-cased, exactly as auth.refresh does, so a cell reading `Active`
+ * is an active person here too; a blank cell is active.
+ * @param {{status?: string}} user
+ * @returns {boolean}
+ */
+function isActive(user) {
+  return String((user && user.status) || 'active').trim().toLowerCase() === 'active';
+}
+
 // P6 — the Users sheet is read on almost every interaction (auth checks,
 // person pickers, dispatch routing) but changes rarely. Short TTL cache;
 // every mutation below invalidates so in-process writes are visible at
@@ -117,7 +128,7 @@ async function findByUserId(userId) {
   // several rows. Returning the first row would surface the stale inactive
   // record (e.g. deactivate → "already inactive"). Prefer the ACTIVE row;
   // otherwise the most recent (last) row reflects the user's current state.
-  return matches.find((u) => (u.status || 'active') === 'active') || matches[matches.length - 1];
+  return matches.find(isActive) || matches[matches.length - 1];
 }
 
 /**
@@ -128,7 +139,7 @@ async function findByUserId(userId) {
 async function findByDepartment(deptName) {
   if (!deptName) return [];
   const all = await getAll();
-  return all.filter((u) => u.status === 'active' && inDepartment(u, deptName));
+  return all.filter((u) => isActive(u) && inDepartment(u, deptName));
 }
 
 async function append(user) {

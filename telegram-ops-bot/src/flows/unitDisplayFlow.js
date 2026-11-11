@@ -56,7 +56,7 @@ async function canRequest(userId) {
   if (auth.isAdmin(String(userId))) return true;
   try {
     const user = await usersRepository.findByUserId(String(userId));
-    return !!(user && user.status === 'active' && String(user.role || '').toLowerCase() === 'manager');
+    return !!(user && String(user.status || 'active').trim().toLowerCase() === 'active' && String(user.role || '').toLowerCase() === 'manager');
   } catch (_) {
     return false;
   }

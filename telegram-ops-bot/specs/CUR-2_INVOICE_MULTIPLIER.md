@@ -82,6 +82,10 @@ appears on the sales side at all (R12b/R13/R14).
 | **What it changes** | Only *text* that names the unit: ledger narrations (`accountingService.js:32,71`), the `NGN ` prefix of `format.js fmtMoney` (expense side), incentive rows. Never a number | Every money figure on the **invoice document** — PDF and web copy at `/i/<token>` — and the number frozen in the new Invoices column. The Telegram caption is a staff message, not the document: it keeps the booked figures and adds one `Customer copy × <m>` line (§4b, §5) |
 | **What it never changes** | Any number anywhere; the multiplier | The entered rate, the Inventory price cell, the Transactions row, the ledger, the customer statement (SLED-1), the approval cards, the wizard chips, landed cost (R8) |
 
+_Corrected 11-Nov-2026:_ a blank cell is no longer read as `0`. Blank
+`INVOICE_RATE_MULTIPLIER` reads empty — still **no multiplier**, never the env
+default; blank `INVOICE_MULTIPLIER_ASK` reads its default `1` (Step 5 is asked).
+
 Variable 1 is deliberately **not** printed on the sales side (R12b): the
 invoice with no multiplier prints `3.20/yd`, not `NGN 3.20/yd`. "/yd" names
 the divisor; nothing names the unit.

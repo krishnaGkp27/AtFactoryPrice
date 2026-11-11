@@ -70,7 +70,7 @@ async function financeHead() {
   let members = [];
   try {
     const all = await usersRepository.getAll();
-    members = (all || []).filter((u) => (u.status || 'active') === 'active'
+    members = (all || []).filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active'
       && usersRepository.inDepartment(u, FINANCE_DEPARTMENT));
   } catch (e) {
     logger.warn(`paymentService.financeHead: Users read failed — ${e.message}`);

@@ -1631,7 +1631,7 @@ async function handleDispatchManagerCallback(bot, callbackQuery) {
   // Only active Dispatch users may act on this card. (Anyone else who
   // somehow taps the buttons gets a polite "not authorized" toast.)
   const acting = await usersRepository.findByUserId(userId);
-  if (!acting || acting.status !== 'active' || !usersRepository.inDepartment(acting, 'Dispatch')) {
+  if (!acting || String(acting.status || 'active').trim().toLowerCase() !== 'active' || !usersRepository.inDepartment(acting, 'Dispatch')) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Only Dispatch members can act on this.' });
     return;
   }

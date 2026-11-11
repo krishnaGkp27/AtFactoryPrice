@@ -140,11 +140,12 @@ test('read errors fall back to DEFAULTS and are NOT cached', async () => {
 
 /* ── an EMPTY value cell ──
  * getAll coerces every value with Number(), and Number('') is 0, so a key
- * row whose value cell is empty used to read as 0. For two keys the
- * documented meaning of "blank" is the in-code default, and 0 broke both:
+ * row whose value cell is empty used to read as 0. The two keys that first
+ * showed it:
  *   ATTENDANCE_NOTIFY_IDS      blank = the Railway admin pool (0 → the id "0" → nobody told)
  *   CUSTOMER_CREATION_ENABLED  default on                     (0 → ➕ Add Contact frozen)
- * It is a named list, never a blanket rule: for other keys blank is a value.
+ * The rule now covers every key — a number default means "not set", any
+ * other key reads '' — and settingsBlankCells.test.js walks all of them.
  */
 async function readWithRows(rows) {
   const orig = sheets.readRange;
@@ -191,7 +192,7 @@ test('duplicate rows: the LAST row still wins, and its empty cell means the defa
   assert.strictEqual(all.CUSTOMER_CREATION_ENABLED, 1);
 });
 
-test('NOT a blanket rule: for every other key an empty cell is still a value of its own', async () => {
+test('deliberate blanks stay blank even with a default; a numeric knob reads its default', async () => {
   const savedDefault = settingsRepo.DEFAULTS.INVOICE_RATE_MULTIPLIER;
   settingsRepo.DEFAULTS.INVOICE_RATE_MULTIPLIER = 1250; // as if the env seeded a boot default
   try {
@@ -204,7 +205,10 @@ test('NOT a blanket rule: for every other key an empty cell is still a value of 
     assert.ok(!all.INVOICE_RATE_MULTIPLIER, 'blank = no multiplier, even with an env default');
     assert.ok(!all.BANK_LIST, 'blank = no banks');
     assert.ok(!all.THAN_VISIBILITY_WAREHOUSES, 'blank = the than display is off everywhere');
-    assert.strictEqual(all.RISK_THRESHOLD, 0, 'unchanged reading for a key outside the list');
+    assert.strictEqual(all.INVOICE_RATE_MULTIPLIER, '', 'an empty string — never 0, never the env default');
+    assert.strictEqual(all.BANK_LIST, '');
+    assert.strictEqual(all.THAN_VISIBILITY_WAREHOUSES, '');
+    assert.strictEqual(all.RISK_THRESHOLD, settingsRepo.DEFAULTS.RISK_THRESHOLD, 'an empty numeric cell is the in-code default — it used to read 0');
   } finally {
     settingsRepo.DEFAULTS.INVOICE_RATE_MULTIPLIER = savedDefault;
   }

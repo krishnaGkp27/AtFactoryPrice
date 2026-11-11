@@ -111,7 +111,7 @@ async function start(bot, chatId, userId, messageId) {
 async function _eligibleUsers() {
   const all = await usersRepo.getAll();
   return all.filter((u) => u.user_id
-    && (u.status || 'active') === 'active'
+    && String(u.status || 'active').trim().toLowerCase() === 'active'
     && String(u.role || '').toLowerCase() !== 'admin');
 }
 
@@ -191,7 +191,7 @@ async function applyRole(bot, chatId, userId, tgId, role) {
   }
   let target = null;
   try { target = await usersRepo.findByUserId(tgId); } catch (_) {}
-  if (!target || (target.status || 'active') !== 'active') {
+  if (!target || String(target.status || 'active').trim().toLowerCase() !== 'active') {
     await renderError(bot, chatId, userId, 'That user is no longer active.');
     return;
   }

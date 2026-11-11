@@ -1479,7 +1479,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
 
     // Race-safe dedup: reject if an active user already exists.
     const dup = await usersRepo.findByUserId(tgId);
-    if (dup && (dup.status || 'active') === 'active') {
+    if (dup && String(dup.status || 'active').trim().toLowerCase() === 'active') {
       return { ok: false, message: `Telegram ID ${tgId} is already an active user (${dup.name || dup.user_id}).` };
     }
 
@@ -1541,7 +1541,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const tgId = String(aj.telegram_id || '').trim();
     if (!tgId) return { ok: false, message: 'promote_admin: telegram_id missing.' };
     const target = await usersRepo.findByUserId(tgId);
-    if (!target || (target.status || 'active') !== 'active') {
+    if (!target || String(target.status || 'active').trim().toLowerCase() !== 'active') {
       return { ok: false, message: `promote_admin: ${tgId} is not an active user.` };
     }
     if (String(target.role || '').toLowerCase() === 'admin') {

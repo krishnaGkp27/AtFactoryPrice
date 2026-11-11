@@ -59,6 +59,9 @@ after the employee's receipt (and after the admin's "Marked on Behalf" card):
    _Corrected 11-Nov-2026:_ an `ATTENDANCE_NOTIFY_IDS` row with an EMPTY value
    cell now really is phase 1 — the Settings reader used to turn the empty cell
    into `0`, which named the id "0" and told nobody.
+   _Same day, every key:_ an empty cell is never `0` — a numeric default reads
+   that default, any other key reads empty (empty `ATTENDANCE_LOCATIONS` /
+   `_WORKING_DAYS` = the built-in list; 🔘 Clear all = nobody, no ghost id `0`).
 
 ## Tests
 

@@ -3082,7 +3082,7 @@ async function showOrderSalespersonPicker(bot, chatId, userId) {
   const users = await usersRepository.getAll();
   const adminIds = new Set(config.access.adminIds || []);
   const active = users.filter((u) => {
-    if (u.status !== 'active') return false;
+    if (String(u.status || 'active').trim().toLowerCase() !== 'active') return false;
     if (adminIds.has(u.user_id)) return true;
     return usersRepository.inDepartment(u, 'Sales');
   });

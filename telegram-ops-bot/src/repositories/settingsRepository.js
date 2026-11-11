@@ -142,6 +142,11 @@ const DEFAULTS = {
   DIGEST_ENABLED: 1,
   DIGEST_TIME: '10:00',
   DIGEST_TIMEZONE: 'Africa/Lagos',
+  // MORN-2 — minutes after DIGEST_TIME within which a late (re)start still
+  // sends the digest. Not a new knob: morningDigest.tick has always read it
+  // with this same 120; it is listed here so an empty cell reads as the
+  // default like every other numeric key (it used to read 0).
+  DIGEST_CATCHUP_MINUTES: 120,
   // EXP-1 (owner, 08-Aug-2026) — 🌇 evening office-expense report to the
   // finance team (admins for now) + the nothing-filed reminder to the
   // office. Time is HH:MM in DIGEST_TIMEZONE; catch-up window mirrors the
@@ -229,15 +234,28 @@ const DEFAULTS = {
   SHEET_BACKUP_RETENTION_DAYS: 14,
 };
 
-// Keys whose EMPTY value cell means "not set": the row is read as if it
-// were missing, so the in-code default above stands. Number('') is 0, so
-// without this an empty ATTENDANCE_NOTIFY_IDS row named the id "0" (the
-// attendance notice reached nobody) and an empty CUSTOMER_CREATION_ENABLED
-// row froze ➕ Add Contact. A named list on purpose, never a blanket rule:
-// for other keys blank is a value of its own (INVOICE_RATE_MULTIPLIER
-// blank = no multiplier even with an env default, BANK_LIST blank = no
-// banks, THAN_VISIBILITY_WAREHOUSES blank = off everywhere).
-const BLANK_MEANS_DEFAULT = new Set(['ATTENDANCE_NOTIFY_IDS', 'CUSTOMER_CREATION_ENABLED']);
+// An EMPTY value cell. Number('') is 0, so a key row with nothing in its
+// value cell used to read as the number 0: every default-ON switch went
+// OFF, every numeric knob read 0, and a string / list key was handed the
+// id or name `0`. The rule, for every key:
+//   - the in-code default above is a NUMBER → the cell is "not set": the
+//     row reads as if it were missing and the default stands (a 0 typed in
+//     the cell is still a 0);
+//   - any other key (a string or list default, or no default here at all)
+//     → the EMPTY STRING, never 0. Its consumer then does what its own
+//     code intends for empty: its own default, or "nobody" / "none"
+//     (BANK_LIST blank = no banks, THAN_VISIBILITY_WAREHOUSES blank = off
+//     everywhere, ATTENDANCE_NOTIFY_IDS blank = the admin pool).
+// BLANK_IS_A_VALUE names the keys whose blank is a value of its own even
+// though their default may be a number: INVOICE_RATE_MULTIPLIER blank = no
+// multiplier, never the env default (CUR-2).
+// test/unit/repositories/settingsBlankCells.test.js classifies every key.
+const BLANK_IS_A_VALUE = new Set(['INVOICE_RATE_MULTIPLIER']);
+
+/** What an empty value cell on `key` reads as. */
+function blankValue(key) {
+  return typeof DEFAULTS[key] === 'number' && !BLANK_IS_A_VALUE.has(key) ? DEFAULTS[key] : '';
+}
 
 let _headerReady = false;
 
@@ -282,9 +300,9 @@ async function getAll() {
       // historical cell where a literal apostrophe landed, and test fakes echo
       // writes verbatim. Number() coercion happens AFTER the strip.
       if (v.startsWith("'")) v = v.slice(1);
-      // An empty cell on a BLANK_MEANS_DEFAULT key = the default (last row
+      // An empty cell is never the number 0 — see blankValue (last row
       // still wins: an empty last row resets an earlier duplicate's value).
-      if (k && v.trim() === '' && BLANK_MEANS_DEFAULT.has(k)) { map[k] = DEFAULTS[k]; return; }
+      if (k && v.trim() === '') { map[k] = blankValue(k); return; }
       if (k) map[k] = isNaN(Number(v)) ? v : Number(v);
     });
     _cache = map;

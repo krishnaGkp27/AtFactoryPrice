@@ -93,7 +93,7 @@ async function availableInventory() {
  */
 async function candidatesFor(warehouse) {
   const all = await usersRepository.getAll();
-  const active = all.filter((u) => u.status === 'active');
+  const active = all.filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active');
   const w = String(warehouse).trim().toLowerCase();
   const assigned = active.filter((u) => (u.warehouses || []).some((x) => String(x).trim().toLowerCase() === w));
   if (assigned.length) return assigned;

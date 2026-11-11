@@ -165,7 +165,7 @@ async function start(bot, chatId, userId, messageId, which /* 'promote' | 'deact
 
 async function _eligibleUsers(flow) {
   const all = await usersRepo.getAll();
-  const active = all.filter((u) => (u.status || 'active') === 'active' && u.user_id);
+  const active = all.filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active' && u.user_id);
   if (flow === 'promote') {
     // Cannot promote an existing admin to admin.
     return active.filter((u) => String(u.role || '').toLowerCase() !== 'admin');

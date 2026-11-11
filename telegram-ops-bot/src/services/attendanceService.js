@@ -164,7 +164,7 @@ async function getAudience() {
   const out = new Map();
   if (cfg.audienceMode === 'departments') {
     for (const u of active) {
-      const isAdmin = (u.role || '') === 'admin' || config.access.adminIds.includes(String(u.user_id));
+      const isAdmin = String(u.role || '').toLowerCase() === 'admin' || config.access.adminIds.includes(String(u.user_id));
       if (!isAdmin && Array.isArray(u.departments) && u.departments.length) {
         out.set(String(u.user_id), { user_id: String(u.user_id), name: u.name || String(u.user_id) });
       }

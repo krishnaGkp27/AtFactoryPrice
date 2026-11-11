@@ -305,7 +305,7 @@ async function showAssigneePicker(bot, chatId, userId) {
     people = deptGraph.listAssignableUsers(actor, allUsers, graph, { isAdmin: isAdm, excludeSelf: true });
   } catch (e) {
     logger.warn(`snapTask.assignees: graph failed (${e.message}) — admin fallback`);
-    people = isAdm ? allUsers.filter((u) => String(u.user_id) !== userId && (u.status || 'active') === 'active') : [];
+    people = isAdm ? allUsers.filter((u) => String(u.user_id) !== userId && String(u.status || 'active').trim().toLowerCase() === 'active') : [];
   }
   if (!people.length) {
     await renderCard(bot, chatId, userId,

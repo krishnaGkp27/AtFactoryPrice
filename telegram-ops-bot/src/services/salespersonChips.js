@@ -48,7 +48,7 @@ function labelOf(u) {
 }
 
 function isActive(u) {
-  return !u.status || u.status === 'active';
+  return String(u.status || 'active').trim().toLowerCase() === 'active';
 }
 
 /**

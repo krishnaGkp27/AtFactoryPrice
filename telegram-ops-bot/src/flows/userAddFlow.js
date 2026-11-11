@@ -107,7 +107,7 @@ async function loadPendingCandidates() {
   try {
     const users = await usersRepo.getAll();
     activeIds = new Set(
-      users.filter((u) => (u.status || 'active') === 'active').map((u) => String(u.user_id)),
+      users.filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active').map((u) => String(u.user_id)),
     );
   } catch (_) { /* no users sheet yet → treat none as active */ }
   return pendings
@@ -326,7 +326,7 @@ async function applyTelegramId(bot, chatId, userId, raw) {
   // Reject duplicates against the live Users sheet (active only).
   try {
     const existing = await usersRepo.findByUserId(cleaned);
-    if (existing && (existing.status || 'active') === 'active') {
+    if (existing && String(existing.status || 'active').trim().toLowerCase() === 'active') {
       await renderError(bot, chatId, userId,
         `Telegram ID \`${cleaned}\` is already an active user (*${existing.name || existing.user_id}*).`,
         'usr:back:telegram_id');
@@ -898,7 +898,7 @@ async function _dispatchCallback(bot, query, session, chatId, userId, data) {
     }
     try {
       const existing = await usersRepo.findByUserId(tgId);
-      if (existing && (existing.status || 'active') === 'active') {
+      if (existing && String(existing.status || 'active').trim().toLowerCase() === 'active') {
         await renderError(bot, chatId, userId,
           `\`${tgId}\` is already an active user (*${existing.name || existing.user_id}*).`,
           'usr:back:pick');
