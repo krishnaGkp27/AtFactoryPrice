@@ -2122,10 +2122,25 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
           } catch (_) { /* id alone */ }
           const progressMod = require('../services/approvalProgress');
           const trail = [...progressMod.trailOf(item.actionJSON), progressMod.signoff(adminId, signerLabel)];
-          await approvalQueueRepository.updateActionJSON(requestId, {
-            approvals: [...prior, adminId],
-            signoffs: trail,
-          });
+          // DUAL-1b (11-Nov-2026) — a first signature that cannot be SAVED
+          // stops here. The outer catch falls back to single approval (house
+          // style for a gate bug); a refused sheet write is not a gate bug,
+          // and falling through would execute a two-signature request on one.
+          try {
+            await approvalQueueRepository.updateActionJSON(requestId, {
+              approvals: [...prior, adminId],
+              signoffs: trail,
+            });
+          } catch (e) {
+            logger.error(`DUAL-1 first-signoff save failed for ${requestId} — nothing approved: ${e.message}`);
+            try {
+              await bot.answerCallbackQuery(callbackQuery.id, {
+                text: '⚠️ Could not record your approval — nothing was approved. Tap ✅ Approve again in a minute.',
+                show_alert: true,
+              });
+            } catch (_) { /* stale query */ }
+            return;
+          }
           try {
             const auditLogRepository = require('../repositories/auditLogRepository');
             await auditLogRepository.append('approval_first_signoff',

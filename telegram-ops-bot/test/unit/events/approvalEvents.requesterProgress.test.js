@@ -159,3 +159,23 @@ test('the admin card of a flagged twin carries ⧉ Reject as duplicate; a clean 
     assert.deepEqual(kb3[1], [{ text: '⧉ Reject as duplicate', callback_data: 'apg:dup:REQ-F' }]);
   } finally { approvalQueueRepository.getAllPending = savedPending; }
 });
+
+// DUAL-1b (11-Nov-2026) — a first signature that cannot be saved must not
+// fall through to a one-signature execution of a two-signature request.
+test('first of two: when the signature cannot be SAVED nothing is approved and the admin is told to tap again', async () => {
+  item = { requestId: 'REQ-8', user: EMPLOYEE, status: 'pending', actionJSON: { ...PAY } };
+  executed = 0;
+  const orig = approvalQueueRepository.updateActionJSON;
+  approvalQueueRepository.updateActionJSON = async () => { throw new Error('Quota exceeded'); };
+  const bot = createFakeBot();
+  try {
+    await approvalEvents.handleApprovalCallback(bot, cbq('777', 'approve:REQ-8'), 'approve');
+  } finally {
+    approvalQueueRepository.updateActionJSON = orig;
+  }
+  assert.equal(executed, 0, 'one unsaved signature never executes a dual-admin request');
+  assert.equal(item.actionJSON.approvals, undefined, 'nothing was recorded');
+  const alert = bot.calls.find((c) => c.method === 'answerCallbackQuery' && /Could not record your approval/.test(String((c.args.opts || c.args.options || c.args).text || '')));
+  assert.ok(alert, 'the admin is told nothing was approved');
+  assert.equal(textsTo(bot, EMPLOYEE).length, 0, 'the requester is not told of a signature that does not exist');
+});
