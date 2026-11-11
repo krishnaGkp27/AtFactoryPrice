@@ -128,6 +128,41 @@ test('Save with everything unticked revokes silently — the employee gets no re
   assert.equal(lastText(bot), '🔐 *Sales Access*\n\n✅ *Musa* no longer sees any store\'s sales.');
 });
 
+test('Save that only REMOVES one of two places is silent too — written, logged, nothing sent', async () => {
+  const bot = createFakeBot();
+  await flow.start(bot, 1, '777', 55);
+  await tap(bot, '777', 'ssa:u:1');            // Musa: IDUMOTA + Ketu
+  await tap(bot, '777', 'ssa:p:3');            // untick Ketu, IDUMOTA stays
+  await tap(bot, '777', 'ssa:save');
+  assert.deepEqual(writes, [['5151', ['IDUMOTA']]]);
+  assert.equal(audits.length, 1, 'the audit line is still written');
+  assert.deepEqual(audits[0][1], { user_id: '5151', name: 'Musa', places: ['IDUMOTA'], before: ['IDUMOTA', 'Ketu'] });
+  assert.deepEqual(dmsTo(bot, '5151'), [], 'nothing was gained, so the person is told nothing');
+  assert.equal(lastText(bot), '🔐 *Sales Access*\n\n✅ *Musa* now sees the sales of *IDUMOTA*.',
+    'the admin is not told "They have been told"');
+});
+
+test('Save that removes one place and ADDS another tells the person what they now see', async () => {
+  const bot = createFakeBot();
+  await flow.start(bot, 1, '777', 55);
+  await tap(bot, '777', 'ssa:u:1');            // Musa: IDUMOTA + Ketu
+  await tap(bot, '777', 'ssa:p:3');            // untick Ketu
+  await tap(bot, '777', 'ssa:p:2');            // tick Kano office
+  await tap(bot, '777', 'ssa:save');
+  assert.deepEqual(writes, [['5151', ['IDUMOTA', 'Kano office']]]);
+  assert.deepEqual(dmsTo(bot, '5151'), ['🏬 You can now see the sales of IDUMOTA, Kano office.\nOpen 📊 Reporting → 🏬 Store Sales or 📒 Customer Supplies.']);
+  assert.match(lastText(bot), /_They have been told\._$/);
+});
+
+test('screen A: a Users row whose status reads `Active` (or ` ACTIVE `) is listed; `Inactive` is not', async () => {
+  USERS[1].status = ' ACTIVE ';
+  USERS[2].status = 'Active';
+  USERS[3].status = 'Inactive';
+  const bot = createFakeBot();
+  await flow.start(bot, 1, '777', 55);
+  assert.deepEqual(kbTexts(bot), ['👤 Abdul · —|ssa:u:0', '👤 Musa · IDUMOTA, Ketu|ssa:u:1', '🏠 Back to menu|ssa:menu']);
+});
+
 test('a granted place the register no longer lists is still shown ticked so it can be removed', async () => {
   USERS[1].store_sales_places = ['Old Store'];
   const bot = createFakeBot();

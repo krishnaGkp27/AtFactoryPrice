@@ -2071,10 +2071,13 @@ async function showAddCustomerPaymentTermsStep(bot, chatId, userId) {
 }
 
 async function showAddCustomerNotesStep(bot, chatId, userId) {
+  // Back returns to the step this kind came from: only a customer has
+  // payment terms; every other kind reached the notes from the address.
+  const backTo = personTypeIsCustomer(sessionStore.get(userId)) ? 'acb:terms' : 'acb:address';
   const rows = [
     [{ text: '⏭ Skip notes', callback_data: 'acskip:notes' }],
     [
-      { text: '⬅️ Back', callback_data: 'acb:terms' },
+      { text: '⬅️ Back', callback_data: backTo },
       { text: '❌ Cancel', callback_data: 'accanc:0' },
     ],
   ];

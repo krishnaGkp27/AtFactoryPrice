@@ -52,6 +52,17 @@ test('admin-only', async () => {
   sessionStore.clear(EMPLOYEE);
 });
 
+test('the "Running N…" line counts the sentinel\'s own check list — never a literal', async () => {
+  const bot = createFakeBot();
+  await flow.start(bot, ADMIN, ADMIN, null);
+  const first = bot.calls.find((x) => x.method === 'sendMessage' || x.method === 'editMessageText');
+  assert.ok(Number.isInteger(consistencySentinel.CHECK_TOTAL) && consistencySentinel.CHECK_TOTAL > 7,
+    'the list has grown past the seven checks SEN-1 shipped with');
+  assert.equal(first.args.text, `🩺 *Data Health*\n\n_Running ${consistencySentinel.CHECK_TOTAL} cross-sheet checks…_`);
+  assert.doesNotMatch(first.args.text, /Running 7 /);
+  sessionStore.clear(ADMIN);
+});
+
 test('summary card: ticks for clean checks, drill buttons for failing ones', async () => {
   const bot = createFakeBot();
   await flow.start(bot, ADMIN, ADMIN, null);

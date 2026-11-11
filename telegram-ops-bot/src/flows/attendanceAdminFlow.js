@@ -127,7 +127,7 @@ async function buildTodayPanel(cfg) {
   try { usersAll = await usersRepo.getAll(); } catch (_) {}
   const activeMap = new Map(
     usersAll
-      .filter((u) => (u.status || 'active') === 'active' && u.user_id)
+      .filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active' && u.user_id)
       .map((u) => [String(u.user_id), u]),
   );
   const reqValid = cfg.requiredUsers.filter((id) => activeMap.has(id));
@@ -311,7 +311,7 @@ async function renderRequiredPicker(bot, chatId, userId) {
   // Pull the active-user list AND the structured required-detail so we
   // can show clean counts that match reality (no more "7 / 3").
   let users = [];
-  try { users = (await usersRepo.getAll()).filter((u) => (u.status || 'active') === 'active'); }
+  try { users = (await usersRepo.getAll()).filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active'); }
   catch (e) { logger.warn(`renderRequiredPicker: users read failed: ${e.message}`); }
   users.sort((a, b) => (a.name || a.user_id).localeCompare(b.name || b.user_id));
 
@@ -981,7 +981,7 @@ async function renderBehalfPickUser(bot, chatId, userId) {
   const { rows: logged } = await attendanceService.getTodayAll(cfg.timezone);
   const loggedIds = new Set(logged.map((r) => r.telegram_id));
   let users = [];
-  try { users = (await usersRepo.getAll()).filter((u) => (u.status || 'active') === 'active'); }
+  try { users = (await usersRepo.getAll()).filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active'); }
   catch (_) {}
   const candidates = users.filter((u) => cfg.requiredUsers.includes(String(u.user_id)) && !loggedIds.has(String(u.user_id)));
   candidates.sort((a, b) => (a.name || a.user_id).localeCompare(b.name || b.user_id));

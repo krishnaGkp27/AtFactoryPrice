@@ -62,7 +62,8 @@ async function loadPeople() {
   const seen = new Set();
   const people = [];
   for (const u of all) {
-    if (!u.user_id || (u.status || 'active') !== 'active') continue;
+    // Trimmed + lower-cased, as auth compares it: `Active` is an active person.
+    if (!u.user_id || String(u.status || 'active').trim().toLowerCase() !== 'active') continue;
     if (seen.has(u.user_id)) continue;
     if (auth.isAdmin(u.user_id) || config.access.adminIds.includes(String(u.user_id))) continue;
     if (String(u.role || '').toLowerCase() === 'admin') continue;

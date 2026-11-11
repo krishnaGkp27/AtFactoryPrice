@@ -424,6 +424,30 @@ function checkShadeSpellings({ inventory }) {
 
 /* ───────────────────────────── orchestration ───────────────────────────── */
 
+/**
+ * The checks, in report order — the ONE list. runAll runs it, and anything
+ * that says how many checks there are (the 🩺 tile's "Running N…" line)
+ * counts it through CHECK_TOTAL, so the figure cannot drift from what runs.
+ * `run(ctx)` returns the finding lines, or `{count, findings}` for an
+ * aggregated check (C9); it may be async.
+ */
+const CHECKS = [
+  { id: 'C1', title: 'Sold rows have sale movements', run: checkSoldHaveSaleMovements },
+  { id: 'C2', title: 'Returns are approved returns', run: checkReturnsAreApproved },
+  { id: 'C3', title: 'In-transit matches open transfers', run: checkInTransit },
+  { id: 'C4', title: 'One Current flag per bale', run: checkCurrentFlags },
+  { id: 'C5', title: 'Every buyer is a real customer', run: checkSoldToResolves },
+  { id: 'C6', title: 'One live bale per printed number per store', run: checkDuplicateLiveNumbers },
+  { id: 'C7', title: 'Request ids are unique', run: checkRequestIdUniqueness },
+  { id: 'C8', title: 'No pending sale sits on sold stock', run: checkPendingSalesAlreadySold },
+  { id: 'C9', title: 'Every sale carries a readable date', run: checkSoldDatesReadable },
+  { id: 'C10', title: 'Every bale_uid is unique', run: checkUidsUnique },
+  { id: 'C11', title: 'One spelling per shade inside a design', run: checkShadeSpellings },
+];
+
+/** How many checks one run performs. */
+const CHECK_TOTAL = CHECKS.length;
+
 let _inflight = null;
 
 /**
@@ -451,19 +475,11 @@ async function runAll() {
     const pending = queueRows.filter((q) => String(q.status || '').toLowerCase() === 'pending');
     const resolved = queueRows.filter((q) => String(q.status || '').toLowerCase() !== 'pending');
     const ctx = { inventory, movements, pending, resolved, queueRows, now };
-    const checks = [
-      { id: 'C1', title: 'Sold rows have sale movements', findings: checkSoldHaveSaleMovements(ctx) },
-      { id: 'C2', title: 'Returns are approved returns', findings: checkReturnsAreApproved(ctx) },
-      { id: 'C3', title: 'In-transit matches open transfers', findings: checkInTransit(ctx) },
-      { id: 'C4', title: 'One Current flag per bale', findings: checkCurrentFlags(ctx) },
-      { id: 'C5', title: 'Every buyer is a real customer', findings: await checkSoldToResolves(ctx) },
-      { id: 'C6', title: 'One live bale per printed number per store', findings: await checkDuplicateLiveNumbers(ctx) },
-      { id: 'C7', title: 'Request ids are unique', findings: checkRequestIdUniqueness(ctx) },
-      { id: 'C8', title: 'No pending sale sits on sold stock', findings: checkPendingSalesAlreadySold(ctx) },
-      { id: 'C9', title: 'Every sale carries a readable date', ...checkSoldDatesReadable(ctx) },
-      { id: 'C10', title: 'Every bale_uid is unique', findings: checkUidsUnique(ctx) },
-      { id: 'C11', title: 'One spelling per shade inside a design', findings: checkShadeSpellings(ctx) },
-    ];
+    const checks = [];
+    for (const c of CHECKS) {
+      const out = await c.run(ctx);
+      checks.push({ id: c.id, title: c.title, ...(Array.isArray(out) ? { findings: out } : out) });
+    }
     return { checks, totalFindings: checks.reduce((n, c) => n + checkCount(c), 0) };
   })();
   try {
@@ -595,7 +611,7 @@ function startScheduler(bot) {
 }
 
 module.exports = {
-  runAll, sweep, buildReport, reportKeyboard, getLastResult, startScheduler, checkCount,
+  runAll, sweep, buildReport, reportKeyboard, getLastResult, startScheduler, checkCount, CHECK_TOTAL,
   _internals: {
     TELEGRAM_TEXT_MAX, _setLastResultForTests,
     checkSoldHaveSaleMovements, checkReturnsAreApproved, checkInTransit,

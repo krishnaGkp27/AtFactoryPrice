@@ -157,7 +157,9 @@ async function getAudience() {
   const cfg = await getConfig();
   const config = require('../config');
   const users = await usersRepo.getAll();
-  const active = users.filter((u) => (u.status || 'active') === 'active');
+  // Status is compared trimmed + lower-cased, as auth does: a cell reading
+  // `Active` is an active person here too (tile, nudge, chase).
+  const active = users.filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active');
   const byId = new Map(active.map((u) => [String(u.user_id), u]));
   const out = new Map();
   if (cfg.audienceMode === 'departments') {
@@ -197,7 +199,7 @@ async function setRequiredUsers(ids) {
   const allUsers = await usersRepo.getAll();
   const activeSet = new Set(
     allUsers
-      .filter((u) => (u.status || 'active') === 'active' && u.user_id)
+      .filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active' && u.user_id)
       .map((u) => String(u.user_id)),
   );
   const saved = wanted.filter((id) => activeSet.has(id));
@@ -222,7 +224,7 @@ async function getRequiredUsersDetailed() {
   const allUsers = await usersRepo.getAll();
   const activeMap = new Map(
     allUsers
-      .filter((u) => (u.status || 'active') === 'active' && u.user_id)
+      .filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active' && u.user_id)
       .map((u) => [String(u.user_id), u]),
   );
   const active = [];

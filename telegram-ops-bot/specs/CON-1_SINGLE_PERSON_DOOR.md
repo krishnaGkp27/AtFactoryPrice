@@ -41,6 +41,9 @@ door the requester happened to use.
    sub-category + credit limit + payment terms (the current flow's
    steps, unchanged); every other type skips straight to phone → address
    → notes. **No new columns** — category already lives on Customers.
+   ⬅️ Back on the notes step follows the same split (corrected 11-Nov-2026):
+   a Customer returns to payment terms, every other type to the address —
+   it used to show `Pick payment terms:` to a Worker.
 4. **Everything queues as `add_contact`**, with the customer fields
    (category, credit_limit, payment_terms) riding the actionJSON when
    type = customer. Every person-card therefore gets the CNET-2 chips.

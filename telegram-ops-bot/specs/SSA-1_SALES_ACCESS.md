@@ -83,6 +83,11 @@ to be seen to employees").** Unticking everything writes the cell, logs the line
 confirms `✅ Musa no longer sees any store's sales.` to the admin — the employee gets
 no message; the tiles simply leave their menu.
 
+**Corrected 11-Nov-2026:** the DM goes out only when the save ADDED at least one place.
+Unticking one of two stores is a removal too: written and logged, the admin sees
+`✅ Musa now sees the sales of IDUMOTA.` with no "They have been told." line, and the
+employee gets nothing (before, any changed save that left a place sent the DM).
+
 ## 3. Where the grant lives
 
 **Users sheet, column L `store_sales_places`** — a CSV of place names, the one

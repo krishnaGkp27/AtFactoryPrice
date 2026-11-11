@@ -115,3 +115,34 @@ test('grant: writes column L, logs, DMs the person only when they gained somethi
   assert.deepEqual(r, { ok: false, changed: false, told: false });
   assert.equal(audits.length, n);
 });
+
+test('grant: the DM goes out only when a place was ADDED — a save that only removes some places is silent', async () => {
+  const writes = []; const audits = []; const dms = [];
+  usersRepository.updateStoreSalesPlaces = async (id, places) => { writes.push([id, places]); return true; };
+  auditLogRepository.append = async (type, payload, by) => { audits.push([type, payload, by]); };
+  const bot = { sendMessage: async (id, text) => { dms.push([id, text]); } };
+  const two = { user_id: '6262', name: 'Sani', status: 'active', store_sales_places: ['Kano office', 'IDUMOTA'] };
+
+  // One of two unticked: something is left, but nothing was gained.
+  let r = await svc.grant({ bot, adminId: '777', user: two, places: ['Kano office'] });
+  assert.deepEqual(r, { ok: true, changed: true, told: false });
+  assert.deepEqual(dms, [], 'no "You can now see…" for a removal');
+  assert.deepEqual(writes, [['6262', ['Kano office']]], 'the cell is still written');
+  assert.deepEqual(audits, [['sales_access_updated',
+    { user_id: '6262', name: 'Sani', places: ['Kano office'], before: ['Kano office', 'IDUMOTA'] }, '777']], 'and still logged');
+
+  // Same case-folded place kept, another removed: still only a removal.
+  r = await svc.grant({ bot, adminId: '777', user: two, places: ['IDUMOTA '.toLowerCase()] });
+  assert.deepEqual(r, { ok: true, changed: true, told: false });
+  assert.deepEqual(dms, []);
+
+  // One removed AND one added: they gained something, so they are told what they now see.
+  r = await svc.grant({ bot, adminId: '777', user: two, places: ['Kano office', 'Ketu'] });
+  assert.deepEqual(r, { ok: true, changed: true, told: true });
+  assert.deepEqual(dms, [['6262', '🏬 You can now see the sales of Kano office, Ketu.\nOpen 📊 Reporting → 🏬 Store Sales or 📒 Customer Supplies.']]);
+
+  // A pure addition on top of what they hold: told, as before.
+  r = await svc.grant({ bot, adminId: '777', user: two, places: ['Kano office', 'IDUMOTA', 'Ketu'] });
+  assert.deepEqual(r, { ok: true, changed: true, told: true });
+  assert.equal(dms.length, 2);
+});

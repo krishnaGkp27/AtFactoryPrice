@@ -229,6 +229,16 @@ const DEFAULTS = {
   SHEET_BACKUP_RETENTION_DAYS: 14,
 };
 
+// Keys whose EMPTY value cell means "not set": the row is read as if it
+// were missing, so the in-code default above stands. Number('') is 0, so
+// without this an empty ATTENDANCE_NOTIFY_IDS row named the id "0" (the
+// attendance notice reached nobody) and an empty CUSTOMER_CREATION_ENABLED
+// row froze ➕ Add Contact. A named list on purpose, never a blanket rule:
+// for other keys blank is a value of its own (INVOICE_RATE_MULTIPLIER
+// blank = no multiplier even with an env default, BANK_LIST blank = no
+// banks, THAN_VISIBILITY_WAREHOUSES blank = off everywhere).
+const BLANK_MEANS_DEFAULT = new Set(['ATTENDANCE_NOTIFY_IDS', 'CUSTOMER_CREATION_ENABLED']);
+
 let _headerReady = false;
 
 async function ensureHeader() {
@@ -272,6 +282,9 @@ async function getAll() {
       // historical cell where a literal apostrophe landed, and test fakes echo
       // writes verbatim. Number() coercion happens AFTER the strip.
       if (v.startsWith("'")) v = v.slice(1);
+      // An empty cell on a BLANK_MEANS_DEFAULT key = the default (last row
+      // still wins: an empty last row resets an earlier duplicate's value).
+      if (k && v.trim() === '' && BLANK_MEANS_DEFAULT.has(k)) { map[k] = DEFAULTS[k]; return; }
       if (k) map[k] = isNaN(Number(v)) ? v : Number(v);
     });
     _cache = map;

@@ -140,8 +140,9 @@ async function listPlaces() {
 async function grant({ bot, adminId, user, places }) {
   const before = scopeOfUser(user, false);
   const after = scopeOfUser({ store_sales_places: places }, false);
-  const changed = before.keys.size !== after.keys.size
-    || [...after.keys].some((k) => !before.keys.has(k));
+  // gained = at least one place this save ADDED (the only case the person is told).
+  const gained = [...after.keys].some((k) => !before.keys.has(k));
+  const changed = before.keys.size !== after.keys.size || gained;
   const ok = await usersRepository().updateStoreSalesPlaces(user.user_id, after.places);
   if (!ok) return { ok: false, changed: false, told: false };
   try {
@@ -150,9 +151,11 @@ async function grant({ bot, adminId, user, places }) {
     }, String(adminId));
   } catch (e) { logger.warn(`salesAccess: audit write failed: ${e.message}`); }
   // Owner (24-Sep-2026): the person is told what they can NOW see; a
-  // removal is silent — no removal message ever reaches an employee.
+  // removal is silent — no removal message ever reaches an employee. So the
+  // DM goes out only when this save ADDED a place: unticking one of two
+  // stores leaves something to see but gains nothing, and sends nothing.
   let told = false;
-  if (changed && after.places.length && bot) {
+  if (gained && after.places.length && bot) {
     const text = `🏬 You can now see the sales of ${after.places.join(', ')}.\nOpen 📊 Reporting → 🏬 Store Sales or 📒 Customer Supplies.`;
     try { await bot.sendMessage(user.user_id, text); told = true; } catch (e) {
       logger.warn(`salesAccess: could not DM ${user.user_id}: ${e.message}`);

@@ -509,6 +509,13 @@ test('runAll carries C9–C11 on the same snapshot, after C8, and they tick when
     assert.equal(out.totalFindings, 1, 'C9 counts one row, not two lines');
     assert.match(sentinel.buildReport(out), /⚠️ C9 Every sale carries a readable date — 1:/);
     assert.match(sentinel.buildReport(out), /✅ C10 Every bale_uid is unique/);
+    // The number of checks is counted from the list runAll runs — the one
+    // figure the 🩺 tile ("Running N…") and the DM chip ("Show all N") share.
+    assert.equal(sentinel.CHECK_TOTAL, out.checks.length, 'CHECK_TOTAL is the length of the list that ran');
+    assert.deepEqual(ids, ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11'], 'same checks, same order');
+    assert.deepEqual(Object.keys(byId.C1), ['id', 'title', 'findings'], 'a plain check keeps its shape');
+    assert.deepEqual(Object.keys(byId.C9), ['id', 'title', 'count', 'findings'], 'the aggregated check keeps its count');
+    assert.equal(sentinel.reportKeyboard(out, false).inline_keyboard[0][0].text, `🔽 Show all ${sentinel.CHECK_TOTAL}`);
   } finally {
     inventoryRepository.getAll = origs.inv;
     baleMovementsRepository.getAllStrict = origs.mov;

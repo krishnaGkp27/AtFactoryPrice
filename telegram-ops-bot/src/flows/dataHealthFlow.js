@@ -3,7 +3,7 @@
 /**
  * src/flows/dataHealthFlow.js — SEN-1 🩺 Data Health (admin-only).
  *
- * The on-tap face of consistencySentinel: run the seven read-only
+ * The on-tap face of consistencySentinel: run its read-only
  * cross-sheet checks now and browse every finding, instead of waiting for
  * the nightly DM (which caps lines per check). The flow only READS — the
  * fix for anything it surfaces goes through the normal repair paths.
@@ -44,7 +44,9 @@ async function start(bot, chatId, userId, messageId = null) {
 async function runAndRender(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session) return;
-  await render(bot, chatId, userId, '🩺 *Data Health*\n\n_Running 7 cross-sheet checks…_', []);
+  // The count is the sentinel's own list (CHECK_TOTAL), never a literal:
+  // it read "7" long after the list had grown to eleven.
+  await render(bot, chatId, userId, `🩺 *Data Health*\n\n_Running ${consistencySentinel.CHECK_TOTAL} cross-sheet checks…_`, []);
   let result;
   try {
     result = await consistencySentinel.runAll();

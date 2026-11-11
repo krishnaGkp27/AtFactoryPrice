@@ -115,7 +115,7 @@ async function buildReport(opts) {
   try { allUsers = await usersRepo.getAll(); } catch (_) {}
   const activeMap = new Map(
     allUsers
-      .filter((u) => (u.status || 'active') === 'active' && u.user_id)
+      .filter((u) => String(u.status || 'active').trim().toLowerCase() === 'active' && u.user_id)
       .map((u) => [String(u.user_id), u]),
   );
 

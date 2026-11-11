@@ -137,3 +137,88 @@ test('read errors fall back to DEFAULTS and are NOT cached', async () => {
     settingsRepo.invalidateCache();
   }
 });
+
+/* ── an EMPTY value cell ──
+ * getAll coerces every value with Number(), and Number('') is 0, so a key
+ * row whose value cell is empty used to read as 0. For two keys the
+ * documented meaning of "blank" is the in-code default, and 0 broke both:
+ *   ATTENDANCE_NOTIFY_IDS      blank = the Railway admin pool (0 → the id "0" → nobody told)
+ *   CUSTOMER_CREATION_ENABLED  default on                     (0 → ➕ Add Contact frozen)
+ * It is a named list, never a blanket rule: for other keys blank is a value.
+ */
+async function readWithRows(rows) {
+  const orig = sheets.readRange;
+  settingsRepo.invalidateCache();
+  sheets.readRange = async () => rows.map((r) => [...r]);
+  try { return await settingsRepo.getAll(); } finally {
+    sheets.readRange = orig;
+    settingsRepo.invalidateCache();
+  }
+}
+
+test('an empty ATTENDANCE_NOTIFY_IDS cell reads exactly like a missing row', async () => {
+  const missing = await readWithRows([['RISK_THRESHOLD', '500', '']]);
+  for (const cell of ['', '   ', "'", undefined]) {
+    const row = cell === undefined ? ['ATTENDANCE_NOTIFY_IDS'] : ['ATTENDANCE_NOTIFY_IDS', cell, ''];
+    const all = await readWithRows([row]);
+    assert.strictEqual(all.ATTENDANCE_NOTIFY_IDS, missing.ATTENDANCE_NOTIFY_IDS, `cell ${JSON.stringify(cell)}`);
+    assert.strictEqual(all.ATTENDANCE_NOTIFY_IDS, '', 'blank — never the number 0');
+  }
+  const set = await readWithRows([['ATTENDANCE_NOTIFY_IDS', '555,666', '']]);
+  assert.equal(set.ATTENDANCE_NOTIFY_IDS, '555,666', 'a filled cell is still honoured');
+});
+
+test('an empty CUSTOMER_CREATION_ENABLED cell reads exactly like a missing row (on); an explicit 0 still freezes', async () => {
+  const missing = await readWithRows([]);
+  assert.strictEqual(missing.CUSTOMER_CREATION_ENABLED, 1);
+  for (const cell of ['', ' ', undefined]) {
+    const row = cell === undefined ? ['CUSTOMER_CREATION_ENABLED'] : ['CUSTOMER_CREATION_ENABLED', cell, ''];
+    const all = await readWithRows([row]);
+    assert.strictEqual(all.CUSTOMER_CREATION_ENABLED, 1, `cell ${JSON.stringify(cell)}`);
+  }
+  assert.strictEqual((await readWithRows([['CUSTOMER_CREATION_ENABLED', '0', '']])).CUSTOMER_CREATION_ENABLED, 0);
+  assert.strictEqual((await readWithRows([['CUSTOMER_CREATION_ENABLED', '1', '']])).CUSTOMER_CREATION_ENABLED, 1);
+});
+
+test('duplicate rows: the LAST row still wins, and its empty cell means the default', async () => {
+  const all = await readWithRows([
+    ['ATTENDANCE_NOTIFY_IDS', '555', ''],
+    ['CUSTOMER_CREATION_ENABLED', '0', ''],
+    ['ATTENDANCE_NOTIFY_IDS', '', ''],
+    ['CUSTOMER_CREATION_ENABLED', '', ''],
+  ]);
+  assert.strictEqual(all.ATTENDANCE_NOTIFY_IDS, '');
+  assert.strictEqual(all.CUSTOMER_CREATION_ENABLED, 1);
+});
+
+test('NOT a blanket rule: for every other key an empty cell is still a value of its own', async () => {
+  const savedDefault = settingsRepo.DEFAULTS.INVOICE_RATE_MULTIPLIER;
+  settingsRepo.DEFAULTS.INVOICE_RATE_MULTIPLIER = 1250; // as if the env seeded a boot default
+  try {
+    const all = await readWithRows([
+      ['INVOICE_RATE_MULTIPLIER', '', ''],
+      ['BANK_LIST', '', ''],
+      ['THAN_VISIBILITY_WAREHOUSES', '', ''],
+      ['RISK_THRESHOLD', '', ''],
+    ]);
+    assert.ok(!all.INVOICE_RATE_MULTIPLIER, 'blank = no multiplier, even with an env default');
+    assert.ok(!all.BANK_LIST, 'blank = no banks');
+    assert.ok(!all.THAN_VISIBILITY_WAREHOUSES, 'blank = the than display is off everywhere');
+    assert.strictEqual(all.RISK_THRESHOLD, 0, 'unchanged reading for a key outside the list');
+  } finally {
+    settingsRepo.DEFAULTS.INVOICE_RATE_MULTIPLIER = savedDefault;
+  }
+});
+
+test('the attendance broadcast: an empty ATTENDANCE_NOTIFY_IDS row names nobody, so the admin pool is used', async () => {
+  const attendanceNotify = require('../../../src/services/attendanceNotify');
+  const orig = sheets.readRange;
+  settingsRepo.invalidateCache();
+  sheets.readRange = async () => [['ATTENDANCE_NOTIFY_IDS', '', '']];
+  try {
+    assert.deepEqual(await attendanceNotify._internals.overrideIds(), [], 'no override id (it used to be ["0"])');
+  } finally {
+    sheets.readRange = orig;
+    settingsRepo.invalidateCache();
+  }
+});
