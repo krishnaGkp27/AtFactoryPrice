@@ -100,6 +100,8 @@ which now routes the ones with a number (change 4). The office guide
 - **❌ Cancel on the preload card (and anywhere in the Transfer Stock
   wizard) now draws.** The card is replaced by `🚚 Transfer cancelled —
   nothing was moved.` + `🏠 Menu`; before, the session ended but the card
-  stayed on screen with its buttons.
+  stayed on screen with its buttons. A ❌ Cancel tapped while a ✅ Send is
+  still being written is ignored (the order cannot be recalled): the card
+  then shows the send's own result, never a cancelled line.
 - Tests: `test/unit/flows/transferTypedHits.test.js`,
   `test/characterization/transferCancelNoopExact.test.js`.

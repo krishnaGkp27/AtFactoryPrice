@@ -151,6 +151,59 @@ test('Cancel drops the order even when Telegram refuses the draw', async () => {
   assert.equal(sessionStore.get('4242'), null, 'the session is over all the same');
 });
 
+test('Cancel tapped while a Send is still being written is ignored — the receipt lands, never a cancelled line over an order that went out', async () => {
+  STORE = BASE.slice();
+  sessionStore.clear('4242');
+  const transferService = require(path.join(SRC, 'services/transferService'));
+  const real = transferService.createTransferRequest;
+  const bot = createFakeBot();
+  await controller.handleMessage(bot, msg('Transfer 997, 999 to kano'));
+  const mid = sessionStore.get('4242').flowMessageId;
+  await controller.handleCallbackQuery(bot, cb('trf:pl:go', '4242', mid));
+  assert.equal(sessionStore.get('4242').step, 'confirm');
+
+  try {
+    // The write is in flight (a slow sheet, the write governor waiting).
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    transferService.createTransferRequest = async (...a) => { await gate; return real(...a); };
+    const sendBot = createFakeBot();
+    const sending = controller.handleCallbackQuery(sendBot, cb('trf:send', '4242', mid));
+    await new Promise((r) => setImmediate(r));
+
+    const cancelBot = createFakeBot();
+    await controller.handleCallbackQuery(cancelBot, cb('trf:cancel', '4242', mid));
+    assert.equal(drawn(cancelBot).length, 0, 'nothing is drawn — the order cannot be recalled');
+    assert.equal((sessionStore.get('4242') || {}).step, 'confirm', 'the session stays for the send to finish');
+
+    release();
+    await sending;
+    const mine = drawn(sendBot).filter((c) => String(c.args.chatId || (c.args.opts || {}).chat_id) === '4242');
+    assert.equal(mine.length, 1, 'the requester gets exactly one screen: the receipt');
+    assert.equal(mine[0].method, 'editMessageText');
+    assert.equal(mine[0].args.opts.message_id, mid, 'the receipt lands on the card');
+    assert.match(mine[0].args.text, /^✅ \*Transfer .+ sent\*/);
+    assert.ok(drawn(sendBot).some((c) => String(c.args.chatId) === 'abdul' && /please dispatch/.test(c.args.text)), 'the order did go out');
+    assert.equal(sessionStore.get('4242'), null);
+
+    // A send that FAILS re-arms the card, and Cancel works again.
+    await controller.handleMessage(createFakeBot(), msg('Transfer 997, 999 to kano'));
+    const mid2 = sessionStore.get('4242').flowMessageId;
+    await controller.handleCallbackQuery(createFakeBot(), cb('trf:pl:go', '4242', mid2));
+    transferService.createTransferRequest = async () => { throw new Error('sheet refused'); };
+    const failBot = createFakeBot();
+    await controller.handleCallbackQuery(failBot, cb('trf:send', '4242', mid2));
+    assert.match(failBot.allText(), /Could not create the transfer: sheet refused/);
+    const bot2 = createFakeBot();
+    await controller.handleCallbackQuery(bot2, cb('trf:cancel', '4242', mid2));
+    assertCancelledOn(bot2, mid2, 'after a failed send');
+    assert.equal(sessionStore.get('4242'), null);
+  } finally {
+    transferService.createTransferRequest = real;
+    sessionStore.clear('4242');
+  }
+});
+
 /* ── 2. The inert chip stays quiet ──────────────────────────────────────── */
 
 test('trf:noop with no live transfer session: a quiet acknowledgement, nothing sent, nothing changed', async () => {

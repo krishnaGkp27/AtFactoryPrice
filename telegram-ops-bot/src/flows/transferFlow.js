@@ -3235,6 +3235,10 @@ async function handleCallback(bot, query) {
   }
 
   if (data === 'trf:cancel') {
+    // A Send still being written cannot be recalled: the order is going out,
+    // so a cancelled line would be false. The send's own result lands on the
+    // card instead (the receipt, or the error card with ❌ Cancel again).
+    if (session._submitting) return true;
     // Render BEFORE clearing — the renderer is session-guarded, so the other
     // order drew nothing and left the card standing with its live buttons.
     // The session ends even when the draw fails: Cancel always drops the order.
