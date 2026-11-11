@@ -291,6 +291,34 @@ async function payableAccountsFor(telegramId, isAdmin) {
 }
 
 /**
+ * PAY-1 — a REJECTED registration lets go of its account number.
+ *
+ * Raising `register_payment_account` writes the PaymentAccounts row as
+ * `pending`. A rejection used to leave it there, and the door's clash
+ * check (`findLive`: pending or active) then refused that number + bank
+ * for ever as "awaiting approval", until the status cell was rewritten by
+ * hand. The request's OWN row — found by its approval_request_id, the same
+ * lookup the approval executor uses — goes to `inactive`: the status cell
+ * alone, the row kept as the record. An account that is already `active`,
+ * and any other request's row for the same number, are never touched.
+ *
+ * Throws on a refused sheet write; the reject path logs it and carries on.
+ *
+ * @param {string} requestId the rejected ApprovalQueue request
+ * @returns {Promise<object|null>} the row as it now stands; null when there
+ *   was nothing to release
+ */
+async function releaseRejectedAccount(requestId) {
+  const acct = await paymentAccountsRepo.findByApprovalRequestId(requestId);
+  if (!acct) {
+    if (requestId) logger.warn(`paymentService.releaseRejectedAccount: no PaymentAccounts row for ${requestId} — nothing released`);
+    return null;
+  }
+  if (acct.status !== 'pending') return null;
+  return paymentAccountsRepo.setStatus(acct.account_id, 'inactive');
+}
+
+/**
  * Validate a Nigerian bank account number as far as a bot honestly can:
  * NUBAN is 10 digits. Anything else is a typo, and a typo here sends
  * real money to a stranger.
@@ -514,6 +542,7 @@ module.exports = {
   threshold,
   isAboveThreshold,
   payableAccountsFor,
+  releaseRejectedAccount,
   validateAccountNumber,
   validateAmount,
   validateReason,

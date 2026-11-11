@@ -2333,6 +2333,19 @@ async function rejectApprovalInner(requestId, rejectedBy) {
     }
   }
   await approvalQueueRepository.updateStatus(requestId, 'rejected', new Date().toISOString(), rejecterLabel);
+  if (aj.action === 'register_payment_account') {
+    // PAY-1 — a rejected registration lets go of its account number: its
+    // own pending PaymentAccounts row goes to `inactive`, so the same number
+    // can be registered again (it used to stay `pending` and block the
+    // number until the sheet was edited by hand). AFTER the queue write on
+    // purpose — the number is freed only once the rejection is on record.
+    // Non-fatal like the branches above: the request is already rejected.
+    try {
+      await require('./paymentService').releaseRejectedAccount(requestId);
+    } catch (e) {
+      logger.error(`register_payment_account reject cleanup FAILED for ${requestId}: ${e.message} — the PaymentAccounts row still reads pending and blocks that account number until its status cell is set to inactive`);
+    }
+  }
   await auditLogRepository.append('approval_rejected', { requestId, rejectedBy, approver: rejecterLabel }, rejectedBy);
   return { ok: true };
 }

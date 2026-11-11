@@ -119,6 +119,11 @@ enum (S4 lints enum → policy, not the reverse). Executors in
   stamp approved_by, then send the FINANCE CARD to the finance head
   (fire-and-forget, like VRF-1's launch pattern).
 
+A REJECTED `register_payment_account` (11-Nov-2026) sets its own pending
+PaymentAccounts row to `inactive` — status cell only, the row is kept — so
+the same number + bank can be registered again. An `active` account and any
+other request's row are never touched (`paymentService.releaseRejectedAccount`).
+
 ## Flows (`src/flows/paymentFlow.js`, callback namespace `pay:` — free
 per the CLAUDE.md registry; `SESSION_TYPE: 'payment_flow'`)
 
