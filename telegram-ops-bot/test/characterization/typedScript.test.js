@@ -60,9 +60,13 @@ test('a known verb with a bad body gets its own line, the AI never called; Payme
   assert.equal(intentCalls, 0);
   assert.match(lastText(bot), /^✍️ Transfer needs its line:\n {2}Transfer 832, 1186, 786 to kano/);
   assert.deepEqual(lastKb(bot).map((b) => b.callback_data), ['act:__back__']);
+  // PRC-1 (11-Nov-2026) — the tap door exists now: Payment is one button into it.
   bot = await send('Payment Abba 250000 cash');
   assert.match(lastText(bot), /recorded by tap, never by a typed line/);
-  assert.equal(tracked.filter((e) => e.event === 'nlp_hint').length, 2);
+  assert.deepEqual(lastKb(bot).map((b) => `${b.text}|${b.callback_data}`), ['💵 Payment Received|act:payment_received']);
+  assert.equal(intentCalls, 0);
+  assert.equal(tracked.filter((e) => e.event === 'nlp_hint').length, 1);
+  assert.equal(tracked.filter((e) => e.event === 'nlp_tile' && e.feature === 'act:payment_received').length, 1);
 });
 
 test('help and /help show the whole script; Report alone is one button to the hub; Tasks opens My Tasks', async () => {

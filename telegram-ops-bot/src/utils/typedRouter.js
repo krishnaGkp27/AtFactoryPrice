@@ -145,6 +145,7 @@ const VERBS = Object.freeze({
   user: 'user', employee: 'user',
   bank: 'banks', banks: 'banks',
   menu: 'menu', help: 'help', payment: 'payment', paid: 'payment', pay: 'payment',
+  revert: 'revert', undo: 'revert',
 });
 const STOP = new Set(['the', 'a', 'an', 'of', 'for', 'me', 'please', 'pls', 'kindly', 'my', 'all', 'show']);
 
@@ -230,7 +231,13 @@ function localIntent(raw) {
     case 'contacts': return intent('list_contacts');
     case 'user': return tile('➕ Add Employee', 'act:add_user', '➕ Adding an employee is tap-only.');
     case 'banks': return intent('list_banks');
-    case 'payment': return hint('payment', 'Payments are recorded by tap, never by a typed line (owner, 01-Nov-2026): 💰 Finance → 💳 Payments.');
+    // PRC-1 / REV-1 (11-Nov-2026) — the two tap doors that replaced the typed
+    // sentences. A typed line never records a payment or reverts a sale
+    // (owner, 01-Nov-2026); it now opens the door that does.
+    case 'payment': return tile('💵 Payment Received', 'act:payment_received',
+      '💵 A customer\'s payment is recorded by tap, never by a typed line.\nTo ask for money to be paid out, open 💰 Finance → 💳 Payments.');
+    case 'revert': return tile('🛂 Approvals', 'act:approvals_inbox',
+      '↩️ A sale is reverted from its own record, never by a typed line:\n🛂 Approvals → ✅❌ Decided → the sale → ↩️ Revert this sale.');
     default: return null;
   }
 }

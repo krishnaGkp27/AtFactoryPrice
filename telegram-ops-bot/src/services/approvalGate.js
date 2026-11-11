@@ -323,10 +323,10 @@ async function raiseOnce(p, { uid, base, action, tapKey }) {
 
 /* ── the requester's side ─────────────────────────────────────────────── */
 
-function ageWords(iso) {
+function ageWords(iso, now = Date.now()) {
   const t = Date.parse(iso || '');
   if (!isFinite(t)) return '';
-  const h = Math.floor((Date.now() - t) / HOUR_MS);
+  const h = Math.floor((now - t) / HOUR_MS);
   if (h < 1) return 'under an hour';
   if (h < 24) return `${h}h`;
   return `${Math.floor(h / 24)}d`;
@@ -392,7 +392,7 @@ async function nudge({ bot, requestId, byUserId, now = Date.now() }) {
   try { card = await approvalCards.buildCardFromActionJSON(aj); } catch (_) { card = ''; }
   if (!card) card = registry.describe(aj);
   const kb = approvalCards.keyboardForRequest(requestId, aj);
-  const note = `🔔 ${label} asks for a decision · waiting ${ageWords(row.createdAt) || 'a while'} · reminder ${nudges.length + 1}`;
+  const note = `🔔 ${label} asks for a decision · waiting ${ageWords(row.createdAt, now) || 'a while'} · reminder ${nudges.length + 1}`;
   await require('../events/approvalEvents').notifyAdminsApprovalRequest(
     bot, requestId, label, card, row.riskReason || 'Pending approval', undefined,
     { prependNote: note, excludeIds: admins.filter((a) => !targets.includes(a)), ...(kb ? { keyboard: kb } : {}) });

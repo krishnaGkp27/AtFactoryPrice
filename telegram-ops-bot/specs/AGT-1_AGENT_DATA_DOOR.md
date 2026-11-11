@@ -20,7 +20,7 @@ eyes on production, read-only.
 | Piece | Where | What it does |
 |---|---|---|
 | Log table | Postgres `app_logs` (migration 004) | Every console line the bot prints at INFO and above, redacted, kept 14 days. The Railway log, readable. |
-| Log sink | `src/services/logSink.js`, `logger.addSink` | Buffers lines, one batched insert every 5 s, drops a failed batch, never blocks, never logs its own failure through the logger. |
+| Log sink | `src/services/logSink.js`, `logger.addSink` | Buffers lines, one batched insert every 5 s, drops a failed batch, never blocks, never logs its own failure through the logger. Old lines are pruned 90 s after every boot and every six hours: the bot restarts on each push, so a timer alone might never fire. |
 | Key | Postgres `agent_keys`, `src/services/agentKeyService.js` | A read-only key minted from Telegram. Shown once. Only its SHA-256 is stored. One live key at a time. |
 | Reports | `src/services/insightsService.js` | Nine named reads over Postgres. No free SQL. |
 | Door | `GET /api/insights`, `GET /api/insights/:report` | Key in `X-Agent-Key` (or `Authorization: Bearer`). Never in the URL. 401 without detail. 429 after ten refusals a minute from one address. No write route. |

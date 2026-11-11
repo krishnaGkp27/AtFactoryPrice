@@ -148,11 +148,59 @@ function labelOf(action) {
  * `💳 Payment request · ₦70,000 → Muhammad · Salary · Nov-2026` — the
  * request named in one line. A type with no `oneLine` reads as its label.
  */
+/** "10B + 4t · 1,500 yd" for a sale's items; '' when there are none. */
+function goodsOf(a) {
+  const items = Array.isArray(a.items) ? a.items : [];
+  // Only a SALE's items (bales and thans) are goods; a supply request's cart
+  // lines or a return's rows are counted by their own fields, never here.
+  if (!items.length || !items.every((it) => it && (it.type === 'package' || it.type === 'than'))) return '';
+  const whole = new Set((Array.isArray(a.wholeBales) ? a.wholeBales : []).map(String));
+  const seen = new Set();
+  let bales = 0;
+  let thans = 0;
+  for (const it of items) {
+    if (!it) continue;
+    const pkg = String(it.packageNo ?? '');
+    if (it.type === 'than' && whole.has(pkg)) {
+      if (!seen.has(pkg)) { seen.add(pkg); bales += 1; }
+    } else if (it.type === 'than') thans += 1;
+    else bales += 1;
+  }
+  const qty = [bales ? `${bales}B` : '', thans ? `${thans}t` : ''].filter(Boolean).join(' + ');
+  const yards = Math.round(Number(a.totalYards) || 0);
+  return [qty, yards ? `${yards.toLocaleString('en-US')} yd` : ''].filter(Boolean).join(' · ');
+}
+
+/**
+ * The detail line of a request type that has not written its own: WHO it
+ * is about and WHAT it touches, from the fields every door already stores.
+ * The requester's progress card, the status card and the open-twin card
+ * all read through here, so two requests of one type never read the same
+ * (D-4) even before a type declares its own line. At most four parts.
+ */
+function genericOneLine(a) {
+  const parts = [];
+  const push = (v) => { const t = String(v == null ? '' : v).trim(); if (t && !parts.includes(t)) parts.push(t); };
+  push(a.customer || a.customer_name || a.payee_name || a.name || a.bank_name || a.title || a.marketerName || a.recipientName);
+  const design = a.design || (a.filters && a.filters.design) || '';
+  const shade = a.shade || (a.filters && a.filters.shade) || '';
+  if (design) push(`${design}${shade ? ` / ${shade}` : ''}`);
+  if (a.packageNo) push(`bale ${a.packageNo}${a.thanNo ? `/${a.thanNo}` : ''}`);
+  push(goodsOf(a));
+  if (!a.items && Number(a.thans) > 0 && Number(a.yards) > 0) push(`${a.thans}t · ${Math.round(Number(a.yards)).toLocaleString('en-US')} yd`);
+  if (Number(a.totalBales) > 0) push(`${a.totalBales} bales`);
+  if (Number(a.price) > 0) push(money.saleRate(a.price));
+  if (Number(a.quantity) > 0 && a.sample_type) push(`${a.quantity} pcs`);
+  push(a.warehouse || a.toWarehouse || a.returnWarehouse);
+  return parts.slice(0, 4).join(' · ');
+}
+
 function describe(aj) {
   const a = aj || {};
   const entry = entryFor(a.action);
   let detail = '';
   if (entry.oneLine) { try { detail = String(entry.oneLine(a) || ''); } catch (_) { detail = ''; } }
+  if (!detail) { try { detail = genericOneLine(a); } catch (_) { detail = ''; } }
   return [`${entry.icon ? `${entry.icon} ` : ''}${labelOf(a.action)}`, detail].filter(Boolean).join(' · ');
 }
 

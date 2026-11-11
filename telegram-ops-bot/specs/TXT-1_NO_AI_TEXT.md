@@ -160,7 +160,8 @@ its approval card (§20 holds).
 | `Contact` · `Add contact` · `User` · `Add employee` · `Customer` · `Menu` | one button to ➕ Add Contact · ➕ Add Employee · 👥 CRM · 🏠 Menu |
 | `Contacts` · `Banks` | the lists |
 | `Help` · `/help` | the chips card, now the whole script |
-| `Payment …` | NOT a typed line (owner, 01-Nov) — the card points at 💰 Finance → 💳 Payments |
+| `Payment …` | NOT a typed line (owner, 01-Nov). Since PRC-1 (11-Nov-2026) it is one button into 💰 Finance → 💵 Payment Received, the tap door for a customer's payment; the note names 💳 Payments for money going out |
+| `Revert …` / `Undo …` | NOT a typed line. Since REV-1 (11-Nov-2026) it is one button into 🛂 Approvals, with the path: ✅❌ Decided → the sale → ↩️ Revert this sale |
 
 A known verb with a bad body gets ITS line back (`✍️ Transfer needs its
 line: Transfer 832, 1186, 786 to kano`), never the generic card. An unknown

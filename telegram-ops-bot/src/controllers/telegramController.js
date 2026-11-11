@@ -223,6 +223,13 @@ async function requireApproval(bot, chatId, msg, userId, action, actionJSON, sum
   const raised = await require('../services/approvalGate').raise({
     requestId, fresh: true, audit: false, userId: userId, actionJSON, riskReason: risk.reason,
   });
+  if (raised.ok === false) {
+    // The type's own rule refused it (one revert per sale): say which
+    // request is already open rather than answering with nothing.
+    await bot.sendMessage(chatId,
+      `⏳ The same request is already waiting for approval (${shortRequestRef(raised.twin.requestId)}). Nothing new was raised.`);
+    return true;
+  }
   if (!raised.created) return true;
   await auditLogRepository.append('approval_queued', { requestId, reason: risk.reason }, userId);
   // ANL-2 — approval_queued is now tracked inside approvalQueueRepository
@@ -12088,9 +12095,12 @@ async function submitDesignAssetForApproval(bot, chatId, userId, msg) {
   }
 
   // Risk: design_asset_upload always requires 2-admin approval (anyone uploads).
-  // APG-1 — raised through the gate: a double tap is one request.
+  // APG-1 — raised through the gate. `guard: false`: this door has already
+  // written its pending asset under THIS id (persistPending above), so a
+  // second tap must stay its own request — merging it would strand that
+  // record with no request to approve or reject it.
   const raised = await require('../services/approvalGate').raise({
-    requestId, fresh: true, audit: false,
+    requestId, fresh: true, audit: false, guard: false,
     userId: userId,
     actionJSON: {
       action: 'design_asset_upload',

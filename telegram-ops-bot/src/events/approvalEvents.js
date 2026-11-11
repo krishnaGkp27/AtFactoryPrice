@@ -209,7 +209,7 @@ async function requesterApprovedCard(bot, requestId, item, adminId, tail) {
   return progressMod.buildCard({ state: 'approved', requestId, aj, required: trail.length, signoffs: trail, tail });
 }
 
-async function notifyEmployee(bot, requestingUser, requestId, message) {
+async function notifyEmployee(bot, requestingUser, requestId, message, opts) {
   let userId = requestingUser;
   if (!userId) {
     try {
@@ -224,7 +224,8 @@ async function notifyEmployee(bot, requestingUser, requestId, message) {
     return false;
   }
   try {
-    await bot.sendMessage(userId, message);
+    if (opts) await bot.sendMessage(userId, message, opts);
+    else await bot.sendMessage(userId, message);
     return true;
   } catch (e) {
     logger.error(`notifyEmployee: failed to send message to user ${userId} for request ${requestId}`, e.message);
@@ -2150,9 +2151,14 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
           // APG-1 (owner, 10-Nov-2026) — the requester is told at EVERY
           // signature: who signed, when, and how many the request needs.
           try {
+            // The request still waits on someone: the requester's push is
+            // 🔔 Remind approvers (never a second request), on every type.
+            const gateMod = require('../services/approvalGate');
+            const waitKb = require('../services/approvalRegistry').entryFor(actName).nudge
+              ? { reply_markup: { inline_keyboard: [gateMod.receiptRow(requestId)] } } : undefined;
             await notifyEmployee(bot, requestingUser, requestId, progressMod.buildCard({
               state: 'signed', requestId, aj: item.actionJSON, required, signoffs: trail,
-            }));
+            }), waitKb);
           } catch (_) { /* best-effort */ }
           // Ping the remaining env admins so the request doesn't stall
           // silently (sheet-cache admins still have live cards; best-effort).

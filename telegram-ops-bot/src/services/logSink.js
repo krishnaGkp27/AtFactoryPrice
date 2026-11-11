@@ -104,6 +104,10 @@ function start() {
   if (timer.unref) timer.unref();
   pruneTimer = setInterval(() => { prune().catch(() => {}); }, 6 * 3600 * 1000);
   if (pruneTimer.unref) pruneTimer.unref();
+  // …and once shortly after boot: the bot redeploys on every push to main,
+  // so on a busy day the six-hour timer alone might never fire.
+  const first = setTimeout(() => { prune().catch(() => {}); }, 90 * 1000);
+  if (first.unref) first.unref();
   return true;
 }
 

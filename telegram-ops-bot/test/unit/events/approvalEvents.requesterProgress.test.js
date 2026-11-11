@@ -75,6 +75,9 @@ test('first of two: the requester is told who signed, when, and that it is 1 of 
   // plain text: a name with _ or * cannot blank the notice
   const sent = bot.calls.find((c) => c.method === 'sendMessage' && String(c.args.chatId) === EMPLOYEE);
   assert.equal(sent.args.opts && sent.args.opts.parse_mode, undefined);
+  // while it still waits, the requester's push is a reminder — never a second request
+  const kb = sent.args.opts.reply_markup.inline_keyboard.flat().map((b) => `${b.text}|${b.callback_data}`);
+  assert.deepEqual(kb, ['🔔 Remind approvers|apg:nudge:REQ-7', '📋 Status|apg:st:REQ-7']);
   // the others are still pinged for the second signature (as before)
   assert.ok(textsTo(bot, '888').some((t) => /needs a SECOND/.test(t)));
   assert.ok(textsTo(bot, '999').some((t) => /needs a SECOND/.test(t)));
@@ -123,7 +126,7 @@ test('rejection: named and dated; a one-tap duplicate says which request is stil
   item = { requestId: 'REQ-11', user: EMPLOYEE, status: 'pending', actionJSON: { action: 'add_user', name: 'Sani' } };
   const bot2 = createFakeBot();
   await approvalEvents.handleApprovalCallback(bot2, cbq('777', 'reject:REQ-11'), 'reject');
-  assert.match(textsTo(bot2, EMPLOYEE)[0], new RegExp(`^❌ Rejected by Musa · ${TIME}\\nAdd user\\nRef R-REQ1$`));
+  assert.match(textsTo(bot2, EMPLOYEE)[0], new RegExp(`^❌ Rejected by Musa · ${TIME}\\nAdd user · Sani\\nRef R-REQ1$`));
 });
 
 test('the admin card of a flagged twin carries ⧉ Reject as duplicate; a clean card and the gate\'s reminder do not misfire', async () => {

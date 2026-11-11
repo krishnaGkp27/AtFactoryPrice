@@ -376,3 +376,23 @@ test('twin card: names the open request, who raised it, where it stands, and tha
   assert.match(gate.twinCardText({ state: 'approved', aj: { action: 'request_payment', ...PAY } }), /🏦 Approved — waiting to be paid/);
   assert.match(gate.twinCardText({ state: 'done', aj: { action: 'request_payment', ...PAY } }, { heading: '💼 Salary for Nov-2026 is already on record' }), /^💼 Salary for Nov-2026 is already on record\n[\s\S]*✅ Already paid/);
 });
+
+test('registry: every request type describes itself in one line, from the fields its door already stores', () => {
+  const d = (aj) => registry.describe(aj);
+  // a sale: who and how much — whole bales once, loose thans as thans
+  assert.equal(d({ action: 'sale_bundle', customer: 'ABBA', totalYards: 1500,
+    items: [{ type: 'package', packageNo: '481' }, { type: 'than', packageNo: '1100', thanNo: 1 }, { type: 'than', packageNo: '9', thanNo: 1 }, { type: 'than', packageNo: '9', thanNo: 2 }],
+    wholeBales: ['9'] }), 'Sale bale · ABBA · 2B + 1t · 1,500 yd');
+  assert.equal(d({ action: 'sell_package', customer: 'Musa', packageNo: '5801', design: '9006', shade: '3', warehouse: 'Kano office' }),
+    'Sell bale · Musa · 9006 / 3 · bale 5801 · Kano office');
+  assert.equal(d({ action: 'update_price', filters: { design: '9006', shade: 'BLACK' }, price: 1500 }), 'Update price · 9006 / BLACK · 1,500/yd');
+  assert.equal(d({ action: 'give_sample', customer: 'Abba', design: '77019', shade: '2', sample_type: 'swatch', quantity: 3 }), 'Give sample · Abba · 77019 / 2 · 3 pcs');
+  assert.equal(d({ action: 'edit_bale', packageNo: '6061', design: '9037', shade: 'D', warehouse: 'Lagos' }), 'Edit bale · 9037 / D · bale 6061 · Lagos');
+  assert.equal(d({ action: 'add_bank', bank_name: 'Zenith — Main' }), 'Add bank · Zenith — Main');
+  assert.equal(d({ action: 'return_thans', packageNo: '5804', thans: 2, yards: 60, warehouse: 'IDUMOTA' }), 'Return goods · bale 5804 · 2t · 60 yd · IDUMOTA');
+  // a supply request's cart lines are not counted as bales
+  assert.equal(d({ action: 'supply_request', customer: 'Kafaya', items: [{ design: '9006', shade: '3', quantity: 4 }], warehouse: 'IDUMOTA' }), 'Supply request · Kafaya · IDUMOTA');
+  // a type with its own line keeps it; an empty payload is just the label
+  assert.equal(d({ action: 'record_payment', customer: 'ABBA', amount: 50000, method: 'Bank — Zenith' }), '💵 Payment received · ABBA · 50,000 · Bank — Zenith');
+  assert.equal(d({ action: 'set_unit_display' }), 'Set unit display');
+});

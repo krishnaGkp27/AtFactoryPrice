@@ -57,8 +57,10 @@ test('the three script verbs without numbers get their line; payment points at t
     assert.ok(r.syntax && SYNTAX[r.verb] === r.syntax, line);
   }
   const pay = localIntent('Payment Abba 250000 cash');
-  assert.equal(pay.action, '__hint__');
-  assert.match(pay.note, /tap, never by a typed line/);
+  // PRC-1 (11-Nov-2026) — one button into 💵 Payment Received.
+  assert.equal(pay.action, '__tile__');
+  assert.equal(pay.callback, 'act:payment_received');
+  assert.match(pay.text, /tap, never by a typed line/);
   assert.equal(localIntent('help').action, '__help__');
   assert.equal(localIntent('/help').action, '__help__');
   assert.equal(localIntent('Please help').action, '__help__');

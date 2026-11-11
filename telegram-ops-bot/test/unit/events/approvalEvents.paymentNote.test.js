@@ -90,7 +90,7 @@ test('PAY-2 §2 C: no note → both messages unchanged (no dangling newline)', a
   assert.equal(reply, '✅ Request REQ-Q approved by John. Changes applied.');
   // APG-1 — one admin was needed and is named, with the time they signed.
   assert.match(textsTo(bot, EMPLOYEE)[0],
-    /^✅ Approved · 1 of 1\nAdd user\n✅ 888 · \d{2}-[A-Z][a-z]{2} \d{2}:\d{2}\nChanges applied\.\nRef R-REQQ$/);
+    /^✅ Approved · 1 of 1\nAdd user · Musa\n✅ 888 · \d{2}-[A-Z][a-z]{2} \d{2}:\d{2}\nChanges applied\.\nRef R-REQQ$/);
 });
 
 test('PAY-2 §2 C: the note rides beside the RET-3 credit tail, credit first', async () => {

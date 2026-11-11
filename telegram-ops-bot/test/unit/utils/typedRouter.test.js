@@ -81,3 +81,20 @@ test('the chips card now names the bale line first', () => {
   assert.match(t, /Lines I do read/);
   assert.match(t, /1112 or Bale 1112 — the bale card/);
 });
+
+test('PRC-1 / REV-1: the typed words Payment and Revert open their tap doors, and never become a request', () => {
+  for (const line of ['Payment 50000 from Ibrahim', 'paid 2000 abba', 'Pay']) {
+    const r = typedRouter.localIntent(line);
+    assert.equal(r.action, '__tile__', line);
+    assert.equal(r.label, '💵 Payment Received');
+    assert.equal(r.callback, 'act:payment_received');
+    assert.match(r.text, /recorded by tap, never by a typed line/);
+    assert.match(r.text, /💰 Finance → 💳 Payments/, 'money going OUT keeps its own door');
+  }
+  for (const line of ['Revert last transaction', 'undo the sale to Abba']) {
+    const r = typedRouter.localIntent(line);
+    assert.equal(r.action, '__tile__', line);
+    assert.equal(r.callback, 'act:approvals_inbox');
+    assert.match(r.text, /🛂 Approvals → ✅❌ Decided → the sale → ↩️ Revert this sale/);
+  }
+});

@@ -201,6 +201,26 @@ What the migration deliberately did NOT change:
   only their one queue write goes through the gate (`guard: false`,
   `twin: false`).
 
+Follow-up the same day, from a review pass over the migration:
+
+- **The requester's `🔏 Approval 1 of 2` card carries `🔔 Remind approvers`
+  and `📋 Status` on every request type.** Until then only the payment and
+  Payment Received receipts offered the reminder, although the rule (§21)
+  is for every request. A request that needs one signature has no card
+  until it is decided; a shared 📋 My requests list would cover it
+  (STS-1 R1, owner's ruling).
+- **Every request type describes itself in one line** on the requester's
+  cards, the status card and the open-twin card (`approvalRegistry`'s
+  generic line: who it is about, design / shade, bale, goods, rate, place).
+  `Sale bale · ABBA · 2B + 1t · 1,500 yd`, not a bare `Sale bale`.
+- **A door that writes its own record before raising keeps `guard: false`**
+  (the design-photo door): merging its second tap would strand a pending
+  record with no request to approve or reject it.
+- **A refused twin on the typed path answers** with which request is open,
+  instead of nothing.
+- The reminder's `waiting 2d` now follows the same clock as the rest of the
+  reminder (a test written on one day failed on the next).
+
 `raise` options the doors use: `actionJSON` (a door that already builds its
 whole row) · `fresh` (the id was minted for this call: no id lookups) ·
 `audit: false` (the door writes its own audit line) · `auditMeta` /
