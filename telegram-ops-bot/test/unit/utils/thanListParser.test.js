@@ -297,3 +297,56 @@ test('the RETURN line shares the tokeniser: Return 771 779 6189/5 reads all thre
   assert.deepEqual(out.items, [{ packageNo: '771' }, { packageNo: '779' }, { packageNo: '6189', thans: [5] }]);
   assert.deepEqual(out.bad, []);
 });
+
+// ── a buyer's name is not a month; a date is a date only as a whole ──────
+test('a buyer whose name starts like a month is not a date: Maryam, Mariam, Augustine, May', () => {
+  const a = parseThanList('Sell 1082, 1091 to Maryam');
+  assert.deepEqual(a.items, [{ packageNo: '1082' }, { packageNo: '1091' }]);
+  assert.equal(a.ignoredCustomer, 'Maryam');
+  assert.equal(a.ignoredDate, '');
+  const b = parseThanList('Sell 1082 1091 to Maryam');
+  assert.deepEqual(b.items, [{ packageNo: '1082' }, { packageNo: '1091' }]);
+  assert.equal(b.ignoredCustomer, 'Maryam');
+  assert.deepEqual(parseThanList('Sell 1111 to Mariam').items, [{ packageNo: '1111' }]);
+  const c = parseThanList('Sell 1111 to Augustine, 12 Sep');
+  assert.deepEqual(c.items, [{ packageNo: '1111' }]);
+  assert.equal(c.ignoredCustomer, 'Augustine');
+  assert.equal(c.ignoredDate, '12 Sep');
+  // A month word alone (no day, no year) is a name, not a date.
+  const d = parseThanList('Sell 771 x3, 779 to May');
+  assert.deepEqual(d.items, [{ packageNo: '771', count: 3 }, { packageNo: '779' }]);
+  assert.equal(d.ignoredCustomer, 'May');
+});
+
+test('a month-word date is lifted wherever it sits, and never eats the bales or the store', () => {
+  const tail = parseThanList('sell 1108/1 1126/1 kano 06 august 2026');
+  assert.deepEqual(tail.items, [{ packageNo: '1108', thans: [1] }, { packageNo: '1126', thans: [1] }]);
+  assert.equal(tail.warehouseHint, 'kano');
+  assert.equal(tail.ignoredDate, '06 august 2026');
+  const mid = parseThanList('sell 1108/1 1126/1 06 august 2026 kano');
+  assert.deepEqual(mid.items, [{ packageNo: '1108', thans: [1] }, { packageNo: '1126', thans: [1] }]);
+  assert.equal(mid.warehouseHint, 'kano');
+  const short = parseThanList('sell 1111 1112 6 august 2026 kano');
+  assert.deepEqual(short.items, [{ packageNo: '1111' }, { packageNo: '1112' }]);
+  assert.equal(short.warehouseHint, 'kano');
+  // The comma forms read as they always did.
+  const comma = parseThanList('Sell 1108/1, 1126/1 from kano office to karibullah, 06 august 2026');
+  assert.deepEqual(comma.items, [{ packageNo: '1108', thans: [1] }, { packageNo: '1126', thans: [1] }]);
+  assert.equal(comma.warehouseHint, 'kano office');
+  assert.equal(comma.ignoredCustomer, 'karibullah');
+  assert.equal(comma.ignoredDate, '06 august 2026');
+  assert.equal(parseThanList('Sell 1111, 6th Aug').ignoredDate, '6th Aug');
+  assert.equal(parseThanList('Sell 1111, august 2026').ignoredDate, 'august 2026');
+});
+
+test('a than range that cannot be read is REPORTED after a comma too, never loaded as the whole bale', () => {
+  const out = parseThanList('sell 1082, 1100/3-1');
+  assert.deepEqual(out.items, [{ packageNo: '1082' }]);
+  assert.deepEqual(out.bad, ['1100/3-1']);
+  const first = parseThanList('sell 1100/5-3, 1082');
+  assert.deepEqual(first.items, [{ packageNo: '1082' }]);
+  assert.deepEqual(first.bad, ['1100/5-3']);
+  // A readable range is unchanged.
+  assert.deepEqual(parseThanList('sell 1082, 1100/1-3').items,
+    [{ packageNo: '1082' }, { packageNo: '1100', thans: [1, 2, 3] }]);
+});

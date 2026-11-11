@@ -110,12 +110,23 @@ function parseThanSpec(spec) {
   return out.length ? [...new Set(out)] : null;
 }
 
-const MONTHS = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i;
+// A month NAME, whole word only: `aug`, `august`, `sept` — never the start
+// of another word. The old prefix test (`mar[a-z]*`) read a buyer called
+// Maryam, Mariam, Mayowa, Julius or Augustine as a month, so
+// "Sell 1082, 1091 to Maryam" dropped bale 1091 as "a date".
+const MONTH_WORD = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
+// A date written with a month word: "06 august 2026", "6th Aug", "August 6 2026",
+// "august 2026".
+// A day number is required, so a buyer called May or April is not a date.
+const WORD_DATE_SRC = `(?:\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH_WORD}\\b(?:[\\s,]+\\d{2,4}\\b)?|${MONTH_WORD}\\s+\\d{1,2}(?:st|nd|rd|th)?\\b(?:[\\s,]+\\d{2,4}\\b)?|${MONTH_WORD}\\s+(?:19|20)\\d{2}\\b)`;
+const WORD_DATE = new RegExp(`\\b${WORD_DATE_SRC}`, 'i');
+const WORD_DATE_ONLY = new RegExp(`^${WORD_DATE_SRC}$`, 'i');
+const WORD_DATE_AT_FRONT = new RegExp(`^${WORD_DATE_SRC}`, 'i');
 
-/** True when a segment is a DATE, not a bale ("06 august 2026", "6/8/26"). */
+/** True when a segment IS a date, not a bale ("06 august 2026", "6/8/26"). */
 function isDateLike(s) {
   const t = String(s).trim();
-  if (MONTHS.test(t)) return true;                       // 06 august 2026
+  if (WORD_DATE_ONLY.test(t)) return true;               // 06 august 2026 — the whole segment
   if (/^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(t)) return true;  // 06/08/2026
   if (/^(today|yesterday|tomorrow)$/i.test(t)) return true;
   return false;
@@ -143,6 +154,9 @@ function readItem(s) {
   if (slash) {
     const thans = parseThanSpec(slash[2].trim());
     if (thans) return { item: { packageNo: slash[1], thans }, used: slash[0].length };
+    // A spec that cannot be read (`1100/5-3`) is reported — never quietly
+    // downgraded to "the whole bale 1100" (SELL-T3).
+    return { bad: true };
   } else if (/^\d+\s*\//.test(s)) {
     return { bad: true };
   }
@@ -228,7 +242,7 @@ function parseThanList(raw) {
     // store name ("a store called 1112 kano").
     for (;;) {
       const next = rest.replace(/^\s+/, '');
-      if (!/^\d{2,}/.test(next) || DATE_AT_FRONT.test(next)) break;
+      if (!/^\d{2,}/.test(next) || DATE_AT_FRONT.test(next) || WORD_DATE_AT_FRONT.test(next)) break;
       const more = readItem(next);
       if (!more) break;
       // A than spec that cannot be read is reported, never loaded as the
@@ -253,7 +267,8 @@ function parseThanList(raw) {
   if (tail) {
     // Lift any date out of the tail first so it can never be mistaken for
     // a store name.
-    const d = tail.match(/\b\d{1,2}\s*[/-]\s*\d{1,2}\s*[/-]\s*\d{2,4}\b/);
+    // … numeric ("6/8/26") or with a month word ("kano 06 august 2026").
+    const d = tail.match(/\b\d{1,2}\s*[/-]\s*\d{1,2}\s*[/-]\s*\d{2,4}\b/) || tail.match(WORD_DATE);
     if (d) {
       if (!ignoredDate) [ignoredDate] = d;
       tail = tail.replace(d[0], ' ').replace(/\s+/g, ' ').trim();

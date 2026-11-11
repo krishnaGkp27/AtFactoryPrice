@@ -385,7 +385,7 @@ async function checkOrderReminders() {
       if (!(await reminderPolicy.shouldRemindUser(order.salesperson_id))) continue;
       try {
         await bot.sendMessage(order.salesperson_id,
-          `⏰ *Reminder: Supply order ${order.order_id}*\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQuantity: ${order.quantity}\nScheduled: *${order.scheduled_date}* (tomorrow)\nPayment: ${order.payment_status}\n\nPlease prepare for delivery. Mark done with: "Mark order ${order.order_id} delivered"`,
+          `⏰ *Reminder: Supply order ${order.order_id}*\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQuantity: ${order.quantity}\nScheduled: *${order.scheduled_date}* (tomorrow)\nPayment: ${order.payment_status}\n\nPlease prepare for delivery. Mark done with: "Delivered ${order.order_id}"`,
           { parse_mode: 'Markdown' });
         await ordersRepo.updateStatus(order.order_id, 'accepted', { reminder_sent: 'true' });
         logger.info(`Reminder sent for order ${order.order_id} to ${order.salesperson_name}`);

@@ -5276,7 +5276,7 @@ async function handleMessage(bot, msg) {
       case 'mark_order_delivered': {
         const oid = intent.orderId || (text.match(/ORD-\d{8}-[A-Za-z0-9]{3,8}/) || [])[0];
         if (!oid) {
-          await bot.sendMessage(chatId, 'Please specify order ID. Example: "Mark order ORD-20260221-001 delivered".');
+          await bot.sendMessage(chatId, 'Please specify order ID. Example: "Delivered ORD-20260221-001".');
           return;
         }
         await executeMarkOrderDelivered(bot, chatId, userId, oid);
@@ -9286,7 +9286,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Accepting...' });
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: callbackQuery.message.chat.id, message_id: callbackQuery.message.message_id });
     await ordersRepo.updateStatus(orderId, 'accepted', { accepted_at: new Date().toISOString() });
-    await bot.sendMessage(callbackQuery.message.chat.id, `✅ You accepted order *${orderId}*.\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQty: ${order.quantity}\nScheduled: ${order.scheduled_date}\n\nYou'll get a reminder 1 day before. Mark delivered with: "Mark order ${orderId} delivered"`, { parse_mode: 'Markdown' });
+    await bot.sendMessage(callbackQuery.message.chat.id, `✅ You accepted order *${orderId}*.\n\nDesign: ${order.design}\nCustomer: ${order.customer}\nQty: ${order.quantity}\nScheduled: ${order.scheduled_date}\n\nYou'll get a reminder 1 day before. Mark delivered with: "Delivered ${orderId}"`, { parse_mode: 'Markdown' });
     await adminFeed.notify(bot, 'order.accepted',
       `✅ *${order.salesperson_name}* accepted order *${orderId}*\n\nDesign: ${order.design} | Customer: ${order.customer}\nQty: ${order.quantity} | Date: ${order.scheduled_date}`,
       { parse_mode: 'Markdown' });
