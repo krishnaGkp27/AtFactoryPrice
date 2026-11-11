@@ -368,12 +368,16 @@ async function buildSaleCard(p) {
     if (dKey) {
       const tally = several ? tallyOf(group) : '';
       head = tally ? `${dKey} · ${tally}` : dKey;
+    } else if (p.decided) {
+      // FIX-INBOX — a record judges nothing: a number it cannot describe
+      // stands bare, under no heading that claims something about stock.
+      head = '';
     } else if (gk === 'gone') {
       head = '⚠️ no available stock (sold already, or unknown number)';
     } else {
       head = 'not resolved — this number lives under more than one design';
     }
-    text += `${first ? '\n\n' : '\n'}${head}`;
+    text += head ? `${first ? '\n\n' : '\n'}${head}` : '\n';
     first = false;
     const batches = [...new Set(group.map((x) => String(x.arrivalBatch || '')).filter(Boolean))];
     const names = dKey ? await shadeNamesFor(dKey, batches.length === 1 ? batches[0] : '') : new Map();
@@ -799,9 +803,11 @@ async function buildRemoveBankCard({ bankName }) {
  * Everything here is best-effort — a Sheets hiccup degrades to the old thin
  * card (reminders rebuild these cards and must never fail on a read).
  */
-async function enrichBundleItems(rawItems, aj = null) {
+async function enrichBundleItems(rawItems, aj = null, opts = {}) {
   const inventoryRepository = require('../repositories/inventoryRepository');
   const inv = await inventoryRepository.getAll();
+  // FIX-INBOX — a decided request is a record, not a decision still to make.
+  if (opts.decided) return describeDecidedItems(rawItems, aj, inv);
   const live = inv.filter((r) => r.status === 'available' || r.status === 'in_transit');
   const byPkg = new Map();
   for (const r of live) {
@@ -864,6 +870,56 @@ async function enrichBundleItems(rawItems, aj = null) {
       ...it, design: rows[0].design, shade: rows[0].shade, warehouse: rows[0].warehouse,
       thans: avail.length, yards: avail.reduce((s, r) => s + (Number(r.yards) || 0), 0),
     };
+  });
+}
+
+/**
+ * FIX-INBOX (11-Nov-2026) — the goods of a DECIDED sale, for the record card
+ * (🛂 Approvals → ✅❌ Decided, and the "Revert this sale?" card built from
+ * it). `enrichBundleItems` asks "can this still be sold?". On a decided row
+ * that question is over, and asking it listed every bale of a COMPLETED sale
+ * under the no-stock warning with the QTA-2 restart line — its own sold rows
+ * were read as stock that had gone missing.
+ *
+ * Nothing is judged here. An item keeps what the request recorded and
+ * borrows the rest from its bale's Inventory rows of ANY status, in the
+ * store the sale writer would look in (saleRestart.itemRows: the item's own
+ * store, else the request's). A whole bale counts its thans less the ones
+ * another sale took (sold to a different buyer, or on a different day) —
+ * so a part-opened bale reads as what this sale sold, and a than a later
+ * return put back still counts. A number on no row, or living under two
+ * designs (§2), stays bare — never guessed, never flagged.
+ */
+function describeDecidedItems(rawItems, aj, inv) {
+  const saleRestart = require('./saleRestart');
+  const given = (v) => v !== undefined && v !== null && v !== '';
+  return rawItems.map((it) => {
+    let rows = saleRestart.itemRows({ ...it, type: 'package' }, aj || {}, inv);
+    if (it.design) {
+      const sameDesign = rows.filter((r) => String(r.design) === String(it.design));
+      if (sameDesign.length) rows = sameDesign;
+    }
+    if (new Set(rows.map((r) => r.design)).size !== 1) return { ...it };
+    const out = {
+      ...it,
+      design: it.design || rows[0].design,
+      shade: given(it.shade) ? it.shade : rows[0].shade,
+      warehouse: it.warehouse || rows[0].warehouse,
+    };
+    if (it.type === 'than') {
+      // Its own row gives the yards; a sibling's are never borrowed.
+      const row = rows.find((r) => String(r.thanNo) === String(it.thanNo));
+      return {
+        ...out, shade: given(it.shade) ? it.shade : (row || rows[0]).shade,
+        thans: 1, yards: Number(it.yards) || Number(row && row.yards) || 0,
+      };
+    }
+    // The bale, less the thans another sale took (sold to someone else, or
+    // on another day). A than this sale took and a later return put back
+    // still counts; when every row belongs elsewhere, the bale as it stands.
+    const mine = rows.filter((r) => r.status !== 'sold' || saleRestart.rowSoldForThisSale(r, aj));
+    const basis = mine.length ? mine : rows;
+    return { ...out, thans: basis.length, yards: basis.reduce((s, r) => s + (Number(r.yards) || 0), 0) };
   });
 }
 
@@ -993,10 +1049,14 @@ function docVerifyLine(aj, opts = {}) {
  *  Inventory best-effort; degrades to the bare item list on any failure. */
 async function buildSaleBundleCard(aj, opts = {}) {
   let items = (Array.isArray(aj.items) ? aj.items : []).map((it) => ({ ...it }));
-  try { items = await enrichBundleItems(items, aj); } catch (_) { /* thin items still render */ }
+  // FIX-INBOX — `opts.decided`: the row is already approved or rejected, so
+  // the goods are described for the record and nothing is checked against
+  // live stock (no ⚠️, no "half-done run"). Pending rows pass nothing.
+  try { items = await enrichBundleItems(items, aj, { decided: !!opts.decided }); } catch (_) { /* thin items still render */ }
   const pct = await marksOffAbovePct();
   let text = await buildSaleCard({
     headline: 'Sale',
+    decided: !!opts.decided,
     customer: aj.customer,
     salesPerson: aj.salesPerson,
     paymentMode: aj.paymentMode,
@@ -1024,7 +1084,7 @@ async function buildSaleBundleCard(aj, opts = {}) {
  * this, a reminder's approve button asked admins to decide a multi-bale
  * request without seeing what is being requested.
  */
-function buildSupplyRequestCard(aj) {
+function buildSupplyRequestCard(aj, opts = {}) {
   // UX-2 — label-less fact lines and the shared cart block (utils/cartFormat);
   // the approver keeps the category name. "container(s)" is gone (§6b).
   const cartFormat = require('../utils/cartFormat');
@@ -1049,7 +1109,12 @@ function buildSupplyRequestCard(aj) {
   }
   if (aj.sale_doc_file_id) text += '\n📎 Bill attached';
   // SRF-6 (R4) — where it sits and with whom (STS-1 gap G5).
-  const waiting = supplyAssign.waitingLine(aj);
+  // FIX-INBOX — a DECIDED request waits on nobody. An admin's reject leaves
+  // the stage where it stood, so its record kept "Waiting on an admin to
+  // approve"; only the two closing lines (✅ Accepted by … / ❌ Rejected by
+  // … at Dispatch) are still true once the row is decided.
+  const closed = ['completed', 'rejected_by_dispatch'].includes(String(aj.stage || ''));
+  const waiting = (opts.decided && !closed) ? '' : supplyAssign.waitingLine(aj);
   if (waiting) text += `\n\n${waiting}`;
   return text;
 }
@@ -1241,9 +1306,12 @@ function buildEditBaleCard(aj) {
 
 /**
  * @param {object} aj the queued actionJSON
- * @param {{requester?: string}} [opts] CARD-6 — the requester's display name
- *   when the surface already prints it (the inbox footer), so a sale card can
- *   drop a `🧑` line that would only repeat it
+ * @param {{requester?: string, decided?: boolean}} [opts] CARD-6 — `requester`:
+ *   the requester's display name when the surface already prints it (the
+ *   inbox footer), so a sale card can drop a `🧑` line that would only repeat
+ *   it. FIX-INBOX — `decided`: the row is already approved or rejected (the
+ *   🛂 Decided record), so a sale lists its goods as recorded with no
+ *   live-stock warning and a supply request shows no waiting line
  */
 async function buildCardFromActionJSON(aj, opts = {}) {
   if (!aj || typeof aj !== 'object') return 'pending action';
@@ -1254,7 +1322,7 @@ async function buildCardFromActionJSON(aj, opts = {}) {
     if (aj.action === 'return_thans') return await buildReturnThansCard(aj);
     if (aj.action === 'return_bundle') return await buildReturnBundleCard(aj); // RET-5
     if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj, opts);
-    if (aj.action === 'supply_request') return buildSupplyRequestCard(aj);
+    if (aj.action === 'supply_request') return buildSupplyRequestCard(aj, opts);
     if (aj.action === 'add_contact') return buildAddContactCard(aj);
     if (aj.action === 'remove_customer' || aj.action === 'restore_customer') return buildRemoveCustomerCard(aj);
     if (aj.action === 'add_warehouse') return await buildAddWarehouseCard(aj);
@@ -1271,6 +1339,17 @@ async function buildCardFromActionJSON(aj, opts = {}) {
     // bare action label — two payment requests read identically (D-4).
     if (aj.action === 'request_payment') {
       return require('./paymentCards').buildApprovalSummary({ ...aj, payee_type: aj.payee_type || '?' });
+    }
+    // FIX-INBOX — two more side-A rows the generic list below knows no field
+    // of, so the inbox card and the hourly reminder read only "register
+    // payment account" / "record office expense" and the second admin signed
+    // without seeing the holder, number and bank, or the items and total.
+    // Both go to the builder of their first chat card, fed from the queue row.
+    if (aj.action === 'register_payment_account') {
+      return require('./paymentCards').buildAccountSummary({ ...aj, owner_name: aj.owner_name || '?', owner_type: aj.owner_type || '?' });
+    }
+    if (aj.action === 'record_office_expense' && Array.isArray(aj.items) && aj.items.length) {
+      return require('./branchOpsService').buildExpenseApprovalSummary(aj);
     }
   } catch (_) { /* fall through to generic */ }
   const parts = [actionLabel(aj.action)];

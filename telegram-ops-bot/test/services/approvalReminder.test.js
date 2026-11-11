@@ -132,3 +132,39 @@ test('APU-1: sale reminders rebuild the full card and re-forward the bill', asyn
   assert.equal(photos.length, 2, 'bill re-forwarded to both admins');
   assert.equal(photos[0].args.photo, 'bill-1');
 });
+
+test('FIX-INBOX: an expense batch and a payee account are reminded with their substance, not the bare action words', async () => {
+  // Both types had no card builder, so the hourly copy read only "record
+  // office expense" / "register payment account": the admin about to sign
+  // could not see the items and total, or the holder, number and bank.
+  reminder._resetForTests();
+  pendingRows = [
+    row('req-exp', OLD, {
+      action: 'record_office_expense', branch: 'Kano office', manager_name: 'Abdul', date: '2026-07-14',
+      items: [
+        { kind: 'expense', title: 'Generator fuel', amount: 12500 },
+        { kind: 'person_allowance', title: 'Sani', amount: 3000, ref_id: '5551' },
+      ],
+      total_amount: 15500,
+    }),
+    row('req-acct', OLD, {
+      action: 'register_payment_account', owner_name: 'Sani Loader', owner_type: 'employee',
+      account_number: '0123456789', bank: 'GTBank', owner_telegram_id: '5551', account_id: 'ACC-0007',
+    }),
+  ];
+  const bot = createFakeBot();
+  const sent = await reminder.sweep(bot, { now: NOW });
+  assert.equal(sent, 2);
+  const cardFor = (id) => bot.calls.filter((c) => c.method === 'sendMessage' && c.args.text.includes(id))
+    .map((c) => c.args.text.replace(/\\/g, ''));
+  const expense = cardFor('req-exp');
+  assert.equal(expense.length, 2, 'one copy per admin');
+  assert.match(expense[0], /Reminder — this approval is still waiting/);
+  assert.match(expense[0], /\n💸 Office expenses \(Kano office\) — 2 item\(s\), ₦15,500\n🧾 Generator fuel — ₦12,500\n👤 Sani — ₦3,000\n/,
+    'the office, each item with its amount, the total — the naira sign included');
+  assert.ok(!/\nrecord office expense\n/.test(expense[0]), 'the bare action words are gone');
+  const account = cardFor('req-acct');
+  assert.match(account[0], /\nRegister payment account: Sani Loader \(employee\)\nAccount: 0123456789 · GTBank\nLinked Telegram: Sani Loader · 5551 ✓ registered employee\n/,
+    'holder and kind, number, bank, and the linked Telegram user');
+  assert.ok(!/\nregister payment account\n/.test(account[0]), 'the bare action words are gone');
+});

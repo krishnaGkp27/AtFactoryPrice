@@ -738,10 +738,19 @@ async function renderItems(bot, chatId, userId, opts = {}) {
         ? locationService.UNASSIGNED_LABEL : session.location}`
       : '');
 
+  // FIX-INBOX — declared BEFORE the empty-list branch that reads it. It sat
+  // below, so every tap that landed on an empty list (the last request of a
+  // group just decided, a group another admin emptied) threw a ReferenceError
+  // and drew nothing.
+  const isTransfers = session.category === 'transfers';
+  const isDecided = session.category === 'decided';
+
   if (!items.length) {
+    // The knob sits OUTSIDE the italic: legacy Markdown nests nothing, so
+    // inside `_…_` its own underscores closed the italic and were eaten.
     await render(bot, chatId, userId,
       isDecided
-        ? `${title}\n\n_Nothing decided in this window. Every decision stays on the ApprovalQueue sheet — widen it with Settings \`APPROVALS_DECIDED_DAYS\`._`
+        ? `${title}\n\n_Nothing decided in this window. Every decision stays on the ApprovalQueue sheet — widen it with Settings_ \`APPROVALS_DECIDED_DAYS\`.`
         : `${title}\n\n✅ _Nothing left here._`,
       [backRow('⬅ Categories'), closeRow()]);
     return;
@@ -750,9 +759,6 @@ async function renderItems(bot, chatId, userId, opts = {}) {
   const pages = Math.max(1, Math.ceil(items.length / ITEMS_PER_PAGE));
   const page = Math.min(Math.max(0, session.page || 0), pages - 1);
   const slice = items.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
-
-  const isTransfers = session.category === 'transfers';
-  const isDecided = session.category === 'decided';
 
   // Names, never raw Telegram ids (owner rule, 19-Jul — the digest and the
   // reminder sweep already do this). Resolved once per DISTINCT requester on
@@ -919,7 +925,11 @@ async function renderItem(bot, chatId, userId, idx) {
       const st = String(live.status).toLowerCase();
       const when = live.resolvedAt ? ` · ${fmtDate(live.resolvedAt)}` : '';  // TIME-1
       let card = '';
-      try { card = await approvalCards.buildCardFromActionJSON(live.actionJSON) || ''; } catch (_) { /* bare */ }
+      // FIX-INBOX — `decided`: a record lists what the request carried. Built
+      // as a pending card it re-checked LIVE stock, so a completed sale's own
+      // bales read "no available stock … Approve restarts it", and a rejected
+      // supply request kept its "Waiting on …" line.
+      try { card = await approvalCards.buildCardFromActionJSON(live.actionJSON, { decided: true }) || ''; } catch (_) { /* bare */ }
       // PAY-2 §2 G — an approved payment is not a paid one: the record says
       // where the money stands, read from the PaymentRequests row.
       const payLine = await paymentStatusLine(live, bot);
@@ -1208,7 +1218,8 @@ async function handleCallback(bot, query) {
       return true;
     }
     let card = '';
-    try { card = await approvalCards.buildCardFromActionJSON(live.actionJSON) || ''; } catch (_) { /* bare */ }
+    // FIX-INBOX — the sale is approved (eligible() says so): the record card.
+    try { card = await approvalCards.buildCardFromActionJSON(live.actionJSON, { decided: true }) || ''; } catch (_) { /* bare */ }
     if (!yes) {
       await render(bot, cid, userId,
         `↩️ *Revert this sale?*\n\n${escCard(card)}\n\n`

@@ -2310,8 +2310,13 @@ async function rejectApprovalInner(requestId, rejectedBy) {
       logger.warn(`finalize_landed_cost reject: failed to clear GRN ${aj.grn_id} pending state: ${e.message}`);
     }
   }
+  // FIX-INBOX — the person who closed it IS the record (`actorAlways`, the
+  // transfer decline's rule). A supply request credits only the admin stamped
+  // at approval, so one an admin rejected BEFORE approving it left the
+  // Approver cell blank and its Decided record read "Already rejected" with
+  // nobody named. A no-op for every type that already names the actor.
   const rejecterLabel = await require('./approverStamp')
-    .labelFor({ actionJSON: aj, actorId: rejectedBy });
+    .labelFor({ actionJSON: aj, actorId: rejectedBy, actorAlways: true });
   if (aj.action === 'request_payment') {
     // PAY-2 §2 F — the PaymentRequests row follows the queue row to
     // `rejected`, so 📋 My requests stops saying "waiting for approval".

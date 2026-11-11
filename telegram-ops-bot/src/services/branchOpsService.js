@@ -289,6 +289,37 @@ async function submitExpenseBatch({ userId, items }) {
   return { requestId, branch, manager, total, items: cleaned };
 }
 
+const EXPENSE_KIND_ICON = { expense: '🧾', person_allowance: '👤', commission: '🤝' };
+const EXPENSE_CARD_MAX_ITEMS = 15; // item lines on one card, as on the flow's
+
+/**
+ * FIX-INBOX (11-Nov-2026) — the admin card of an expense batch, rebuilt from
+ * its queue row (the `record_office_expense` actionJSON).
+ *
+ * The first chat card is itemised by the flow at submit. The 🛂 inbox
+ * drill-in and the hourly reminder rebuild their card from the row, had no
+ * builder for this type, and so read only "record office expense": the
+ * admin signed without seeing the items or the total. This prints the same
+ * lines as the flow's card (officeExpenseFlow.submit) — the office, each
+ * item with its amount, the total. Plain text; side A, so every figure goes
+ * through fmtNgn (money.expense).
+ *
+ * @param {object} aj the queued actionJSON (branch, items, total_amount)
+ * @returns {string}
+ */
+function buildExpenseApprovalSummary(aj) {
+  const a = aj || {};
+  const items = Array.isArray(a.items) ? a.items : [];
+  const lines = items.map((it) => `${EXPENSE_KIND_ICON[it.kind] || '🧾'} ${it.title} — ${fmtNgn(it.amount)}`);
+  const shown = lines.length > EXPENSE_CARD_MAX_ITEMS
+    ? lines.slice(0, EXPENSE_CARD_MAX_ITEMS).concat([`…and ${lines.length - EXPENSE_CARD_MAX_ITEMS} more`])
+    : lines;
+  // The row's own total is what was submitted; a row without one is summed.
+  const stored = Number(a.total_amount);
+  const total = stored > 0 ? stored : items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+  return `💸 Office expenses (${a.branch || '—'}) — ${lines.length} item(s), ${fmtNgn(total)}\n${shown.join('\n')}`;
+}
+
 /**
  * Post-approval write — flip the pending rows to approved. Idempotent:
  * if the rows were already approved (e.g. retry), the second update is
@@ -636,6 +667,7 @@ module.exports = {
   resolveBranch,
   openDay,
   submitExpenseBatch,
+  buildExpenseApprovalSummary, // FIX-INBOX — the admin card, rebuilt from the queue row
   applyExpenseBatch,
   cancelExpenseBatch,
   logPointer,

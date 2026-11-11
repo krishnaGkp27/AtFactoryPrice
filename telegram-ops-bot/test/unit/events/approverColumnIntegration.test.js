@@ -82,3 +82,27 @@ test('a rejection records who rejected it', async () => {
   assert.equal(row.status, 'rejected');
   assert.equal(row.approver, 'Boss', 'a refusal is a decision, and it names its decider');
 });
+
+test('FIX-INBOX: a supply request an admin rejects BEFORE approving it names that admin', async () => {
+  // approverStamp credits a supply request's approver from `approvedByAdmin`
+  // alone — right for an approval (the dispatch hand who flips the row is not
+  // one), but a rejection at Dispatch review / admin review has no such stamp
+  // yet, so the Approver cell stayed blank and the Decided record read
+  // "Already rejected" with nobody named.
+  stamped = [];
+  approvalQueueRepository.getAllPending = async () => ([{
+    requestId: 'REQ-SUP', user: '555', status: 'pending',
+    actionJSON: { action: 'supply_request', stage: 'admin_review', warehouse: 'IDUMOTA', customer: 'CJE', cart: [] },
+  }]);
+  await inventoryService.rejectApproval('REQ-SUP', '888');
+  const row = stamped.find((s) => s.requestId === 'REQ-SUP');
+  assert.equal(row.status, 'rejected');
+  assert.equal(row.approver, 'Boss', 'the admin who closed it is the record');
+});
+
+test('FIX-INBOX: approving a supply request still never credits the dispatch hand who flips the row', async () => {
+  // The reject fix must not leak into the approval rule (APR-1).
+  const { labelFor } = require(path.join(SRC, 'services/approverStamp'));
+  const aj = { action: 'supply_request', approvedByAdmin: { user_id: '777' }, assignedDispatch: { user_id: '555' } };
+  assert.equal(await labelFor({ actionJSON: aj, actorId: '555' }), 'Emin');
+});

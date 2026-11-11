@@ -56,6 +56,10 @@ action code, sheet or column was added.
   `↩️ This sale was reverted · <date>`.
 - The button **asks first**: `↩️ Revert this sale?` with the sale card and
   what will happen. `↩️ Yes, ask for the revert` raises the request.
+- The record and the `Revert this sale?` card list the goods **as the
+  request recorded them** (described from Inventory rows of any status) and
+  carry no live-stock warning and no `half-done run` line — those belong to
+  a pending sale only (FIX-INBOX, 11-Nov-2026).
 - **Two admins approve**; the requester cannot approve their own.
 - **One revert per sale.** A second request for the same sale is refused
   while the first is open, whoever asks (registry rule, key = the sale's

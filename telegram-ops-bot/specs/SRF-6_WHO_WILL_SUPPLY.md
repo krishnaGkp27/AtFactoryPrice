@@ -58,6 +58,8 @@ Supply Request · 🏭 IDUMOTA
 ```
 Waiting line by stage: `⏳ Waiting on Dispatch to confirm` · `🛂 Waiting on an admin to approve · confirmed by X Nd ago` / `· Dispatch stage skipped` · `🚚 Waiting on Musa to accept · assigned Nd ago` · `↩️ Declined by Musa — an admin must assign someone else` · `✅ Accepted by Musa` · `❌ Rejected by X`. The 🚚 line reads `Assigned to X` once assigned, `changed by an admin` after ✎, `Supplier: an admin will choose` when the requester had nobody to pick.
 
+**Once decided (FIX-INBOX, 11-Nov-2026):** the record in 🛂 Approvals → ✅❌ Decided shows no `Waiting on …` / `Declined by …` line — only the two closing lines (`✅ Accepted by Musa`, `❌ Rejected by X`) stay. An admin's ❌ Reject before approval now stamps that admin in the Approver column, so the record reads `Already rejected by <name>` (rows rejected before this date carry no name).
+
 **✅ Approve** with a named supplier: no picker; Musa gets the Accept card (`🔔 Named by the requester and approved by admin…`), the admin reads `✅ … assigned to Musa, as the requester asked`, the requester is told as before. A named person who is no longer active → `⚠️ … no longer an active user — pick someone else` + the picker. Rows without a choice (legacy, "let admin choose") → the picker as before.
 
 **✎ Assign someone else** (admin, inbox, before approval): `🚚 Who should supply R-0735 instead of Musa? · 🏭 IDUMOTA` with the store's eligible people (fallback: every dispatch person, then every active user) and `↩️ Keep Musa`. A pick records `requestedAssignee` with `byAdmin`, audit `supply_supplier_changed`, and the next ✅ Approve assigns that person.
