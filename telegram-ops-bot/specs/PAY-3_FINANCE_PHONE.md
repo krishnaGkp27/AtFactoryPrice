@@ -225,6 +225,15 @@ row's `actionJSON.approvals`, with the Postgres event trail as the fallback
 for an archived row. Both reads are caught: an unknown approver list blocks
 nobody, but a throw never silently opens the gate.
 
+**PAY-4b, 11-Nov-2026 — the second approver.** A test-script check against
+the code found that `approvals` holds only the FIRST signature (it is parked
+when the request stays pending), and the event trail was read only when the
+row gave nothing. So the admin who gave the SECOND approval, if also a
+finance seat, was still offered ✔ Mark Done. Fixed: the approval executor
+parks the whole pair on the row (`approverIds`), and the gate now reads
+`approvals`, `approverIds`, the signature trail (`signoffs`) and the event
+trail together, always. No card, sheet column or setting changed.
+
 ## 5 · Scope
 
 | Change | File | Size | Net effect on length |

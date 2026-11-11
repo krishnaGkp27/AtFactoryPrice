@@ -1953,12 +1953,23 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       const patch = { status: 'approved', approved_by: pairLabel };
       if (!pay.reason && aj.reason) patch.reason = String(aj.reason);
       await paymentRequestsRepo.update(pay.payment_id, patch);
+      const approverIdList = stamp.approverIds(aj, approvedBy);
       // The trail row rides AFTER the sheet write and fails open (§1).
       await recordPaymentEvent({
         paymentId: pay.payment_id, approvalRequestId: requestId, kind: 'approved',
         actorId: approvedBy, actorName: pairLabel,
-        detail: { approverIds: stamp.approverIds(aj, approvedBy), approverLabel: pairLabel },
+        detail: { approverIds: approverIdList, approverLabel: pairLabel },
       });
+      // PAY-4b (11-Nov-2026) — four eyes: the gate reads the approver ids
+      // off this request's own row, where only the FIRST signature was
+      // parked, so the second approver could still pay. Park the pair.
+      // Best-effort: the trail above carries the same ids and the gate
+      // reads both, so a refused write never costs the approval.
+      try {
+        await approvalQueueRepository.updateActionJSON(requestId, { approverIds: approverIdList });
+      } catch (e) {
+        logger.warn(`PAY-4b: could not park approver ids on ${requestId}: ${e.message}`);
+      }
       const paymentService = require('./paymentService');
       // Plain text — it is appended to plain-text replies on both sides (§2 I).
       paymentNote = `✅ Payment of ${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name} approved by ${pairLabel} — now with finance to pay.`;

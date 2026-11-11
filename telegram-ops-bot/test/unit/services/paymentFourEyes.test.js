@@ -127,3 +127,39 @@ test('PAY-4: the signer\'s card says why the button is gone', () => {
   const plain = paymentCards.buildFinanceCard(PAY, { ok: true }, { reason: 'Total tp' });
   assert.doesNotMatch(plain, /You approved this one/, 'said only on the copy it applies to');
 });
+
+// ── PAY-4b (11-Nov-2026) — the SECOND approver. DUAL-1 parks only the first
+// signature on the row; the gate used to read the event trail only when the
+// row gave nothing, so the admin who gave the second approval could pay.
+test('PAY-4b: the second signer is blocked — the row holds the first id, the trail names both', async () => {
+  stubQueue(['777']);
+  paymentEventsRepository.forPayment = async () => [
+    { kind: 'raised', actor_id: '4242', detail: {} },
+    { kind: 'approved', actor_id: '888', detail: { approverIds: ['777', '888'] } },
+  ];
+  assert.deepEqual(await paymentService.approverIdsFor(PAY), ['777', '888']);
+  const gate = await paymentService.canExecute('888', PAY);
+  assert.equal(gate.ok, false, 'the admin who gave the second approval cannot release the money');
+  assert.equal(gate.reason, 'approved_it');
+});
+
+test('PAY-4b: the pair the executor parks on the row is enough with no trail at all', async () => {
+  approvalQueueRepository.getByRequestId = async () => ({
+    requestId: 'REQ-1', status: 'approved',
+    actionJSON: { action: 'request_payment', approvals: ['777'], approverIds: ['777', '888'] },
+  });
+  paymentEventsRepository.forPayment = async () => { throw new Error('pg down'); };
+  const gate = await paymentService.canExecute('888', PAY);
+  assert.equal(gate.ok, false);
+  assert.equal(gate.reason, 'approved_it');
+});
+
+test('PAY-4b: the signature trail on the row counts too, and an unsigned seat still pays', async () => {
+  approvalQueueRepository.getByRequestId = async () => ({
+    requestId: 'REQ-1', status: 'approved',
+    actionJSON: { action: 'request_payment', approvals: ['777'], signoffs: [{ id: '777', name: 'Krishna' }, { id: '999', name: 'Musa' }] },
+  });
+  paymentEventsRepository.forPayment = async () => [];
+  assert.deepEqual(await paymentService.approverIdsFor(PAY), ['777', '999']);
+  assert.equal((await paymentService.canExecute('888', PAY)).ok, true, 'the finance seat signed nothing');
+});

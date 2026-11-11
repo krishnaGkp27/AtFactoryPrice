@@ -147,6 +147,35 @@ test('PAY-1: approving a payment AUTHORISES it — it does not pay it', async ()
   assert.deepEqual(events[0].detail, { approverIds: ['777', '888'], approverLabel: 'Ajeet ‖ John' });
 });
 
+// PAY-4b (11-Nov-2026) — four eyes: both approver ids are parked on the
+// request's own row at approval, so the gate knows the second signer too.
+test('PAY-4b: approving a payment parks BOTH approver ids on the request row', async () => {
+  const row = { payment_id: 'PAY-9', payee_name: 'Abdul', amount_ngn: 1000, status: 'pending_approval' };
+  requestsRepo.findByApprovalRequestId = async () => row;
+  requestsRepo.update = async (id, patch) => { Object.assign(row, patch); return row; };
+  approvalQueueRepository.getAllPending = async () => ([{
+    requestId: 'R9', user: '4242', status: 'pending',
+    actionJSON: { action: 'request_payment', payment_id: 'PAY-9', approvals: ['777'] },
+  }]);
+  const parked = [];
+  const orig = approvalQueueRepository.updateActionJSON;
+  approvalQueueRepository.updateActionJSON = async (id, patch) => { parked.push({ id, patch }); return true; };
+  try {
+    const res = await inventoryService.executeApprovedAction('R9', '888');
+    assert.equal(row.status, 'approved');
+    assert.ok(res.message.includes('now with finance to pay'));
+    assert.deepEqual(parked, [{ id: 'R9', patch: { approverIds: ['777', '888'] } }]);
+    // A refused row write never costs the approval: the trail carries the pair.
+    row.status = 'pending_approval';
+    approvalQueueRepository.updateActionJSON = async () => { throw new Error('quota'); };
+    const again = await inventoryService.executeApprovedAction('R9', '888');
+    assert.equal(row.status, 'approved');
+    assert.ok(again.message.includes('now with finance to pay'));
+  } finally {
+    approvalQueueRepository.updateActionJSON = orig;
+  }
+});
+
 // Owner ruling 10-Sep-2026: the sheet row is the complete record of an
 // approved request. A row raised before column S existed gets its reason
 // backfilled from the queue payload in the approval write; a row that

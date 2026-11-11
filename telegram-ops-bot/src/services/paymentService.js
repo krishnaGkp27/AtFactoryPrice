@@ -211,13 +211,23 @@ async function approverIdsFor(pay) {
     try {
       const row = await require('../repositories/approvalQueueRepository').getByRequestId(requestId);
       if (row && row.actionJSON) {
-        require('./approverStamp').approverIds(row.actionJSON).forEach(push);
+        const aj = row.actionJSON;
+        require('./approverStamp').approverIds(aj).forEach(push);
+        // PAY-4b (11-Nov-2026) — DUAL-1 parks only the FIRST signature in
+        // `approvals`, so the admin who gave the second approval was unknown
+        // here and could still release the money. The executor now parks the
+        // whole pair (`approverIds`), and the signature trail counts too.
+        if (Array.isArray(aj.approverIds)) aj.approverIds.forEach(push);
+        if (Array.isArray(aj.signoffs)) aj.signoffs.forEach((s) => push(s && s.id));
       }
     } catch (e) {
       logger.warn(`PAY-4 approverIdsFor: queue read failed for ${requestId}: ${e.message}`);
     }
   }
-  if (!out.length) {
+  // PAY-4b — the event trail is read ALWAYS, not only when the row gave
+  // nothing: it has carried both approver ids since PAY-2, so payments
+  // approved before the row held the pair are covered as well.
+  {
     try {
       const events = await require('../repositories/paymentEventsRepository')
         .forPayment(pay && pay.payment_id);
