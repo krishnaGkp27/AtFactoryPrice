@@ -248,13 +248,24 @@ function compareItemsToLabels(items, labels, opts = {}) {
   const catalogFor = (design) => shadeCatalog.get(norm(design)) || [];
   const used = new Set();
   const results = [];
+  // BUSINESS_RULES §1 — the printed bale number is the key. A bill line
+  // whose number IS the bale's number wins; the suffix-tolerant match
+  // ("26-896" on the paper for bale 896) is only the fallback, and it may
+  // never take a line that is exactly ANOTHER bale of this request (before,
+  // sale bales 832 and 1832 on one bill could be cross-paired, and line
+  // 1832 could tick bale 832 while 1832 itself read "missing").
+  const itemNumbers = new Set(items.map((x) => digits(x.packageNo)).filter(Boolean));
   for (const it of items) {
     const itD = digits(it.packageNo);
-    let idx = labels.findIndex((l, i) => {
-      if (used.has(i)) return false;
-      const lD = digits(l.packageNo);
-      return itD && lD && (lD === itD || lD.endsWith(itD) || itD.endsWith(lD));
-    });
+    let idx = labels.findIndex((l, i) => !used.has(i) && itD && digits(l.packageNo) === itD);
+    if (idx === -1) {
+      idx = labels.findIndex((l, i) => {
+        if (used.has(i)) return false;
+        const lD = digits(l.packageNo);
+        if (!itD || !lD || itemNumbers.has(lD)) return false;
+        return lD.endsWith(itD) || itD.endsWith(lD);
+      });
+    }
     let via = 'number';
     if (idx === -1) {
       // Bills sometimes fuse design and shade ("77014-3" for design 77014
@@ -266,6 +277,7 @@ function compareItemsToLabels(items, labels, opts = {}) {
       // that case with the extra pcs/qty/edit-distance guards.
       const fused = norm(String(it.design ?? '') + String(it.shade ?? ''));
       idx = labels.findIndex((l, i) => !used.has(i) && norm(l.design)
+        && !itemNumbers.has(digits(l.packageNo))   // never another bale's own line
         && ((norm(l.design) === norm(it.design)
           && (!norm(l.shade) || !norm(it.shade)
             || compareShades(l.shade, it.shade, catalogFor(it.design)) === 'ok'))
