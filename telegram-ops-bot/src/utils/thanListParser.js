@@ -20,7 +20,8 @@
  *                                          he drops one on chips if needed
  *
  * Grammar rules that keep it unambiguous:
- *  - a comma (or "and") ALWAYS separates bales;
+ *  - a comma (or "and") ALWAYS separates bales; so does a space between
+ *    two bale numbers of two digits or more ("sell 1111 1112 kano");
  *  - several thans of ONE bale join with `+` or a `-` range — never with
  *    commas, because "1100/1, 2" cannot be told apart from "bale 2";
  *  - a trailing warehouse hint is anything after `from`/`@`, or a
@@ -120,6 +121,42 @@ function isDateLike(s) {
   return false;
 }
 
+/** A numeric date opening a string: `06/08/2026`, `6-8-26`. */
+const DATE_AT_FRONT = /^\d{1,2}\s*[/-]\s*\d{1,2}\s*[/-]\s*\d{2,4}\b/;
+
+/**
+ * Read ONE item off the front of `s`.
+ * @param {string} s
+ * @returns {{item:{packageNo:string, thans?:number[], count?:number}, used:number, bare?:boolean}
+ *   |{bad:true}|null} the item and how many characters it used; `bad` for a
+ *   than spec that cannot be read; null when `s` does not open with a number.
+ */
+function readItem(s) {
+  // <bale>/<thanspec> — digits joined by + or -, with NO bare spaces, so
+  // "1100/1 6/8/2026" stops the spec at `1` and leaves the date to the
+  // tail instead of eating it as a than number.
+  const slash = s.match(/^(\d+)\s*\/\s*(\d+(?:\s*[+-]\s*\d+)*)/);
+  if (slash) {
+    const thans = parseThanSpec(slash[2].trim());
+    if (thans) return { item: { packageNo: slash[1], thans }, used: slash[0].length };
+  } else if (/^\d+\s*\//.test(s)) {
+    return { bad: true };
+  }
+  // <bale> x<count>
+  const times = s.match(/^(\d+)\s*[xX]\s*(\d+)/);
+  if (times) {
+    const count = parseInt(times[2], 10);
+    if (isFinite(count) && count > 0 && count <= 500) {
+      return { item: { packageNo: times[1], count }, used: times[0].length };
+    }
+  }
+  // bare bale number — returned bare; the flow loads the whole bale
+  // (SELL-T3c). The parser never decides what a number means.
+  const bare = s.match(/^(\d+)\b/);
+  if (bare) return { item: { packageNo: bare[1] }, used: bare[0].length, bare: true };
+  return null;
+}
+
 /**
  * Parse the shorthand into bale/than intents.
  *
@@ -148,6 +185,14 @@ function parseThanList(raw) {
   const body = text.replace(/^(?:sell|return)\b/i, ' ');
   const segments = body.split(/,|\band\b/i).map((s) => s.trim()).filter(Boolean);
 
+  const take = (got) => {
+    // A lone small number right after a `<bale>/<than>` item is almost
+    // always someone writing "1100/1,2,3". Flag it so the caller can
+    // show the `+` hint instead of hunting for a bale numbered "2".
+    if (got.bare && items.length && Number(got.item.packageNo) <= 99) commaThanHint = true;
+    items.push(got.item);
+  };
+
   for (const seg of segments) {
     if (isDateLike(seg)) { ignoredDate = ignoredDate || seg; continue; }
     // Strip only the leading noise words; keep the rest intact so the tail
@@ -155,59 +200,41 @@ function parseThanList(raw) {
     const s = seg.replace(/^\s*(?:than|thans|package|packages|bale|bales|pkg|no|number)\s+/i, '').trim();
     if (!s) continue;
 
-    let rest = '';
-    let matched = false;
-
-    // <bale>/<thanspec> — digits joined by + or -, with NO bare spaces, so
-    // "1100/1 6/8/2026" stops the spec at `1` and leaves the date to the
-    // tail instead of eating it as a than number.
-    const slash = s.match(/^(\d+)\s*\/\s*(\d+(?:\s*[+-]\s*\d+)*)/);
-    if (slash) {
-      const thans = parseThanSpec(slash[2].trim());
-      if (thans) {
-        items.push({ packageNo: slash[1], thans });
-        rest = s.slice(slash[0].length);
-        matched = true;
-      }
-    } else if (/^\d+\s*\//.test(s)) {
+    const first = readItem(s);
+    if (first && first.bad) {
       // "1100/abc" — he MEANT a than spec and it is unreadable. Report it
       // rather than quietly downgrading to "the whole bale 1100".
       bad.push(seg.trim());
       continue;
     }
-    // <bale> x<count>
-    if (!matched) {
-      const times = s.match(/^(\d+)\s*[xX]\s*(\d+)/);
-      if (times) {
-        const count = parseInt(times[2], 10);
-        if (isFinite(count) && count > 0 && count <= 500) {
-          items.push({ packageNo: times[1], count });
-          rest = s.slice(times[0].length);
-          matched = true;
-        }
-      }
-    }
-    // bare bale number — returned bare; the flow loads the whole bale
-    // (SELL-T3c). The parser never decides what a number means.
-    if (!matched) {
-      const bare = s.match(/^(\d+)\b/);
-      if (bare) {
-        // A lone small number right after a `<bale>/<than>` item is almost
-        // always someone writing "1100/1,2,3". Flag it so the caller can
-        // show the `+` hint instead of hunting for a bale numbered "2".
-        if (items.length && Number(bare[1]) <= 99) commaThanHint = true;
-        items.push({ packageNo: bare[1] });
-        rest = s.slice(bare[0].length);
-        matched = true;
-      }
-    }
-
-    if (!matched) {
+    if (!first) {
       // No number at the front: it is tail text (store / customer / words)
       // when it reads like words, otherwise something we genuinely can't read.
       if (/[A-Za-z]/.test(s)) tailBits.push(s);
       else bad.push(seg.trim());
       continue;
+    }
+    take(first);
+    let rest = s.slice(first.used);
+
+    // SPACES separate bales too ("sell 1111 1112 kano" — SELL-T3d). The run
+    // goes on only while the next thing is a bale number (two digits or
+    // more) and not a date; the first word ends it and starts the tail.
+    // Before this the second number was dropped silently, or glued onto the
+    // store name ("a store called 1112 kano").
+    for (;;) {
+      const next = rest.replace(/^\s+/, '');
+      if (!/^\d{2,}/.test(next) || DATE_AT_FRONT.test(next)) break;
+      const more = readItem(next);
+      if (!more) break;
+      if (more.bad) {
+        const [token] = next.match(/^\S+/);
+        bad.push(token);
+        rest = next.slice(token.length);
+        continue;
+      }
+      take(more);
+      rest = next.slice(more.used);
     }
     if (rest && rest.trim()) tailBits.push(rest.trim());
   }

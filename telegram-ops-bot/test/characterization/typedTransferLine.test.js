@@ -155,6 +155,17 @@ test('a worded than line is the whole bale; a trailing full stop does not break 
   assert.deepEqual(q.numbers, ['771', '779']);
 });
 
+// FIX-TYPED (11-Nov-2026) — the sell / return tokeniser dropped every bale
+// after the first in a SPACE-joined list. The transfer line has its own
+// reader and never had the fault; pinned so it stays that way.
+test('a space-joined transfer list reads every bale', () => {
+  const p = transferFlow._internals.parseTypedTransfer('Transfer 832 1186 786 to kano');
+  assert.deepEqual(p.numbers, ['832', '1186', '786']);
+  assert.equal(p.destHint, 'kano');
+  const q = transferFlow._internals.parseTypedTransfer('transfer 771 x3 6189/5 1111 to Lagos');
+  assert.deepEqual(q.numbers, ['771', '6189', '1111']);
+});
+
 test('no number → not the local door: the AI is asked, as before', async () => {
   sessionStore.clear('4242');
   intentCalls = 0;

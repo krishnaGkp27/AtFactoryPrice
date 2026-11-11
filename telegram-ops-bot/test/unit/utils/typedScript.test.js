@@ -77,5 +77,20 @@ test('an unknown first word is nobody\'s: the chips card stays the only answer',
 test('hint and chips cards', () => {
   assert.equal(hintCardText(localIntent('Transfer')), '✍️ Transfer needs its line:\n  Transfer 832, 1186, 786 to kano\n\nBale numbers, then the store it goes to.');
   const card = chipsCardText();
-  for (const s of ['Stock 9006 black · Stock at Lagos', 'Balance Abba · Ledger Abba (admins)', 'Price 9006 black 1500 (admins)', 'Receive · Order · Task · Delivered ORD-…', 'Help — this card']) assert.ok(card.includes(s), s);
+  for (const s of ['Stock 9006 black · Stock at Lagos', 'Balance Abba · Ledger Abba (admins)', 'Price 9006 black 1500 (admins)', 'Receive · Order · Report sales (admins)', 'Task · Tasks · Orders · Delivered ORD-…', 'Contacts · Banks', 'Help — this card']) assert.ok(card.includes(s), s);
+});
+
+// FIX-TYPED (11-Nov-2026) — every line on the card that refuses an employee
+// says so: Receive, Order and Report sales were listed as if open to all.
+test('the chips card marks EVERY admin-only line, and no open line', () => {
+  const lines = chipsCardText().split('\n').filter((l) => l.startsWith('  • '));
+  const marked = lines.filter((l) => /\(admins\)$/.test(l)).join(' · ');
+  const open = lines.filter((l) => !/\(admins\)$/.test(l)).join(' · ');
+  for (const word of ['Balance', 'Ledger', 'Price', 'Receive', 'Order ', 'Report sales']) assert.ok(marked.includes(word), `${word} is admin-only`);
+  for (const word of ['Bale 1112', 'Sell', 'Return', 'Transfer', 'Stock', 'Task ', 'Tasks', 'Orders', 'Delivered', 'Contacts', 'Banks', 'Help']) {
+    assert.ok(open.includes(word), `${word} is open to an employee`);
+    assert.ok(!marked.includes(word), `${word} must not sit on an (admins) line`);
+  }
+  assert.equal(lines.length, 11, 'the card stays compact — one line more than before');
+  assert.ok(Math.max(...lines.map((l) => l.length)) <= 50, 'no line wider than the widest one before');
 });

@@ -180,3 +180,90 @@ test('bare-only sell line: every number is a whole bale, the buyer rides the tai
   assert.deepEqual(two.items, [{ packageNo: '1100' }]);
   assert.equal(two.ignoredCustomer, 'Adamu');
 });
+
+// ── FIX-TYPED (11-Nov-2026) — SPACES separate bale numbers too (SELL-T3d
+// says "commas, and, or spaces"). Before: only the first number of a
+// space-joined run was read; the rest was dropped silently, or glued onto
+// the store name ("I don't know a store called 1112 kano").
+test('a space-joined bare list reads EVERY bale; the store and the buyer still ride the tail', () => {
+  const two = parseThanList('sell 1111 1112');
+  assert.deepEqual(two.items, [{ packageNo: '1111' }, { packageNo: '1112' }]);
+  assert.equal(two.warehouseHint, '');
+  assert.deepEqual(two.bad, []);
+  assert.equal(two.commaThanHint, false);
+
+  const store = parseThanList('sell 1111 1112 kano');
+  assert.deepEqual(store.items, [{ packageNo: '1111' }, { packageNo: '1112' }]);
+  assert.equal(store.warehouseHint, 'kano', 'the second bale is not part of the store name');
+
+  const buyer = parseThanList('Sell 1111 1112 1113 to Abba');
+  assert.deepEqual(buyer.items.map((i) => i.packageNo), ['1111', '1112', '1113']);
+  assert.equal(buyer.ignoredCustomer, 'Abba');
+  assert.equal(buyer.warehouseHint, '');
+
+  const both = parseThanList('sell bales 771 779 from Kano office to Abba');
+  assert.deepEqual(both.items, [{ packageNo: '771' }, { packageNo: '779' }]);
+  assert.equal(both.warehouseHint, 'Kano office');
+  assert.equal(both.ignoredCustomer, 'Abba');
+});
+
+test('space-joined: the 771 x3 and 6189/5 tokens keep their meaning anywhere in the run', () => {
+  const out = parseThanList('sell 771 x3 6189/5 1111 6210/1+2 kano');
+  assert.deepEqual(out.items, [
+    { packageNo: '771', count: 3 },
+    { packageNo: '6189', thans: [5] },
+    { packageNo: '1111' },
+    { packageNo: '6210', thans: [1, 2] },
+  ]);
+  assert.equal(out.warehouseHint, 'kano');
+  assert.deepEqual(out.bad, []);
+  // Mixed with commas and "and": every separator works in one line.
+  assert.deepEqual(parseThanList('sell 771 779, 6189/5 and 1111 1112').items, [
+    { packageNo: '771' }, { packageNo: '779' }, { packageNo: '6189', thans: [5] },
+    { packageNo: '1111' }, { packageNo: '1112' },
+  ]);
+});
+
+test('space-joined: a date after the bales is still a date, never a bale or a than', () => {
+  const out = parseThanList('sell 1111 1112 06/08/2026');
+  assert.deepEqual(out.items, [{ packageNo: '1111' }, { packageNo: '1112' }]);
+  assert.equal(out.ignoredDate, '06/08/2026');
+  const dash = parseThanList('sell 1100/1 1091/1 kano 6-8-2026');
+  assert.deepEqual(dash.items, [{ packageNo: '1100', thans: [1] }, { packageNo: '1091', thans: [1] }]);
+  assert.equal(dash.warehouseHint, 'kano');
+  assert.equal(dash.ignoredDate, '6-8-2026');
+});
+
+test('space-joined: an unreadable than spec in the run is reported, the bales around it are kept', () => {
+  const out = parseThanList('sell 1111 1100/abc 1112 kano');
+  assert.deepEqual(out.items, [{ packageNo: '1111' }, { packageNo: '1112' }]);
+  assert.deepEqual(out.bad, ['1100/abc']);
+  assert.equal(out.warehouseHint, 'kano');
+});
+
+test('space-joined: what was NOT a bale list before is still not one', () => {
+  // A count sentence — not claimed by the pre-check, and the parse does not
+  // start reading the design number as a bale.
+  assert.equal(looksLikeThanList('Sell 5 bales of 9006'), false);
+  assert.deepEqual(parseThanList('Sell 5 bales of 9006').items, [{ packageNo: '5' }]);
+  // (A two-digit count was already read as bale 10 before — unchanged.)
+  assert.deepEqual(parseThanList('Sell 10 bales of 9006').items, [{ packageNo: '10' }]);
+  // The worded than form stays the AI's / the chips card's.
+  assert.equal(looksLikeThanList('Sell than 3 from package 5801'), false);
+  // A single small number after an item is not a bale number (two digits or
+  // more) — it stays in the tail exactly as before.
+  const one = parseThanList('sell 1100/1 2');
+  assert.deepEqual(one.items, [{ packageNo: '1100', thans: [1] }]);
+  assert.equal(one.commaThanHint, false);
+  // Words between the numbers end the run: the tail is read as before.
+  const tail = parseThanList('sell 1100 x3 from Kano office');
+  assert.deepEqual(tail.items, [{ packageNo: '1100', count: 3 }]);
+  assert.equal(tail.warehouseHint, 'Kano office');
+});
+
+test('the RETURN line shares the tokeniser: Return 771 779 6189/5 reads all three', () => {
+  assert.equal(looksLikeReturnList('Return 771 779 6189/5'), true);
+  const out = parseThanList('Return 771 779 6189/5');
+  assert.deepEqual(out.items, [{ packageNo: '771' }, { packageNo: '779' }, { packageNo: '6189', thans: [5] }]);
+  assert.deepEqual(out.bad, []);
+});

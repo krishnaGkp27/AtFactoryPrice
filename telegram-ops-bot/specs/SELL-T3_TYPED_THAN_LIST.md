@@ -279,6 +279,12 @@ AI door (SELL-T3c kept "bare-only lines through the local parser" aside).
   nothing; a line with no valid number shows the card with `Nothing loaded
   yet` and the reason per number. The legacy door is still reached by the
   AI path (mode `1`) for worded sentences.
+- Correction 11-Nov-2026: the SPACE-joined form was claimed but only its
+  first bale was read (`sell 1111 1112` loaded 1111 alone; `sell 1111 1112
+  kano` answered "a store called 1112 kano"). `parseThanList` now reads on
+  while the next token is a bale number of two digits or more (also
+  `771 x3` / `6189/5`) and not a date; the first word starts the tail. The
+  return line shares the tokeniser and is fixed with it.
 - The chips card's sell example is now `Sell 1111, 1112 to Abba`.
 - Tests: `thanListParser.test.js` (claimed / not claimed, the parse),
   `sellThanList.test.js` (the review card through the real controller,

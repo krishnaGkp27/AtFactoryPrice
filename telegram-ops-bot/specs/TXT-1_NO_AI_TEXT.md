@@ -171,6 +171,13 @@ In modes `reads` and `1` a worded sell / return / transfer sentence stays the
 AI's, as the switch promises; every other script line is read locally in
 every mode.
 
+Corrections 11-Nov-2026 (staff test script check): `Customer Abba` shows the
+credit limit and the outstanding to admins only (FIN-V2); `Report sales`
+answers a non-admin `Admin only.` like the 📊 Sales Report tile; `/start`,
+`/menu` and `/home` (with or without `@botname`) open the menu itself, as the
+word `menu` does; the chips card marks `Receive · Order · Report sales` as
+`(admins)`; the Orders list hint reads `Delivered ORD-…`.
+
 Build: `typedRouter.localIntent`, `SYNTAX`, `VERBS`, `hintCardText`,
 `sendHintCard`; the controller's TXT block runs the script before the mode
 switch. Tests: `test/unit/utils/typedScript.test.js`,

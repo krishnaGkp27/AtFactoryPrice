@@ -3753,7 +3753,10 @@ async function handleMessage(bot, msg) {
     return;
   }
 
-  if (GREETINGS.test(text.trim())) {
+  // `/start` · `/menu` · `/home` (the Telegram Menu button sends `/menu`; a
+  // group adds `@botname`) are the greeting words with a slash — the menu
+  // itself, not a one-button card. `/help` stays the chips card.
+  if (GREETINGS.test(text.trim().replace(/^\/(start|menu|home)(?:@\w+)?$/i, '$1'))) {
     await buildGreetingMenu(bot, chatId, userId);
     return;
   }
@@ -4655,6 +4658,9 @@ async function handleMessage(bot, msg) {
         return;
       }
       case 'report_sold': {
+        // The sold report carries a Value line for every store — the same
+        // gate as the 📊 Sales Report tile (typed `Report sales` had none).
+        if (!config.access.adminIds.includes(userId)) { await bot.sendMessage(chatId, 'Admin only.'); return; }
         const soldReportText = await queryEngine.soldReport(intent.warehouse, intent.customer, intent.salesDate || 'all');
         await sendLong(bot, chatId, soldReportText, { parse_mode: 'Markdown' });
         return;
@@ -4686,9 +4692,14 @@ async function handleMessage(bot, msg) {
         r += `Category: ${cust.category} | Status: ${cust.status}\n`;
         if (cust.phone) r += `Phone: ${cust.phone}\n`;
         if (cust.address) r += `Address: ${cust.address}\n`;
-        r += `Credit limit: ${money.sale(cust.credit_limit)}\n`;
-        r += `Outstanding: ${money.sale(cust.outstanding_balance)}\n`;
-        r += `Terms: ${cust.payment_terms}${saleLegendLine()}`;
+        // FIN-V2 (owner, 07-Oct-2026) — customer money is for admins only:
+        // anyone else gets the same card without its two money lines.
+        const custMoney = auth.isAdmin(userId);
+        if (custMoney) {
+          r += `Credit limit: ${money.sale(cust.credit_limit)}\n`;
+          r += `Outstanding: ${money.sale(cust.outstanding_balance)}\n`;
+        }
+        r += `Terms: ${cust.payment_terms}${custMoney ? saleLegendLine() : ''}`;
         await bot.sendMessage(chatId, r, { parse_mode: 'Markdown' });
         return;
       }
@@ -5256,7 +5267,7 @@ async function handleMessage(bot, msg) {
         }
         const accepted = orders.filter((o) => o.status === 'accepted');
         if (accepted.length) {
-          out += `To mark delivered: "Mark order ${accepted[0].order_id} delivered"`;
+          out += `To mark delivered: "Delivered ${accepted[0].order_id}"`;
         }
         await sendLong(bot, chatId, out, { parse_mode: 'Markdown' });
         return;

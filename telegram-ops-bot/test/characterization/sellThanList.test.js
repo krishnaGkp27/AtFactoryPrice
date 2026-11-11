@@ -362,6 +362,24 @@ test('SELL-T3d: a bare-only sell line opens the review card locally — whole ba
   assert.match(text, /Abba/);
 });
 
+// FIX-TYPED (11-Nov-2026) — the same list joined by SPACES used to load the
+// first bale alone and, with a store after it, answered "I don't know a
+// store called 1091 kano".
+test('SELL-T3d: a space-joined list loads EVERY bale, with or without a trailing store', async () => {
+  for (const line of ['sell 1100 1091', 'sell 1100 1091 kano', 'Sell 1100 1091 to Abba']) {
+    sessionStore.clear('4242');
+    intentCalls = 0;
+    const bot = createFakeBot();
+    await controller.handleMessage(bot, msg(line));
+    const text = lastText(bot).replace(/\\/g, '');
+    assert.equal(intentCalls, 0, line);
+    assert.doesNotMatch(text, /don't know a store called/i, line);
+    assert.match(text, /From \*Kano office\*/, line);
+    assert.match(text, /5 of 5 typed than\(s\) loaded/, `${line}: 3 thans of 1100 + 2 of 1091 — got: ${text}`);
+    assert.match(text, /Loaded whole[^\n]*1100[^\n]*1091/, line);
+  }
+});
+
 // ── SELL-T3e (owner's go, 04-Nov-2026) — a whole bale is ONE line on the card ──
 
 const usersRepository = require(path.join(SRC, 'repositories/usersRepository'));
