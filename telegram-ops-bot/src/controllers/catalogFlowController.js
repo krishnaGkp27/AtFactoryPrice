@@ -590,7 +590,7 @@ async function handleCatFlowCb(bot, callbackQuery, prefix) {
   if (data === 'csf:newcust') {
     // CUS-1 — stale button on an old card.
     const msg = await editOrSend(bot, chatId, session.flowMessageId,
-      '➕ New customers are added by an admin via 👥 CRM → ➕ Add Customer.\nSearch here finds every existing customer.', {});
+      '➕ New customers are added by an admin via 👥 CRM → ➕ Add Contact.\nSearch here finds every existing customer.', {});
     trackMsg(session, msg); saveSession(userId, session);
     return true;
   }
@@ -673,7 +673,7 @@ async function handleCatFlowText(bot, chatId, userId, text) {
     session.step = 'customer';
     saveSession(userId, session);
     const msg = await editOrSend(bot, chatId, session.flowMessageId,
-      '➕ New customers are added via 👥 CRM → ➕ Add Customer. Pick an existing customer:', {});
+      '➕ New customers are added via 👥 CRM → ➕ Add Contact. Pick an existing customer:', {});
     trackMsg(session, msg);
     return true;
   }

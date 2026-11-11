@@ -85,6 +85,10 @@ the owner was holding. That is fixed.
   on a request no longer pending, and an admin ✅ Approve on one already
   approved (waiting on Accept), answer `Already <status> — nothing to do.`
   **Still owed:** ✅ Approve BEFORE Dispatch has confirmed still assigns.
+  **FIX-SUPPLY2 (same day):** the TYPED reason of a Dispatch ❌ Reject or a
+  supplier's ❌ Decline gets the same answer when the request was decided or
+  left that stage meanwhile (nothing written); a second supplier-picker tap
+  on a request already assigned answers `ℹ️ Already assigned to <name> — …`.
 - **R3 — the web dashboard.** *Recommended: later.* Telegram is where the
   work happens; `/ops` is oversight. The hardcoded flag is worth fixing
   whenever that file is next opened.

@@ -582,7 +582,7 @@ async function sendCustomerPage(bot, chatId, state, page, everyone = false) {
   }
   if (!all.length) {
     try {
-      await bot.sendMessage(chatId, 'No customers on file yet — an admin can add them via 👥 CRM → ➕ Add Customer.');
+      await bot.sendMessage(chatId, 'No customers on file yet — an admin can add them via 👥 CRM → ➕ Add Contact.');
     } catch (_) { /* best-effort */ }
     return;
   }
@@ -1268,7 +1268,7 @@ async function applyEnrichmentText(bot, chatId, adminId, state, text) {
     }
     try {
       await bot.sendMessage(chatId,
-        `No customer matches “${t}”. Type again to search, or ask an admin to add them via 👥 CRM → ➕ Add Customer first.`,
+        `No customer matches “${t}”. Type again to search, or ask an admin to add them via 👥 CRM → ➕ Add Contact first.`,
         { reply_markup: { inline_keyboard: [[{ text: '📋 All customers', callback_data: 'enr:cust:all:0' }]] } });
     } catch (_) { /* best-effort */ }
     return true;
@@ -1691,8 +1691,9 @@ async function handleDispatchManagerCallback(bot, callbackQuery) {
       confirmedByDispatch: { user_id: userId, name: confirmerName, ts: confirmedAt },
     });
 
+    // FIX-SUPPLY2 — the short ref, and ONE admin approves a supply.
     await bot.editMessageText(
-      `✅ Confirmed.\n\nRequest \`${requestId}\` is now waiting for 2nd-admin approval.`,
+      `✅ Confirmed.\n\nRequest ${shortRequestRef(requestId)} is now waiting for admin approval.`,
       { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' },
     ).catch(() => {});
 
@@ -1769,6 +1770,27 @@ async function getRequesterDisplayName(userId) {
 }
 
 /**
+ * FIX-SUPPLY2 — is the request still where the reason prompt was armed?
+ * A Dispatch ❌ Reject is armed at the Dispatch stage (`dispatch_review`, or
+ * no stage on a legacy row), a supplier's ❌ Decline at `dispatch_acceptance`
+ * — the same conditions their tap guards check. Returns '' while the reason
+ * may still be recorded, else the word for `Already <word> — nothing to do.`
+ */
+function staleReasonWord(kind, row) {
+  const st = String(row.status || 'resolved').toLowerCase();
+  if (st !== 'pending') return st;
+  const aj = row.actionJSON || {};
+  const stage = String(aj.stage || '');
+  if (kind === 'manager_reject') {
+    if (!stage || stage === 'dispatch_review') return '';
+    if (aj.approvedByAdmin || stage === 'dispatch_acceptance' || stage === 'admin_repick') return 'approved';
+    return aj.confirmedByDispatch ? 'confirmed' : 'actioned';
+  }
+  if (kind === 'dispatch_decline') return stage === 'dispatch_acceptance' ? '' : 'actioned';
+  return '';
+}
+
+/**
  * Handle the free-text reply that follows a Stage-1 rejection or a
  * Stage-3 decline. Returns true if the message was consumed (so the
  * caller can early-return from its text handler), false otherwise.
@@ -1806,6 +1828,18 @@ async function handleReasonReply(bot, msg) {
   const row = await approvalQueueRepository.getByRequestId(state.requestId);
   if (!row) {
     await bot.sendMessage(state.chatId, `⚠️ Request \`${state.requestId}\` no longer exists.`, { parse_mode: 'Markdown' });
+    return done();
+  }
+
+  // FIX-SUPPLY2 — the prompt has no expiry, and the request moves on while it
+  // waits: a reason typed after the request was confirmed, approved, accepted
+  // or rejected used to be stamped on it anyway (and the requester told). The
+  // reason is honoured only while the request is still pending at the stage
+  // the prompt was armed for; otherwise nothing is written, nobody is told,
+  // and the typist gets the tap guards' own words.
+  const staleWord = staleReasonWord(state.kind, row);
+  if (staleWord) {
+    await bot.sendMessage(state.chatId, `Already ${staleWord} — nothing to do.`);
     return done();
   }
 
@@ -2506,6 +2540,19 @@ async function handleSupplyAssign(bot, callbackQuery) {
   if (ajCur.action !== 'supply_request' || String(item.status || '').toLowerCase() !== 'pending') {
     await bot.sendMessage(chatId,
       `ℹ️ Request ${requestId} is ${String(item.status || 'resolved').toLowerCase()} — this picker card is stale, no assignment was made.`);
+    return;
+  }
+  // FIX-SUPPLY2 — `pending` is not enough: an assigned request stays pending
+  // until the supplier taps Accept. Two admins who both tapped ✅ Approve each
+  // hold a picker, and the second pick re-assigned the request (the first
+  // supplier's Accept card went dead, the requester got a second "approved
+  // and assigned"). A pick is valid only while nobody is assigned: the admin
+  // stages (admin_review, admin_repick after a decline) and ✅ Approve before
+  // Dispatch confirmed (the owner's, STS-1 R2) — the stages ✎ Assign someone
+  // else refuses are refused here too.
+  if (['dispatch_acceptance', 'completed'].includes(String(ajCur.stage || ''))) {
+    const holder = (ajCur.assignedDispatch && (ajCur.assignedDispatch.name || ajCur.assignedDispatch.user_id)) || 'someone else';
+    await bot.sendMessage(chatId, `ℹ️ Already assigned to ${holder} — this picker card is stale, no assignment was made.`);
     return;
   }
 

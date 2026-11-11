@@ -358,7 +358,7 @@ async function showOrderDetail(bot, chatId, userId, messageId, orderId) {
     if (bal != null) lines.push(`   💰 Ledger: *${money.sale(bal)}* ${bal >= 0 ? 'credit' : 'debit'}`);
     if (cust.payment_terms) lines.push(`   📝 Terms: ${escapeMd(cust.payment_terms)}`);
   } else {
-    lines.push('   _Not yet in the Customers sheet — add via Add Customer._');
+    lines.push('   _Not yet in the Customers sheet — add via Add Contact._');
   }
   lines.push('');
   lines.push(`👷 *Salesperson:* ${escapeMd(order.salesperson_name)}`);

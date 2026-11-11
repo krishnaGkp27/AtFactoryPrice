@@ -140,7 +140,7 @@ async function resolveCustomerTyped(bot, chatId, userId, session, typed) {
     return { ok: false };
   }
   await bot.sendMessage(chatId,
-    `No customer matches “${q}”. Type again to search, or ask an admin to add them via 👥 CRM → ➕ Add Customer first.`);
+    `No customer matches “${q}”. Type again to search, or ask an admin to add them via 👥 CRM → ➕ Add Contact first.`);
   return { ok: false };
 }
 
