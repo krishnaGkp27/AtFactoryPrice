@@ -27,6 +27,7 @@ const paymentReasonsRepository = require('../repositories/paymentReasonsReposito
 const config = require('../config');
 const logger = require('../utils/logger');
 const money = require('../utils/money');
+const bankEntry = require('../utils/bankEntry');
 
 /**
  * The department that owns payment execution. The owner maintains
@@ -219,6 +220,10 @@ async function approverIdsFor(pay) {
         // whole pair (`approverIds`), and the signature trail counts too.
         if (Array.isArray(aj.approverIds)) aj.approverIds.forEach(push);
         if (Array.isArray(aj.signoffs)) aj.signoffs.forEach((s) => push(s && s.id));
+        // PAY-6 — the admin who gave the last approval also named the paying
+        // account; the executor parks who (`payFrom.by`). One more durable
+        // record of the completing approver.
+        if (aj.payFrom && aj.payFrom.by) push(aj.payFrom.by);
       }
     } catch (e) {
       logger.warn(`PAY-4 approverIdsFor: queue read failed for ${requestId}: ${e.message}`);
@@ -270,6 +275,90 @@ async function threshold() {
 
 async function isAboveThreshold(amount) {
   return (Number(amount) || 0) >= await threshold();
+}
+
+/* ── PAY-6 (owner, 11-Nov-2026) — the COMPANY accounts a payment is paid from ── */
+
+/**
+ * The company's paying accounts, BY NAME (owner: "It will be maintained
+ * through name"; numbers and QR details are a later release).
+ *
+ *   1. Settings `PAYMENT_SOURCE_ACCOUNTS` — entries separated by `;`, a new
+ *      line or a comma, each written the way the house writes a company bank
+ *      account, `BANK — ACCOUNT NAME` (src/utils/bankEntry.js; a plain name
+ *      with no dash is accepted as written).
+ *   2. That cell blank → the entries of Settings `BANK_LIST` that NAME an
+ *      account (`ZENITH — BLACK PANTHER`). A plain bank name (`GTBank`) is a
+ *      payee bank, not a company account, and is never offered.
+ *
+ * De-duplicated (case / space-insensitive), in the order written. NEVER
+ * throws: a Settings read that fails is an empty list — exactly "no paying
+ * account configured", which approves and prints as before PAY-6.
+ *
+ * @returns {Promise<Array<{label:string, bank:string, account:string}>>}
+ */
+async function sourceAccounts() {
+  let s;
+  try {
+    s = (await settingsRepository.getAll()) || {};
+  } catch (e) {
+    logger.warn(`paymentService.sourceAccounts: Settings read failed — ${e.message}`);
+    return [];
+  }
+  const own = String(s.PAYMENT_SOURCE_ACCOUNTS == null ? '' : s.PAYMENT_SOURCE_ACCOUNTS).trim();
+  const entries = own
+    ? own.split(/[;\n\r,]+/)
+    : String(s.BANK_LIST == null ? '' : s.BANK_LIST).split(',');
+  const out = [];
+  const seen = new Set();
+  for (const raw of entries) {
+    const label = bankEntry.normalize(raw);
+    if (!label) continue;
+    const { bank, account } = bankEntry.parse(label);
+    // BANK_LIST is first of all the list of payee banks: only an entry that
+    // names an account under its bank is one of the company's own.
+    if (!own && !account) continue;
+    const k = bankEntry.key(label);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ label, bank, account });
+  }
+  return out;
+}
+
+/** Six hex characters of the label, case / space-insensitive. */
+function sourceFingerprint(label) {
+  return require('crypto').createHash('sha1').update(bankEntry.key(label)).digest('hex').slice(0, 6);
+}
+
+/**
+ * The picker chip's key for one paying account: its position in the list
+ * plus a short fingerprint of its label — ASCII, at most 9 bytes. The
+ * fingerprint is what makes a chip safe with no session: if the list is
+ * edited between the picker and the tap, the key stops resolving and no
+ * OTHER account can be stamped in its place.
+ *
+ * @param {Array<{label:string}>} accounts sourceAccounts()
+ * @param {number} index
+ * @returns {string} e.g. `0.3fa2c1`; '' for an index outside the list
+ */
+function sourceAccountKey(accounts, index) {
+  const acct = Array.isArray(accounts) ? accounts[index] : null;
+  return acct ? `${index}.${sourceFingerprint(acct.label)}` : '';
+}
+
+/**
+ * The account a picker chip named, against the list as it stands NOW.
+ * @param {Array<{label:string}>} accounts sourceAccounts()
+ * @param {string} key sourceAccountKey()
+ * @returns {{label:string, bank:string, account:string}|null} null when the
+ *   key is malformed or the entry at that position is no longer that account
+ */
+function resolveSourceAccount(accounts, key) {
+  const m = /^(\d{1,2})\.([0-9a-f]{6})$/.exec(String(key == null ? '' : key));
+  if (!m || !Array.isArray(accounts)) return null;
+  const acct = accounts[Number(m[1])];
+  return acct && sourceFingerprint(acct.label) === m[2] ? acct : null;
 }
 
 /**
@@ -589,6 +678,9 @@ module.exports = {
   threshold,
   isAboveThreshold,
   payableAccountsFor,
+  sourceAccounts,
+  sourceAccountKey,
+  resolveSourceAccount,
   releaseRejectedAccount,
   releaseUnqueuedAccount,
   validateAccountNumber,

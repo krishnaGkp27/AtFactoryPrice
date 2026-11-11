@@ -34,6 +34,15 @@
  *                          buffer and analysis index). Trailing column,
  *                          written at raise; backfilled at approval from the
  *                          queue payload for rows raised before it existed.
+ *   T paid_from            PAY-6 (owner's go, 11-Nov-2026) — the COMPANY
+ *                          account the payment is paid from, by name
+ *                          (`ZENITH — BLACK PANTHER`), a text snapshot of the
+ *                          label as it stood when the admin who gave the
+ *                          last approval picked it. Trailing column, written
+ *                          by the approval executor in the same row write
+ *                          that sets `approved`; blank for every payment
+ *                          approved before it existed or with no company
+ *                          account configured.
  */
 
 const sheets = require('./sheetsClient');
@@ -50,9 +59,11 @@ const HEADERS = [
   'approval_request_id', 'approved_by', 'status',
   'bill_file_id', 'proof_file_id',
   'done_by', 'done_at', 'decline_reason',
-  // PAY-2 (10-Sep-2026) — the ONE trailing column added after the sheet
+  // PAY-2 (10-Sep-2026) — the first trailing column added after the sheet
   // went live. Append-only: nothing before it may move or be renamed.
   'reason',
+  // PAY-6 (11-Nov-2026) — the second: the company account it is paid from.
+  'paid_from',
 ];
 
 function colLetter(i) { return String.fromCharCode('A'.charCodeAt(0) + i); }
@@ -89,6 +100,8 @@ function parse(r, rowIndex) {
     decline_reason: str(r[17]),
     // A legacy 18-cell row (raised before column S existed) reads ''.
     reason: str(r[18]),
+    // PAY-6 — a row from before column T existed (19 cells or fewer) reads ''.
+    paid_from: str(r[19]),
   };
 }
 
@@ -96,8 +109,9 @@ let _headerReady = false;
 async function ensureHeader() {
   if (_headerReady) return;
   // Both bounds derive from HEADERS (the invoicesRepository pattern): a
-  // live sheet that already carries the 18 PAY-1 columns is WIDENED to
-  // name column S, not judged complete. Only the header row is ever
+  // live sheet that already carries the earlier columns (18 before PAY-2,
+  // 19 before PAY-6) is WIDENED to name the trailing ones, not judged
+  // complete. Only the header row is ever
   // written here, and only the cells that are missing — existing header
   // cells and every data row are untouched.
   const rows = await sheets.readRange(SHEET, `A1:${LAST_COL}1`);
@@ -177,6 +191,7 @@ async function append(entry) {
     str(entry.done_at),
     str(entry.decline_reason),
     str(entry.reason),
+    str(entry.paid_from),
   ]]);
   invalidateCache();
   return { ...entry, payment_id: paymentId, raised_at: now };
@@ -192,7 +207,12 @@ async function append(entry) {
  * gets its own single-cell range so the L–M and O–R writes stay exactly
  * as they were.
  *
- * @param {object} patch {status, approved_by, proof_file_id, done_by, done_at, decline_reason, reason}
+ * `paid_from` (column T, PAY-6) follows the same rule: its own single-cell
+ * range, written ONLY when the patch names it — the approval executor,
+ * once. Every range of one call goes out in ONE batch write, so the paying
+ * account lands with `approved` and the approver pair or not at all.
+ *
+ * @param {object} patch {status, approved_by, proof_file_id, done_by, done_at, decline_reason, reason, paid_from}
  */
 async function update(paymentId, patch = {}) {
   const row = await findById(paymentId);
@@ -213,6 +233,9 @@ async function update(paymentId, patch = {}) {
     },
     ...(patch.reason !== undefined
       ? [{ range: `S${row.rowIndex}`, values: [[str(merged.reason)]] }]
+      : []),
+    ...(patch.paid_from !== undefined
+      ? [{ range: `T${row.rowIndex}`, values: [[str(merged.paid_from)]] }]
       : []),
   ]);
   invalidateCache();

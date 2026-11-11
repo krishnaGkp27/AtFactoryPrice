@@ -136,6 +136,14 @@ const DEFAULTS = {
   // reminder) before an approved-but-unpaid payment re-sends the finance
   // card to the finance seat. 0 disables the nudge.
   PAYMENT_FINANCE_REMINDER_HOURS: 4,
+  // PAY-6 (owner, 11-Nov-2026) — the COMPANY accounts a payment may be paid
+  // from, by name: `BANK — ACCOUNT NAME` entries separated by `;`, a new
+  // line or a comma. The admin who gives the last approval on a payment
+  // picks one (two or more listed), or the only one is stamped (one
+  // listed). Blank = the entries of BANK_LIST that name an account
+  // (`ZENITH — BLACK PANTHER`); none there either = no paying account is
+  // asked for or shown, as before PAY-6.
+  PAYMENT_SOURCE_ACCOUNTS: '',
   // MORN-1 — 09:15 admin morning digest (owner, 17-Jul-2026). Time is
   // HH:MM Nigeria local; category toggles editable in-bot (⏰ Morning
   // Digest tile). Launch state: customer notes ON, everything else OFF.

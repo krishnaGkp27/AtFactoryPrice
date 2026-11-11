@@ -39,7 +39,12 @@ function buildFinanceCard(pay, head, extra = {}) {
   const reason = extra.reason !== undefined ? extra.reason : pay.reason;
   const lines = [
     `💳 *Payment* — ${mdEscape(pay.payee_name)} · ${mdEscape(pay.payee_type)}`,
-    `🏦 ${accountLine(pay)}`,
+    // PAY-6 — a payment that carries its paying account shows source and
+    // recipient together; one without (approved before PAY-6, or no company
+    // account configured) keeps the single payee line exactly as it was.
+    ...(pay.paid_from
+      ? [`📤 From: ${mdEscape(pay.paid_from)}`, `📥 To: ${accountLine(pay)}`]
+      : [`🏦 ${accountLine(pay)}`]),
   ];
   // The amount and its badge share a line: one is the qualifier of the
   // other, and a badge on its own line reads as a separate fact.
@@ -89,6 +94,9 @@ function buildApprovalSummary(pay) {
     `Payee: ${pay.payee_name} (${pay.payee_type})`,
     `Account: ${[pay.account_number, pay.bank].filter(Boolean).join(' · ')}`,
   ];
+  // PAY-6 — the paying account, parked on the queue payload by the approval
+  // executor (`payFrom`), so it exists only on a DECIDED request's record.
+  if (pay.payFrom && pay.payFrom.label) out.push(`Paid from: ${pay.payFrom.label}`);
   // PAY-2 — the reason rides the queue payload, so the inbox and the
   // reminder rebuild print it exactly as the notify-time card did.
   if (pay.reason) out.push(`Reason: ${pay.reason}`);
@@ -143,6 +151,115 @@ function buildAccountSummary(acct) {
   }
   out.push('Once approved, payments can be raised against this account.');
   return out.join('\n');
+}
+
+/* ── PAY-6 (owner, 11-Nov-2026) — "Pay from which account?" ─────────── */
+
+const PAY_FROM_CHANGED = 'That list has changed — pick again.';
+const PAY_FROM_ASK_TOAST = 'Choose the account to pay from.';
+const PAY_FROM_FAILED = '⚠️ Could not show the paying accounts — nothing was approved. Tap ✅ Approve again in a minute.';
+const PAY_FROM_NOT_NOW = 'Nothing was approved. The request still waits for its last approval.';
+const PAY_FROM_EMPTY = 'That list has changed — no paying account is listed any more.\n'
+  + 'Nothing was approved. Tap ✅ Approve on the request again.';
+
+/**
+ * The picker the admin giving the LAST approval sees when the company has
+ * two or more paying accounts. Text and keyboard only — nothing is read or
+ * written here.
+ *
+ * @param {string} requestId the ApprovalQueue request
+ * @param {object} aj its payload (amount_ngn, payee_name, account_number, bank, reason)
+ * @param {Array<{label:string}>} accounts paymentService.sourceAccounts()
+ * @param {{changed?:boolean}} [opts] changed = the list moved under an open picker
+ * @returns {{text:string, reply_markup:{inline_keyboard:Array}}}
+ */
+function buildPayFromPicker(requestId, aj, accounts, opts = {}) {
+  const p = aj || {};
+  const to = [p.payee_name, p.account_number, p.bank].filter(Boolean).map(mdEscape).join(' · ');
+  const lines = [];
+  if (opts.changed) lines.push(`⚠️ ${PAY_FROM_CHANGED}`, '');
+  lines.push('💳 *Pay from which account?*');
+  lines.push(`${mdEscape(paymentService.fmtNaira(p.amount_ngn))} → ${to}`);
+  if (p.reason) lines.push(`📝 ${mdEscape(p.reason)}`);
+  lines.push('', '_You are giving the last approval. Finance will be told to pay from the account you tap._');
+  const rows = (accounts || []).map((a, i) => [{
+    text: `🏦 ${a.label}`,
+    callback_data: `pay:from:${requestId}:${paymentService.sourceAccountKey(accounts, i)}`,
+  }]);
+  rows.push([{ text: '✖ Not now', callback_data: `pay:fromx:${requestId}` }]);
+  return { text: lines.join('\n'), reply_markup: { inline_keyboard: rows } };
+}
+
+/**
+ * The step the COMPLETING approval of a payment passes through
+ * (approvalEvents.handleApprovalCallback, after every guard, before
+ * anything is answered, written or wiped).
+ *
+ *   no company account configured → `{ ask:false, payFrom:null }` — the
+ *     approval runs exactly as before PAY-6;
+ *   one → that account, without asking (one-option navigation);
+ *   two or more → the picker is drawn and `{ ask:true }` comes back: the
+ *     caller returns and NOTHING is approved. The chip re-enters the same
+ *     handler with `chosenKey`, so every guard has run again by the time
+ *     the key is read here.
+ *
+ * A key that no longer names the account at its position (the list was
+ * edited under an open picker) never stamps anything: the picker is
+ * redrawn. Any failure to draw stops the approval — it is said, and the
+ * request stays as it was.
+ *
+ * @param {object} bot
+ * @param {object} callbackQuery the approve tap, or the picker chip's tap
+ * @param {string} requestId
+ * @param {object} item the queue row (`actionJSON` = the payment payload)
+ * @param {string} [chosenKey] present (even '') only on a picker chip's tap
+ * @returns {Promise<{ask:boolean, payFrom?:{label:string, by:string, at:string}|null}>}
+ */
+async function payFromStep(bot, callbackQuery, requestId, item, chosenKey) {
+  const accounts = await paymentService.sourceAccounts();
+  const fromPicker = chosenKey !== undefined && chosenKey !== null;
+  if (!accounts.length && !fromPicker) return { ask: false, payFrom: null };
+  const adminId = String(callbackQuery.from.id);
+  const stamp = (a) => ({ label: a.label, by: adminId, at: new Date().toISOString() });
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const toast = async (text, alert) => {
+    try { await bot.answerCallbackQuery(callbackQuery.id, { text, show_alert: !!alert }); } catch (_) { /* stale query */ }
+  };
+  try {
+    if (fromPicker) {
+      const picked = paymentService.resolveSourceAccount(accounts, chosenKey);
+      if (picked) return { ask: false, payFrom: stamp(picked) };
+      // The list moved under the open picker: the chip's account is not
+      // the one at that position any more. Never stamp another in its place.
+      if (!accounts.length) {
+        await toast('Nothing was approved.');
+        await bot.editMessageText(PAY_FROM_EMPTY,
+          { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } });
+        return { ask: true };
+      }
+      await toast(PAY_FROM_CHANGED);
+      const again = buildPayFromPicker(requestId, item && item.actionJSON, accounts, { changed: true });
+      try {
+        await bot.editMessageText(again.text,
+          { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: again.reply_markup });
+      } catch (_) {
+        await bot.sendMessage(chatId, again.text, { parse_mode: 'Markdown', reply_markup: again.reply_markup });
+      }
+      return { ask: true };
+    }
+    if (accounts.length === 1) return { ask: false, payFrom: stamp(accounts[0]) };
+    const picker = buildPayFromPicker(requestId, item && item.actionJSON, accounts);
+    await bot.sendMessage(chatId, picker.text, { parse_mode: 'Markdown', reply_markup: picker.reply_markup });
+    await toast(PAY_FROM_ASK_TOAST);
+    return { ask: true };
+  } catch (e) {
+    // Fail closed: with a paying account to choose, a payment is never
+    // approved without the choice. Nothing has been written.
+    logger.error(`PAY-6 paying-account step failed for ${requestId} — nothing approved: ${e.message}`);
+    await toast(PAY_FROM_FAILED, true);
+    return { ask: true };
+  }
 }
 
 /** An `approved_by` cell that is still a bare Telegram id (pre-PAY-2 rows). */
@@ -268,4 +385,7 @@ module.exports = {
   financeKeyboard,
   sendFinanceCard,
   accountLine,
+  buildPayFromPicker,
+  payFromStep,
+  PAY_FROM_NOT_NOW,
 };

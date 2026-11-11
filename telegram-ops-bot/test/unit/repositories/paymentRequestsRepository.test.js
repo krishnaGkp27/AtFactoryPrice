@@ -11,6 +11,13 @@
  * gains a trailing column. Pins: the header is LAST; a live 18-column
  * sheet is widened by exactly one header cell with no data row touched;
  * append writes the reason; parse reads it; a legacy 18-cell row reads ''.
+ *
+ * PAY-6 (owner's go, 11-Nov-2026) — the second trailing column, T
+ * `paid_from`: the company account a payment is paid from. Same pins, one
+ * column on: the header is LAST; the LIVE 19-column sheet is widened by
+ * exactly `T1:T1` with no data row touched; append writes one cell per
+ * header; parse reads it ('' on a row from before it existed); update
+ * writes T only when the patch names it and leaves S alone.
  */
 
 const test = require('node:test');
@@ -64,26 +71,53 @@ function legacyRow(id = 'PAY-1') {
   ];
 }
 
-test('HEADERS: reason is the LAST column and nothing before it moved', () => {
-  assert.equal(repo.HEADERS.length, OLD_HEADERS.length + 1);
+/** The live sheet as it stood before PAY-6: the 18 PAY-1 columns + S `reason`. */
+const S_HEADERS = [...OLD_HEADERS, 'reason'];
+
+function sRow(id = 'PAY-1') {
+  return [...legacyRow(id), 'Transport to Idumota'];
+}
+
+test('HEADERS: reason then paid_from are the LAST columns and nothing before them moved', () => {
+  assert.equal(repo.HEADERS.length, OLD_HEADERS.length + 2);
   assert.deepEqual(repo.HEADERS.slice(0, OLD_HEADERS.length), OLD_HEADERS, 'rule 4: no rename, no reorder');
-  assert.equal(repo.HEADERS[repo.HEADERS.length - 1], 'reason');
+  assert.deepEqual(repo.HEADERS.slice(0, S_HEADERS.length), S_HEADERS, 'column S stays where PAY-2 put it');
+  assert.equal(repo.HEADERS[repo.HEADERS.length - 1], 'paid_from');
   assert.equal(repo.HEADERS.indexOf('reason'), 18, 'column S');
+  assert.equal(repo.HEADERS.indexOf('paid_from'), 19, 'column T');
 });
 
-test('ensureHeader widens an 18-column live sheet by ONE cell and touches nothing else', async () => {
+test('PAY-6: ensureHeader widens the LIVE 19-column sheet by exactly T1 and touches no data row', async () => {
+  repo._resetHeaderGuard();
+  const dataRow = sRow();
+  setRows([S_HEADERS, dataRow]);
+  const writes = await recordWrites(() => repo.ensureHeader());
+  assert.equal(writes.length, 1, 'one write for one missing header cell');
+  assert.equal(writes[0].sheet, 'PaymentRequests');
+  assert.equal(writes[0].range, 'T1:T1', 'only the missing cell, never A1:T1');
+  assert.deepEqual(writes[0].values, [['paid_from']]);
+  const head = rowsNow()[0];
+  assert.equal(head.length, 20);
+  assert.equal(head[19], 'paid_from');
+  assert.deepEqual(head.slice(0, 19), S_HEADERS, 'existing header cells untouched');
+  assert.deepEqual(rowsNow()[1], dataRow, 'data rows untouched');
+  assert.equal(rowsNow().length, 2, 'no row appended by the heal');
+});
+
+test('ensureHeader widens an 18-column live sheet by the missing trailing cells and touches nothing else', async () => {
   repo._resetHeaderGuard();
   const dataRow = legacyRow();
   setRows([OLD_HEADERS, dataRow]);
   const writes = await recordWrites(() => repo.ensureHeader());
-  // The write itself: exactly one, the single missing cell — never A1:S1.
-  assert.equal(writes.length, 1, 'one write for one missing header cell');
+  // The write itself: exactly one, the missing cells only — never A1:T1.
+  assert.equal(writes.length, 1, 'one write for the missing header cells');
   assert.equal(writes[0].sheet, 'PaymentRequests');
-  assert.equal(writes[0].range, 'S1:S1', 'only the missing cell, not the whole header row');
-  assert.deepEqual(writes[0].values, [['reason']]);
+  assert.equal(writes[0].range, 'S1:T1', 'only the missing cells, not the whole header row');
+  assert.deepEqual(writes[0].values, [['reason', 'paid_from']]);
   const head = rowsNow()[0];
-  assert.equal(head.length, 19, 'an 18-column sheet must be widened, not judged complete');
+  assert.equal(head.length, 20, 'an 18-column sheet must be widened, not judged complete');
   assert.equal(head[18], 'reason');
+  assert.equal(head[19], 'paid_from');
   assert.deepEqual(head.slice(0, 18), OLD_HEADERS, 'existing header cells untouched');
   assert.deepEqual(rowsNow()[1], dataRow, 'data rows untouched');
   assert.equal(rowsNow().length, 2, 'no row appended by the heal');
@@ -94,7 +128,7 @@ test('ensureHeader writes the full header on an empty sheet and is a no-op on a 
   setRows([]);
   const fresh = await recordWrites(() => repo.ensureHeader());
   assert.equal(fresh.length, 1);
-  assert.equal(fresh[0].range, 'A1:S1', 'an empty sheet gets the whole header in one write');
+  assert.equal(fresh[0].range, 'A1:T1', 'an empty sheet gets the whole header in one write');
   assert.deepEqual(fresh[0].values, [repo.HEADERS]);
   assert.deepEqual(rowsNow()[0], repo.HEADERS);
 
@@ -119,13 +153,64 @@ test('append writes the reason in S; parse reads it back', async () => {
   });
   assert.equal(saved.payment_id, 'PAY-2');
   const row = rowsNow()[1];
-  assert.equal(row.length, 19, 'one cell per header');
+  assert.equal(row.length, 20, 'one cell per header');
   assert.equal(row[18], 'Transport to Idumota', 'trimmed, in column S');
   assert.equal(row[17], '', 'decline_reason (R) untouched');
+  assert.equal(row[19], '', 'paid_from (T) is blank at raise — the account is not known yet');
 
   const parsed = await repo.findById('PAY-2');
   assert.equal(parsed.reason, 'Transport to Idumota');
+  assert.equal(parsed.paid_from, '');
   assert.equal(parsed.status, 'pending_approval');
+});
+
+test('PAY-6: parse reads paid_from from T; a row from before the column reads "" — never undefined', async () => {
+  repo.invalidateCache();
+  setRows([repo.HEADERS, [...sRow('PAY-5'), 'ZENITH — BLACK PANTHER'], sRow('PAY-6')]);
+  assert.equal((await repo.findById('PAY-5')).paid_from, 'ZENITH — BLACK PANTHER');
+  const old = await repo.findById('PAY-6');
+  assert.equal(old.paid_from, '', 'a 19-cell row');
+  assert.equal(old.reason, 'Transport to Idumota', 'S is still S');
+  repo.invalidateCache();
+  setRows([OLD_HEADERS, legacyRow('PAY-7')]);
+  assert.equal((await repo.findById('PAY-7')).paid_from, '', 'an 18-cell row');
+});
+
+test('PAY-6: update writes T only when the patch names it, with the approval, and leaves S and A–K alone', async () => {
+  repo.invalidateCache();
+  const before = sRow('PAY-8');
+  before[11] = '';
+  before[12] = 'pending_approval';
+  setRows([repo.HEADERS, [...before]]);
+
+  // Mark Done, Decline, the proof: lifecycle patches that do not name it.
+  await repo.update('PAY-8', { proof_file_id: 'F1' });
+  assert.equal(rowsNow()[1][19], undefined, 'no T write without paid_from in the patch');
+  assert.equal(rowsNow()[1][18], 'Transport to Idumota');
+
+  // The approval executor's patch: status, the pair and the paying account
+  // go out as ranges of ONE batch call.
+  const batches = [];
+  const orig = sheetsClient.batchUpdateRanges;
+  sheetsClient.batchUpdateRanges = async (sheet, updates) => {
+    batches.push(updates.map((u) => u.range));
+    return orig(sheet, updates);
+  };
+  try {
+    await repo.update('PAY-8', { status: 'approved', approved_by: 'Ajeet ‖ John', paid_from: '  ZENITH — BLACK PANTHER ' });
+  } finally { sheetsClient.batchUpdateRanges = orig; }
+  assert.deepEqual(batches, [['L2:M2', 'O2:R2', 'T2']], 'one batch: L–M, O–R and the single T cell — no S range');
+  const row = rowsNow()[1];
+  assert.equal(row[19], 'ZENITH — BLACK PANTHER', 'trimmed, in column T');
+  assert.equal(row[12], 'approved');
+  assert.equal(row[11], 'Ajeet ‖ John');
+  assert.equal(row[18], 'Transport to Idumota', 'S untouched');
+  assert.deepEqual(row.slice(0, 11), before.slice(0, 11), 'the raise snapshot A–K is never rewritten');
+
+  // A later lifecycle write keeps it.
+  await repo.update('PAY-8', { status: 'done', done_by: '999', done_at: '11-Nov-2026, 15:10' });
+  assert.equal(rowsNow()[1][19], 'ZENITH — BLACK PANTHER');
+  assert.equal((await repo.findById('PAY-8')).paid_from, 'ZENITH — BLACK PANTHER');
 });
 
 test('parse: a legacy 18-cell row reads reason as "" — never undefined', async () => {

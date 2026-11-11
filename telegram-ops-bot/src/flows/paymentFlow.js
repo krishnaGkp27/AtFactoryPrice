@@ -64,6 +64,17 @@
  *     employee per month is allowed (💵 Salary advance is its own chip);
  *   · the receipt carries 🔔 Remind approvers (once a day) and 📋 Status.
  *   pay:rk:salary|advance    pay:mo:<YYYY-MM>    pay:force
+ *
+ * PAY-6 (owner, 11-Nov-2026) — the admin who gives the LAST approval picks
+ * the company account the payment is paid from (specs/PAY-6_PAID_FROM_ACCOUNT.md).
+ * The picker is drawn by the approval itself (paymentCards.payFromStep); its
+ * two chips land here, session-free:
+ *   pay:from:<requestId>:<key>   hand the tap to the approval handler as an
+ *                                Approve carrying the key — approves nothing
+ *                                by itself
+ *   pay:fromx:<requestId>        ✖ Not now — close the picker, nothing changes
+ * The Paid notice and the ✅ Paid confirmation print `From: <account>` when
+ * the row carries one (PaymentRequests column T `paid_from`).
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -758,6 +769,9 @@ async function markDone(bot, chatId, userId, paymentId, cbId, cardMessageId) {
   const notice = [
     `💸 Paid — ${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name}${pay.payee_type ? ` (${pay.payee_type})` : ''}`,
     reason ? `📝 ${reason}` : '',
+    // PAY-6 — source and recipient together; absent on a payment that has
+    // no paying account, which reads exactly as before.
+    pay.paid_from ? `From: ${pay.paid_from}` : '',
     `🏦 ${[pay.bank, pay.account_number].filter(Boolean).join(' ')}`,
     `Paid by ${doneBy} · ${doneAt}`,
     `Ref ${pay.payment_id}${pay.approved_by ? ` · approved by ${pay.approved_by}` : ''}`,
@@ -808,6 +822,7 @@ async function finishDone(bot, chatId, userId, proof) {
   sessionStore.clear(userId, 'completed');
   await render(bot, chatId, userId,
     `✅ *Paid* — ${mdEscape(paymentService.fmtNaira(pay.amount_ngn))} to ${mdEscape(pay.payee_name)}\n`
+    + (pay.paid_from ? `From: ${mdEscape(pay.paid_from)}\n` : '') // PAY-6
     + `\`${mdEscape(paymentId)}\`\n\n_Recorded ${mdEscape(pay.done_at || fmtDate.withTime(new Date().toISOString()))}._`
     + (hasProof ? '\n📎 Proof attached' : ''),
     []);
@@ -943,6 +958,39 @@ async function reopenWaiting(bot, chatId, userId, index) {
   const gate = await paymentService.canExecute(userId);
   if (!gate.ok) { await render(bot, chatId, userId, '_That list is for the finance seat._', [menuRow()]); return; }
   await paymentCards.sendFinanceCard(bot, paymentId, { kind: 'finance_card_sent', to: [String(chatId)] });
+}
+
+/* ── PAY-6: the paying-account picker's two taps ─────────────────────── */
+
+/**
+ * A chip on the picker: `pay:from:<requestId>:<key>`. It approves NOTHING
+ * by itself — it hands the tap to the standard approval handler as an
+ * Approve by the same admin, carrying the key, so every guard (admin,
+ * still pending, not their own request, not already signed, the two-admin
+ * count) runs again before the key is even read. The callback is NOT
+ * answered here: Telegram takes one answer per tap and the handler gives it.
+ */
+async function pickPayFrom(bot, callbackQuery, body) {
+  // Request ids carry hyphens, never a colon: the key is after the LAST one.
+  const cut = body.lastIndexOf(':');
+  const requestId = cut > 0 ? body.slice(0, cut) : body;
+  const key = cut > 0 ? body.slice(cut + 1) : '';
+  const delegated = Object.assign(Object.create(Object.getPrototypeOf(callbackQuery)), callbackQuery, {
+    data: `approve:${requestId}`,
+  });
+  await require('../events/approvalEvents').handleApprovalCallback(bot, delegated, 'approve', { payFromKey: key });
+}
+
+/** `✖ Not now` on the picker: nothing was written when it was drawn, so nothing is undone. */
+async function closePayFromPicker(bot, callbackQuery) {
+  await answer(bot, callbackQuery.id);
+  try {
+    await bot.editMessageText(paymentCards.PAY_FROM_NOT_NOW, {
+      chat_id: callbackQuery.message.chat.id,
+      message_id: callbackQuery.message.message_id,
+      reply_markup: { inline_keyboard: [] },
+    });
+  } catch (_) { /* a picker too old to edit simply keeps its text */ }
 }
 
 /* ── plumbing ────────────────────────────────────────────────────────── */
@@ -1168,6 +1216,10 @@ async function handleCallback(bot, callbackQuery) {
   const cardMessageId = callbackQuery.message && callbackQuery.message.message_id;
   if (rest.startsWith('done:')) { await markDone(bot, chatId, userId, rest.slice(5), cbId, cardMessageId); return true; }
   if (rest.startsWith('dec:')) { await startDecline(bot, chatId, userId, rest.slice(4), cbId, cardMessageId); return true; }
+  // PAY-6 — the "Pay from which account?" picker, drawn by the completing
+  // approval (paymentCards.payFromStep). Session-free like the two above.
+  if (rest.startsWith('fromx:')) { await closePayFromPicker(bot, callbackQuery); return true; }
+  if (rest.startsWith('from:')) { await pickPayFrom(bot, callbackQuery, rest.slice(5)); return true; }
 
   if (rest === 'cancel') {
     sessionStore.clear(userId, 'cancelled');

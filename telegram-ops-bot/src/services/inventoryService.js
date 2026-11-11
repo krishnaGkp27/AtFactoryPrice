@@ -1952,27 +1952,49 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       // write. A row that already carries one is left exactly as raised.
       const patch = { status: 'approved', approved_by: pairLabel };
       if (!pay.reason && aj.reason) patch.reason = String(aj.reason);
+      // PAY-6 (owner, 11-Nov-2026) — the company account this payment is
+      // paid from, named by the admin giving this last approval. It arrives
+      // as a parameter (never read off the row: a picker that was only
+      // opened wrote nothing) and lands in column T in the SAME row write
+      // as `approved` and the pair. Absent = no company account configured:
+      // the patch, the trail and the note are exactly as before.
+      const payFromLabel = String((enrichment && enrichment.payFrom && enrichment.payFrom.label) || '').trim();
+      const payFrom = payFromLabel
+        ? { label: payFromLabel, by: String(approvedBy), at: String(enrichment.payFrom.at || new Date().toISOString()) }
+        : null;
+      if (payFrom) patch.paid_from = payFrom.label;
       await paymentRequestsRepo.update(pay.payment_id, patch);
       const approverIdList = stamp.approverIds(aj, approvedBy);
       // The trail row rides AFTER the sheet write and fails open (§1).
       await recordPaymentEvent({
         paymentId: pay.payment_id, approvalRequestId: requestId, kind: 'approved',
         actorId: approvedBy, actorName: pairLabel,
-        detail: { approverIds: approverIdList, approverLabel: pairLabel },
+        detail: payFrom
+          ? { approverIds: approverIdList, approverLabel: pairLabel, paid_from: payFrom.label }
+          : { approverIds: approverIdList, approverLabel: pairLabel },
       });
       // PAY-4b (11-Nov-2026) — four eyes: the gate reads the approver ids
       // off this request's own row, where only the FIRST signature was
       // parked, so the second approver could still pay. Park the pair.
       // Best-effort: the trail above carries the same ids and the gate
       // reads both, so a refused write never costs the approval.
+      // PAY-6 — the paying account is parked beside them (`payFrom`: the
+      // label, who named it, when) so the inbox record can print it and the
+      // four-eyes gate has one more record of the completing approver.
+      // Column T above is the record; this copy is best-effort too.
       try {
-        await approvalQueueRepository.updateActionJSON(requestId, { approverIds: approverIdList });
+        const parked = await approvalQueueRepository.updateActionJSON(requestId,
+          payFrom ? { approverIds: approverIdList, payFrom } : { approverIds: approverIdList });
+        if (payFrom && parked === false) {
+          logger.warn(`PAY-6: could not park the paying account on ${requestId}: the queue row was not found`);
+        }
       } catch (e) {
-        logger.warn(`PAY-4b: could not park approver ids on ${requestId}: ${e.message}`);
+        logger.warn(`PAY-4b: could not park approver ids${payFrom ? ' and the paying account' : ''} on ${requestId}: ${e.message}`);
       }
       const paymentService = require('./paymentService');
       // Plain text — it is appended to plain-text replies on both sides (§2 I).
-      paymentNote = `✅ Payment of ${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name} approved by ${pairLabel} — now with finance to pay.`;
+      paymentNote = `✅ Payment of ${paymentService.fmtNaira(pay.amount_ngn)} to ${pay.payee_name} approved by ${pairLabel} — now with finance to pay.`
+        + (payFrom ? ` Paying from ${payFrom.label}.` : '');
       customMessage = paymentNote;
     }
   } else if (aj.action === 'edit_bale') {

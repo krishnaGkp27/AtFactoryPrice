@@ -2013,7 +2013,7 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
   return { sent, failed };
 }
 
-async function handleApprovalCallback(bot, callbackQuery, action) {
+async function handleApprovalCallback(bot, callbackQuery, action, opts) {
   const data = callbackQuery.data || '';
   const requestId = data.replace(/^(approve|reject):/, '');
   const adminId = String(callbackQuery.from.id);
@@ -2255,6 +2255,22 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
     }
   }
 
+  // PAY-6 (owner, 11-Nov-2026) — the admin who gives the LAST approval on a
+  // payment names the company account it is paid from. Only the completing
+  // signature reaches this line, with nothing answered, written or wiped
+  // yet — and it sits OUTSIDE the gate's try above, whose catch falls back
+  // to single approval. Two or more accounts: the picker is drawn and
+  // nothing is approved; its chip (pay:from:, paymentFlow) re-enters this
+  // function with `opts.payFromKey`, so every guard above has run again.
+  // No account configured: `payFrom` stays null and nothing below changes.
+  let payFrom = null;
+  if (action === 'approve' && item && item.actionJSON && item.actionJSON.action === 'request_payment') {
+    const step = await require('../services/paymentCards')
+      .payFromStep(bot, callbackQuery, requestId, item, opts && opts.payFromKey);
+    if (step.ask) return;
+    payFrom = step.payFrom || null;
+  }
+
   const chatIdCb = callbackQuery.message.chat.id;
   const msgIdCb = callbackQuery.message.message_id;
 
@@ -2332,7 +2348,11 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
         return;
       }
 
-      const result = await inventoryService.executeApprovedAction(requestId, adminId);
+      // PAY-6 — the paying account travels as the executor's third parameter
+      // and is stamped inside its per-request lock, with the approval.
+      const result = payFrom
+        ? await inventoryService.executeApprovedAction(requestId, adminId, { payFrom })
+        : await inventoryService.executeApprovedAction(requestId, adminId);
       if (result.ok) {
         // H6 — surface "applied but books failed" instead of a clean ✅.
         const erpFails = Array.isArray(result.erpFailures) ? result.erpFailures : [];

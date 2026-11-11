@@ -176,6 +176,96 @@ test('PAY-4b: approving a payment parks BOTH approver ids on the request row', a
   }
 });
 
+// PAY-6 (owner, 11-Nov-2026) — the paying account, named by the admin who
+// gives the last approval, travels to the executor as its third parameter.
+test('PAY-6: the paying account is stamped in the SAME row write as the approval, then parked beside approverIds', async () => {
+  const row = { payment_id: 'PAY-10', payee_name: 'Abdul', amount_ngn: 25000, status: 'pending_approval', reason: 'As raised' };
+  const patches = [];
+  events = [];
+  requestsRepo.findByApprovalRequestId = async () => row;
+  requestsRepo.update = async (id, patch) => { patches.push({ id, patch }); Object.assign(row, patch); return row; };
+  approvalQueueRepository.getAllPending = async () => ([{
+    requestId: 'R10', user: '4242', status: 'pending',
+    actionJSON: { action: 'request_payment', payment_id: 'PAY-10', approvals: ['777'] },
+  }]);
+  const parked = [];
+  const orig = approvalQueueRepository.updateActionJSON;
+  approvalQueueRepository.updateActionJSON = async (id, patch) => { parked.push({ id, patch }); return true; };
+  try {
+    const res = await inventoryService.executeApprovedAction('R10', '888',
+      { payFrom: { label: ' ZENITH — BLACK PANTHER ', by: '555', at: '2026-11-11T09:00:00.000Z' } });
+    assert.equal(patches.length, 1, 'ONE write — status, the pair and the paying account together');
+    assert.deepEqual(patches[0].patch,
+      { status: 'approved', approved_by: 'Ajeet ‖ John', paid_from: 'ZENITH — BLACK PANTHER' });
+    const line = '✅ Payment of ₦25,000 to Abdul approved by Ajeet ‖ John — now with finance to pay. Paying from ZENITH — BLACK PANTHER.';
+    assert.equal(res.message, line);
+    assert.equal(res.note, line, 'the note both sides receive names the account');
+    assert.deepEqual(events[0].detail,
+      { approverIds: ['777', '888'], approverLabel: 'Ajeet ‖ John', paid_from: 'ZENITH — BLACK PANTHER' },
+      'the existing `approved` event carries the label — no new kind');
+    assert.deepEqual(parked, [{
+      id: 'R10',
+      patch: {
+        approverIds: ['777', '888'],
+        // `by` is the admin the executor was called for — the completing
+        // approver — whatever the caller put in the parameter.
+        payFrom: { label: 'ZENITH — BLACK PANTHER', by: '888', at: '2026-11-11T09:00:00.000Z' },
+      },
+    }]);
+
+    // A refused park never costs the approval: column T is the record.
+    row.status = 'pending_approval';
+    approvalQueueRepository.updateActionJSON = async () => { throw new Error('quota'); };
+    const again = await inventoryService.executeApprovedAction('R10', '888', { payFrom: { label: 'ZENITH — BLACK PANTHER' } });
+    assert.equal(row.status, 'approved');
+    assert.equal(row.paid_from, 'ZENITH — BLACK PANTHER');
+    assert.ok(again.note.endsWith('Paying from ZENITH — BLACK PANTHER.'));
+  } finally {
+    approvalQueueRepository.updateActionJSON = orig;
+  }
+});
+
+test('PAY-6: with no paying account the approval writes, records and says exactly what it did before', async () => {
+  for (const third of [undefined, {}, { payFrom: null }, { payFrom: { label: '   ' } }]) {
+    const row = { payment_id: 'PAY-11', payee_name: 'Abdul', amount_ngn: 45000, status: 'pending_approval', reason: 'As raised' };
+    const patches = [];
+    events = [];
+    requestsRepo.findByApprovalRequestId = async () => row;
+    requestsRepo.update = async (id, patch) => { patches.push({ id, patch }); Object.assign(row, patch); return row; };
+    approvalQueueRepository.getAllPending = async () => ([{
+      requestId: 'R11', user: '4242', status: 'pending',
+      actionJSON: { action: 'request_payment', payment_id: 'PAY-11', approvals: ['777'] },
+    }]);
+    const parked = [];
+    const orig = approvalQueueRepository.updateActionJSON;
+    approvalQueueRepository.updateActionJSON = async (id, patch) => { parked.push({ id, patch }); return true; };
+    try {
+      const res = await inventoryService.executeApprovedAction('R11', '888', third);
+      assert.deepEqual(patches[0].patch, { status: 'approved', approved_by: 'Ajeet ‖ John' }, 'no paid_from key at all');
+      assert.equal(res.note, '✅ Payment of ₦45,000 to Abdul approved by Ajeet ‖ John — now with finance to pay.');
+      assert.deepEqual(events[0].detail, { approverIds: ['777', '888'], approverLabel: 'Ajeet ‖ John' });
+      assert.deepEqual(parked, [{ id: 'R11', patch: { approverIds: ['777', '888'] } }]);
+    } finally {
+      approvalQueueRepository.updateActionJSON = orig;
+    }
+  }
+});
+
+test('PAY-6: a payment that is already approved is never re-stamped by a second run', async () => {
+  const row = { payment_id: 'PAY-12', payee_name: 'Abdul', amount_ngn: 4000, status: 'approved', paid_from: 'ZENITH — BLACK PANTHER' };
+  const patches = [];
+  requestsRepo.findByApprovalRequestId = async () => row;
+  requestsRepo.update = async (id, patch) => { patches.push({ id, patch }); Object.assign(row, patch); return row; };
+  approvalQueueRepository.getAllPending = async () => ([{
+    requestId: 'R12', user: '4242', status: 'pending',
+    actionJSON: { action: 'request_payment', payment_id: 'PAY-12', approvals: ['777'] },
+  }]);
+  const res = await inventoryService.executeApprovedAction('R12', '888', { payFrom: { label: 'GTBANK — BLACK PANTHER' } });
+  assert.equal(patches.length, 0, 'nothing written');
+  assert.equal(row.paid_from, 'ZENITH — BLACK PANTHER');
+  assert.match(res.message, /already approved — nothing changed/);
+});
+
 // Owner ruling 10-Sep-2026: the sheet row is the complete record of an
 // approved request. A row raised before column S existed gets its reason
 // backfilled from the queue payload in the approval write; a row that

@@ -899,6 +899,12 @@ async function paymentStatusLine(live, bot) {
     } else if (pay.status === 'approved') {
       line = '🏦 With finance to pay';
     }
+    // PAY-6 — where the money leaves from, on the two lines that are about
+    // money leaving (never on a declined or rejected one).
+    if (line && pay && pay.paid_from && (pay.status === 'done' || pay.status === 'approved')
+      && queueStatus !== 'rejected') {
+      line += ` · from ${pay.paid_from}`;
+    }
     return line ? `\n${mdEscape(line)}` : '';
   } catch (e) {
     logger.warn(`approvalsInbox: payment status for ${live && live.requestId} unavailable: ${e.message}`);

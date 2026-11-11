@@ -190,8 +190,9 @@ const REQUIRED_SHEETS = {
       'approval_request_id', 'approved_by', 'created_at', 'notes'],
   },
   // PAY-2 (10-Sep-2026) — one source of truth for the column list (the
-  // trailing entry is `reason`, column S) so this bootstrap and the repo's
-  // own ensureHeader can never disagree on the column count.
+  // trailing entries are `reason`, column S, and since PAY-6 `paid_from`,
+  // column T) so this bootstrap and the repo's own ensureHeader can never
+  // disagree on the column count.
   PaymentRequests: {
     headers: require('../repositories/paymentRequestsRepository').HEADERS,
   },
