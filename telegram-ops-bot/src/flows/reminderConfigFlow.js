@@ -36,7 +36,7 @@ async function isManagerOrAdmin(userId) {
   if (auth.isAdmin(userId)) return true;
   try {
     const u = await usersRepository.findByUserId(String(userId));
-    return !!u && (u.role || '') === 'manager';
+    return !!u && String(u.role || '').trim().toLowerCase() === 'manager';
   } catch (_) { return false; }
 }
 

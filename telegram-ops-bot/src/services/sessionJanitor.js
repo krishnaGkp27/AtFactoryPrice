@@ -51,7 +51,7 @@ const FLOW_LABELS = {
   po_new_flow: 'Procurement Order',
   update_price_flow: 'Update Price',
   return_than_flow: 'Return Than',
-  add_customer_flow: 'Add Customer',
+  add_customer_flow: 'Add Contact',
   sample_flow: 'Give Sample',
   sold_bales_flow: 'Sold Bales Lookup',
   unit_display_flow: 'Display Units',
