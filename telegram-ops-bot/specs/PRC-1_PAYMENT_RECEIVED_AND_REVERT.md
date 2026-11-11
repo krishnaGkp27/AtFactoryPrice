@@ -35,6 +35,10 @@ action code, sheet or column was added.
   with the word "bank" to the Bank account and anything else to Cash. The
   typed line sent "Paid to Zenith" to Cash (bale-yards check, item A6). This
   door cannot make that mistake.
+- **The sale wizard's bank chip reaches the Bank ledger too (11-Nov-2026).**
+  A mode shaped `Paid to <bank>`, or naming a `BANK_LIST` bank in any case, is
+  booked to Bank (`accountingService.paymentAccountFor`); `Cash` and other free
+  text are as before. The stored mode text is unchanged; no posted row is moved.
 - **No balance on the entry screens.** Customer outstanding is admins-only
   (FIN-V2). The admin's approval card shows `Outstanding today` and
   `After this payment`, and warns when the payment exceeds the balance.

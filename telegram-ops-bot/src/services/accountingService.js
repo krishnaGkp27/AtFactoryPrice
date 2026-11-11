@@ -10,6 +10,7 @@ const idGen = require('../utils/idGenerator');
 // CUR-1 R7 — narrations keep the accounting CODE (`NGN 5000`), forward-only;
 // money.code() is the one source of it. Never a display symbol here.
 const money = require('../utils/money');
+const bankEntry = require('../utils/bankEntry');
 
 const CURRENCY = money.code();
 const RECEIVABLE_CODE = '1100';
@@ -61,14 +62,64 @@ async function recordReturn({ yards, pricePerYard, packageNo, design, shade, use
   });
 }
 
+/** Upper-cased words of a mode or a bank name, for whole-word comparison. */
+function modeWords(v) {
+  return String(v == null ? '' : v).toUpperCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+/**
+ * FIX-BANKLEDGER — the ONE place a payment mode becomes the Cash or the Bank
+ * account. Pure: `banks` is the Settings BANK_LIST as an array.
+ *
+ * Until 11-Nov-2026 the rule was "the mode contains the word bank", so the
+ * sale wizard's bank chip — stored `Paid to Zenith`, `Paid to GTB`,
+ * `Paid to Opay` — was booked to Cash (R-9BF6; bale-yards check item A6).
+ *
+ *   the word "bank" anywhere              → Bank  (the rule before, kept)
+ *   `Cash`, also `Paid to cash`           → Cash
+ *   the wizard's `Paid to <bank>` shape   → Bank
+ *   names a bank on BANK_LIST             → Bank  (any case, whole words; a
+ *                                           "BANK — ACCOUNT" entry also by
+ *                                           its bank half)
+ *   anything else                         → Cash  (the rule before, kept)
+ *
+ * It only reads the mode: the stored text is never rewritten.
+ */
+function paymentAccountFor(method, banks) {
+  const raw = String(method == null ? '' : method).trim();
+  if (!raw) return 'Cash';
+  if (raw.toLowerCase().includes('bank')) return 'Bank';
+  const paidTo = /^paid\s+to\s+(.+)$/i.exec(raw);
+  const words = modeWords(paidTo ? paidTo[1] : raw);
+  if (words === 'CASH') return 'Cash';
+  if (paidTo) return 'Bank';
+  const padded = ` ${words} `;
+  for (const entry of Array.isArray(banks) ? banks : []) {
+    for (const name of [modeWords(entry), modeWords(bankEntry.parse(entry).bank)]) {
+      if (name && padded.includes(` ${name} `)) return 'Bank';
+    }
+  }
+  return 'Cash';
+}
+
+/** Settings BANK_LIST as an array; an unreadable list is an empty one (the
+ *  rule before then stands) — booking a payment never fails on this read. */
+async function registeredBanks() {
+  try {
+    const all = await require('../repositories/settingsRepository').getAll();
+    return String((all && all.BANK_LIST) || '').split(',').map((b) => b.trim()).filter(Boolean);
+  } catch (_) { return []; }
+}
+
 async function recordPaymentReceived({ customer, customerId, amount, method, userId, txnId }) {
   if (!amount || amount <= 0) return;
   // TIME-1 — this row's business date decides which daybook and which line
   // of the customer's statement it lands on. The UTC day put every entry
   // made after Lagos midnight onto the previous day, permanently.
   const date = todayInLagos();
-  const cashOrBank = (method || '').toLowerCase().includes('bank') ? 'Bank' : 'Cash';
-  const debitCode = await getAccountCode(cashOrBank) || '1001';
+  const cashOrBank = paymentAccountFor(method, await registeredBanks());
+  // A Bank payment must never fall back to the Cash code (1001).
+  const debitCode = await getAccountCode(cashOrBank) || (cashOrBank === 'Bank' ? '1002' : '1001');
   const creditCode = await getAccountCode('Customer Receivable') || '1100';
   const narration = `Payment received from ${customer || 'unknown'}: ${CURRENCY} ${amount} via ${cashOrBank}`;
   // CUS-2 — payments stamp customer_id like sales do, so the customer
@@ -203,4 +254,4 @@ async function getCustomerLedger(customerName, fromDate, toDate) {
   };
 }
 
-module.exports = { recordSale, recordReturn, recordPaymentReceived, getLedgerBalance, getTrialBalance, getDaybook, getCustomerLedger };
+module.exports = { recordSale, recordReturn, recordPaymentReceived, paymentAccountFor, getLedgerBalance, getTrialBalance, getDaybook, getCustomerLedger };
