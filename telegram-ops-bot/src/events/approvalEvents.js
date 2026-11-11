@@ -1648,6 +1648,17 @@ async function handleDispatchManagerCallback(bot, callbackQuery) {
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
     return;
   }
+  // FIX-SUPPLY — the stage alone is not enough: an admin's ❌ Reject settles
+  // the row but leaves `stage` at dispatch_review, so a late ✅ Confirm here
+  // re-opened a decided request (a fresh approval card to every admin, whose
+  // buttons then answered "Already rejected"). A request that is no longer
+  // pending is dead on this card too — the admin card's own words (APF-1).
+  if (String(row.status || '').toLowerCase() !== 'pending') {
+    const st = String(row.status || 'resolved').toLowerCase();
+    await bot.answerCallbackQuery(callbackQuery.id, { text: `Already ${st} — nothing to do.` });
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
+    return;
+  }
 
   if (verb === 'd') {
     // Show details — expand the card in place but keep the buttons.
@@ -1686,8 +1697,10 @@ async function handleDispatchManagerCallback(bot, callbackQuery) {
     ).catch(() => {});
 
     // Notify creator
+    // FIX-SUPPLY — plain text like every other requester notice (it is sent
+    // with no parse mode), the short ref, and ONE admin approves a supply.
     await notifyEmployee(bot, row.user, requestId,
-      `✅ *Dispatch confirmed* your supply request \`${requestId}\` (by ${confirmerName}). Waiting for 2nd-admin approval.`);
+      `✅ Dispatch confirmed your supply request ${shortRequestRef(requestId)} (by ${confirmerName}). Waiting for admin approval.`);
 
     // Notify admins with prepended confirmation note. Exclude the
     // requester if they're an admin themselves (mirrors the original
@@ -1817,7 +1830,7 @@ async function handleReasonReply(bot, msg) {
       { parse_mode: 'Markdown' });
 
     await notifyEmployee(bot, row.user, state.requestId,
-      `❌ *Dispatch rejected* your supply request \`${state.requestId}\`.\n\nReason: _${reason}_\n\nReason given by: ${actorName}\n\nYou can edit and resubmit if you want to retry.`);
+      `❌ Dispatch rejected your supply request ${shortRequestRef(state.requestId)}.\n\nReason: ${reason}\n\nReason given by: ${actorName}\n\nYou can edit and resubmit if you want to retry.`);
     return done();
   }
 
@@ -1836,7 +1849,7 @@ async function handleReasonReply(bot, msg) {
 
     // Notify the creator (informational).
     await notifyEmployee(bot, row.user, state.requestId,
-      `⚠️ *${actorName} declined* the dispatch assignment for \`${state.requestId}\`.\n\nReason: _${reason}_\n\nAdmin will reassign shortly.`);
+      `⚠️ ${actorName} declined the dispatch assignment for ${shortRequestRef(state.requestId)}.\n\nReason: ${reason}\n\nAdmin will reassign shortly.`);
 
     // Re-show warehouse boy picker to all admins (or the original
     // approver if recorded). For simplicity broadcast to all admins.
@@ -1985,8 +1998,19 @@ async function handleApprovalCallback(bot, callbackQuery, action) {
   // ("Approved but execution failed") instead of the truth. Old DM cards
   // and re-sent reminder cards keep live buttons forever, so this is the
   // one choke point that makes them all harmless.
-  if (item && String(item.status || '').toLowerCase() !== 'pending') {
-    const st = String(item.status || 'resolved').toLowerCase();
+  // FIX-SUPPLY (STS-1 G6, the decided half) — a supply request an admin has
+  // ALREADY approved stays `pending` on the sheet until the supplier taps
+  // Accept (stage dispatch_acceptance). A second ✅ Approve — another admin's
+  // copy of the card, the inbox — assigned it all over again: a fresh Accept
+  // card to the supplier, a second "approved and assigned" notice to the
+  // requester. That tap is as dead as one on a resolved row. ❌ Reject is
+  // untouched (an admin may still end the request at any stage), and so is
+  // ✅ Approve BEFORE Dispatch has confirmed — that half of R2 is the owner's.
+  const supplyApproved = action === 'approve' && !!item && !!item.actionJSON
+    && item.actionJSON.action === 'supply_request' && item.actionJSON.stage === 'dispatch_acceptance'
+    && String(item.status || '').toLowerCase() === 'pending';
+  if (item && (supplyApproved || String(item.status || '').toLowerCase() !== 'pending')) {
+    const st = supplyApproved ? 'approved' : String(item.status || 'resolved').toLowerCase();
     try { await bot.answerCallbackQuery(callbackQuery.id, { text: `Already ${st} — nothing to do.` }); } catch (_) { /* ignore */ }
     try {
       await bot.editMessageReplyMarkup({ inline_keyboard: [] },
@@ -2535,6 +2559,13 @@ async function assignSupply(bot, chatId, requestId, item, requestingUser, assign
     });
   } catch (e) {
     logger.error(`Failed to notify dispatch person ${assigneeId}`, e.message);
+    // FIX-SUPPLY — the Accept card never reached them, so nobody can accept:
+    // hand the request back to the admin with the assignment undone, so that
+    // ✅ Approve and ✎ Assign someone else work again instead of answering
+    // "Already approved" (the guard in handleApprovalCallback).
+    await approvalQueueRepository.updateActionJSON(requestId, {
+      stage: 'admin_review', assignedDispatch: null, approvedByAdmin: null,
+    }).catch((e2) => logger.warn(`assignSupply: could not hand ${requestId} back to the admin: ${e2.message}`));
     await bot.sendMessage(chatId, `⚠️ Could not send message to user ${assigneeId}. They may need to start the bot first.`);
     return;
   }
@@ -2542,7 +2573,7 @@ async function assignSupply(bot, chatId, requestId, item, requestingUser, assign
   const assigneeName = (assigneeUser && assigneeUser.name) || assigneeId;
   await bot.sendMessage(chatId, `✅ Supply request \`${requestId}\` assigned to *${assigneeName}*${opts.asRequested ? ', as the requester asked' : ''}.\n\n⏳ Waiting for them to *Accept* before stock leaves the warehouse.`, { parse_mode: 'Markdown' });
   await notifyEmployee(bot, requestingUser, requestId,
-    `✅ Your supply request \`${requestId}\` was approved and assigned to *${assigneeName}*.\n\n⏳ Waiting for ${assigneeName} to *Accept* the dispatch.`);
+    `✅ Your supply request ${shortRequestRef(requestId)} was approved and assigned to ${assigneeName}.\n\n⏳ Waiting for ${assigneeName} to Accept the dispatch.`);
 }
 
 
@@ -2918,7 +2949,7 @@ async function handleSupplyAccept(bot, callbackQuery) {
   const creator = row && row.user;
   if (creator) {
     await notifyEmployee(bot, creator, requestId,
-      `✅ *${userName}* has accepted dispatch for your supply request \`${requestId}\`. Stock is being prepared.`);
+      `✅ ${userName} has accepted dispatch for your supply request ${shortRequestRef(requestId)}. Stock is being prepared.`);
   }
 
   // Notify every admin (existing behavior, slightly reworded).

@@ -81,6 +81,10 @@ the owner was holding. That is fixed.
   an admin's copy list everything, or only what they raised?
 - **R2 — the supply stage guard.** *Recommended: yes.* Touches
   `approvalEvents.js`, an ask-first file, so it needs your explicit go.
+  **11-Nov-2026 (FIX-SUPPLY) — the DECIDED half is shipped:** a Dispatch tap
+  on a request no longer pending, and an admin ✅ Approve on one already
+  approved (waiting on Accept), answer `Already <status> — nothing to do.`
+  **Still owed:** ✅ Approve BEFORE Dispatch has confirmed still assigns.
 - **R3 — the web dashboard.** *Recommended: later.* Telegram is where the
   work happens; `/ops` is oversight. The hardcoded flag is worth fixing
   whenever that file is next opened.

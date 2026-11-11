@@ -378,13 +378,13 @@ approvalQueueRepository.appendOnce = async (row) => {
 };
 const cbq = (data, uid = '4242') => ({ id: `cb-${data}`, data, from: { id: uid }, message: { chat: { id: uid }, message_id: 1 } });
 const todayIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
-async function walkToQueue(bot) {
-  await controller.handleCallbackQuery(bot, cbq('bs:proceed'));
-  await controller.handleCallbackQuery(bot, cbq('bs:sp:0'));
-  await controller.handleCallbackQuery(bot, cbq(`bs:dd:${todayIso()}`));
-  await controller.handleCallbackQuery(bot, cbq('bs:fin'));
-  await controller.handleFileMessage(bot, { from: { id: '4242' }, chat: { id: '4242' }, photo: [{ file_id: 'bill-file-9' }] });
-  await controller.handleCallbackQuery(bot, cbq('bs:submit'));
+async function walkToQueue(bot, uid = '4242') {
+  await controller.handleCallbackQuery(bot, cbq('bs:proceed', uid));
+  await controller.handleCallbackQuery(bot, cbq('bs:sp:0', uid));
+  await controller.handleCallbackQuery(bot, cbq(`bs:dd:${todayIso()}`, uid));
+  await controller.handleCallbackQuery(bot, cbq('bs:fin', uid));
+  await controller.handleFileMessage(bot, { from: { id: uid }, chat: { id: uid }, photo: [{ file_id: 'bill-file-9' }] });
+  await controller.handleCallbackQuery(bot, cbq('bs:submit', uid));
 }
 const adminCopy = (bot) => bot.calls
   .filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === '777')
@@ -451,4 +451,73 @@ test('SELL-T3e: a than dropped on the bale card un-wholes it — than by than an
   assert.match(text2, /🧾 Sale · Kano office · 1B \+ 1t · 120 yd\n/, `mixed tally:\n${text2}`);
   assert.match(text2, / 1100 · 90 yd/);
   assert.match(text2, /1082\/1 · 30 yd/);
+});
+
+// ── FIX-SUPPLY — the receipt names the real approver; a dropped than leaves "Loaded whole" ──
+
+/** Everything the bot showed `uid` in his own chat, sent or edited. */
+const shownTo = (bot, uid) => bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method)
+  && String(c.args.chatId || (c.args.opts && c.args.opts.chat_id)) === String(uid))
+  .map((c) => String(c.args.text || '')).join('\n');
+
+test('the submitted receipt: an employee is told ONE admin approves — no self-approve line', async () => {
+  sessionStore.clear('4242');
+  queued = [];
+  const bot = createFakeBot();
+  await controller.handleMessage(bot, msg('sell 1100/1, 1091/1 kano'));
+  await walkToQueue(bot);
+  assert.equal(queued.length, 1, 'one request queued');
+  const mine = shownTo(bot, '4242');
+  assert.match(mine, /⏳ \*Submitted for approval\*/);
+  assert.match(mine, /\n• Approver: an admin\n/, `employee receipt:\n${mine}`);
+  assert.ok(!/self-approve|2nd admin/.test(mine), 'an employee cannot approve at all — the self-approve wording is not his');
+});
+
+test('the submitted receipt: an admin seller keeps "2nd admin (you cannot self-approve)"', async () => {
+  sessionStore.clear('777');
+  queued = [];
+  const bot = createFakeBot();
+  await controller.handleMessage(bot, msg('sell 1100/1, 1091/1 kano', '777'));
+  await walkToQueue(bot, '777');
+  assert.equal(queued.length, 1, 'one request queued');
+  const mine = shownTo(bot, '777');
+  assert.match(mine, /\n• Approver: 2nd admin \(you cannot self-approve\)\n/, `admin receipt:\n${mine}`);
+});
+
+test('a bale loaded whole leaves "Loaded whole" once one of its thans is dropped; the others stay named', async () => {
+  sessionStore.clear('4242');
+  const bot = createFakeBot();
+  const flow = require(path.join(SRC, 'flows/bundleSaleFlow'));
+  await controller.handleMessage(bot, msg('sell 1100, 1091 kano'));
+  let t = lastText(bot).replace(/\\/g, '');
+  assert.match(t, /Loaded whole: 1100, 1091 — tap 🔎 Open to drop a than/);
+
+  // Drop than 2 of 1100 on its card and go back to the review.
+  await flow.handleCallback(bot, cbq('bs:pl:open:1100'));
+  const drop = lastKb(bot).filter((b) => (b.callback_data || '').startsWith('bs:than:')).find((c) => /#2/.test(c.text));
+  await flow.handleCallback(bot, cbq(drop.callback_data));
+  await flow.handleCallback(bot, cbq('bs:back'));
+  t = lastText(bot).replace(/\\/g, '');
+  assert.match(t, /1100 · 77014 · Shade 11 — than 1, 3 · 60 yd/, 'the list shows what is left of 1100');
+  assert.match(t, /Loaded whole: 1091 — tap 🔎 Open to drop a than/, `1100 is no longer whole:\n${t}`);
+  assert.ok(lastKb(bot).some((b) => b.callback_data === 'bs:pl:open:1100'), '1100 stays openable');
+
+  // Taking the bale whole again puts it back on the line.
+  await flow.handleCallback(bot, cbq('bs:pl:open:1100'));
+  const takeAll = lastKb(bot).find((b) => (b.callback_data || '').startsWith('bs:take_all:'));
+  await flow.handleCallback(bot, cbq(takeAll.callback_data));
+  await flow.handleCallback(bot, cbq('bs:back'));
+  t = lastText(bot).replace(/\\/g, '');
+  assert.match(t, /Loaded whole: 1100, 1091 — tap 🔎 Open to drop a than/);
+
+  // With every whole bale un-wholed the line goes altogether.
+  for (const pkg of ['1100', '1091']) {
+    await flow.handleCallback(bot, cbq(`bs:pl:open:${pkg}`));
+    const d = lastKb(bot).filter((b) => (b.callback_data || '').startsWith('bs:than:')).find((c) => /#1/.test(c.text));
+    await flow.handleCallback(bot, cbq(d.callback_data));
+    await flow.handleCallback(bot, cbq('bs:back'));
+  }
+  t = lastText(bot).replace(/\\/g, '');
+  assert.ok(!/Loaded whole/.test(t), `no bale is whole any more:\n${t}`);
+  sessionStore.clear('4242');
 });

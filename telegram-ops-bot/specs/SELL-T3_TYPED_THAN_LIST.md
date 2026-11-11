@@ -334,6 +334,10 @@ has live siblings was silently described from a sibling row and never flagged
 (`enrichBundleItems` fell back to `rows[0]`); it is now flagged ⚠️ under the
 bale's design heading.
 
+**11-Nov-2026 (FIX-SUPPLY).** The review card's `📦 Loaded whole:` line uses
+the same judgement: a bale with one than dropped leaves it at once. The receipt
+reads `• Approver: an admin` for an employee (the self-approve line: admins only).
+
 Tests: `test/unit/services/saleBundleCard.test.js` (fold, flagged than, mixed,
 inbox count), `test/unit/services/bundleSaleService.wholeBales.test.js`,
 `test/characterization/sellThanList.test.js` (typed line → queue → the admin's

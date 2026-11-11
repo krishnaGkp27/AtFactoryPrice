@@ -11182,8 +11182,10 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
 
     if (val === '__new__') {
       // CUS-1 — stale button on an old card: creation moved to CRM.
+      // FIX-SUPPLY — the tile is ➕ Add Contact since CON-1, and this step has
+      // no typed search (only the chips), so the card promises neither.
       await editOrSendAnchored(bot, chatId, uid,
-        '➕ New customers are added by an admin via 👥 CRM → ➕ Add Customer.\nSearch here finds every existing customer — type part of the name.', {
+        '➕ New customers are added by an admin via 👥 CRM → ➕ Add Contact.\nExisting customers are picked from the list — tap ⬅️ Back to customers.', {
           reply_markup: { inline_keyboard: [[
             { text: '⬅️ Back to customers', callback_data: 'srf_back:customer' },
           ]] },

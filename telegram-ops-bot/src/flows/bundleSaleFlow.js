@@ -461,10 +461,12 @@ async function renderPreloadReview(bot, chatId, userId) {
 
   const rows = [];
   // SELL-T3c — say which bales came in whole, and how to drop a than.
-  // Only the bales that still hold a than in the cart are named: once he
-  // has cleared one on its card it is no longer "loaded whole".
-  const inCart = new Set(session.cart.lines.map((l) => String(l.packageNo)));
-  const wholeStill = wholeBales.filter((w) => inCart.has(String(w.packageNo)));
+  // Only the bales that are STILL whole are named: once he has cleared one
+  // on its card, or dropped a single than of it, it is no longer "loaded
+  // whole" — the same judgement submit makes (SELL-T3e), so this line and
+  // the tally on the cards never disagree.
+  const stillWhole = new Set(bundleSaleService.wholeBalesInCart(session.cart, session._wholeSizes));
+  const wholeStill = wholeBales.filter((w) => stillWhole.has(String(w.packageNo)));
   if (wholeStill.length) {
     text += `\n📦 Loaded whole: ${wholeStill.map((w) => escapeMd(w.packageNo)).join(', ')}`
       + ' — tap 🔎 Open to drop a than.\n';
@@ -1354,7 +1356,9 @@ async function submit(bot, chatId, userId) {
       `⏳ *Submitted for approval*\n\n`
       + `• Request: \`${requestId}\`\n`
       + `• Items: *${itemsTally(session.cart, wholeBales)} · ${fmtQty(totals.yards)} yd*\n`
-      + `• Approver: 2nd admin (you cannot self-approve)\n\n`
+      // FIX-SUPPLY — ONE admin approves a sale (DUAL-1a); only an admin's own
+      // request needs a different admin, so only he is told about self-approval.
+      + `• Approver: ${isAdm ? '2nd admin (you cannot self-approve)' : 'an admin'}\n\n`
       + `_The admin assigns the customer, rate and payment when approving — you will get the customer name and number back here once approved._`,
       [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]],
     );
