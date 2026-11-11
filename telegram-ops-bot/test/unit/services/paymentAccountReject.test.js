@@ -176,6 +176,39 @@ test('a refused sheet write is logged and does not cost the rejection', async ()
   }
 });
 
+test('a register that cannot be READ is logged as a failure — never passed off as "no row"', async () => {
+  reset();
+  const acct = await raise('REQ-I');
+  const origRead = sheetsClient.readRange;
+  const origError = logger.error;
+  const origWarn = logger.warn;
+  const errors = [];
+  const warnings = [];
+  // Cold cache, as after the 10 s TTL: the reject's own read is the one refused.
+  accountsRepo.invalidateCache();
+  sheetsClient.readRange = async (sheet, range) => {
+    if (sheet === accountsRepo.SHEET) throw new Error('Read quota exceeded');
+    return origRead(sheet, range);
+  };
+  logger.error = (...args) => { errors.push(args.join(' ')); };
+  logger.warn = (...args) => { warnings.push(args.join(' ')); };
+  try {
+    const res = await inventoryService.rejectApproval('REQ-I', '888');
+    assert.equal(res.ok, true, 'the request is rejected all the same');
+    assert.equal(await queueStatus('REQ-I'), 'rejected');
+    assert.equal(errors.length, 1, 'the failure is on the log, once, at error level');
+    assert.match(errors[0], /register_payment_account reject cleanup FAILED for REQ-I: Read quota exceeded/);
+    assert.equal(warnings.filter((w) => /no PaymentAccounts row/.test(w)).length, 0,
+      'and it is not reported as a request that never had a row');
+  } finally {
+    sheetsClient.readRange = origRead;
+    logger.error = origError;
+    logger.warn = origWarn;
+    accountsRepo.invalidateCache();
+  }
+  assert.equal(rawRow(acct.account_id)[STATUS], 'pending', 'nothing was written');
+});
+
 test('releaseRejectedAccount: only a pending row is released, once; an unknown request is a no-op', async () => {
   reset();
   const acct = await raise('REQ-H');

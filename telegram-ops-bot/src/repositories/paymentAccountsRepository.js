@@ -90,6 +90,15 @@ async function getAll() {
   try { return [...await _cache.get()]; } catch (_) { return []; }
 }
 
+/**
+ * The register, or a THROW when the sheet cannot be read — for a caller
+ * that must not take "could not read" for "no such row" (`getAll` answers
+ * an empty register on a failed read).
+ */
+async function getAllStrict() {
+  return [...await _cache.get()];
+}
+
 async function findById(accountId) {
   if (!accountId) return null;
   return (await getAll()).find((a) => a.account_id === String(accountId)) || null;
@@ -171,6 +180,7 @@ module.exports = {
   OWNER_TYPES,
   STATUSES,
   getAll,
+  getAllStrict,
   findById,
   findByApprovalRequestId,
   findLive,

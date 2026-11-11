@@ -302,16 +302,21 @@ async function payableAccountsFor(telegramId, isAdmin) {
  * alone, the row kept as the record. An account that is already `active`,
  * and any other request's row for the same number, are never touched.
  *
- * Throws on a refused sheet write; the reject path logs it and carries on.
+ * Throws on a refused sheet READ or write; the reject path logs it and
+ * carries on. The read is the strict one on purpose: `getAll` answers an
+ * empty register when the sheet cannot be read, which would pass here for
+ * "no row" and leave the number blocked with only a wrong warning to show.
  *
  * @param {string} requestId the rejected ApprovalQueue request
  * @returns {Promise<object|null>} the row as it now stands; null when there
  *   was nothing to release
  */
 async function releaseRejectedAccount(requestId) {
-  const acct = await paymentAccountsRepo.findByApprovalRequestId(requestId);
+  if (!requestId) return null;
+  const acct = (await paymentAccountsRepo.getAllStrict())
+    .find((a) => a.approval_request_id === String(requestId)) || null;
   if (!acct) {
-    if (requestId) logger.warn(`paymentService.releaseRejectedAccount: no PaymentAccounts row for ${requestId} — nothing released`);
+    logger.warn(`paymentService.releaseRejectedAccount: no PaymentAccounts row for ${requestId} — nothing released`);
     return null;
   }
   if (acct.status !== 'pending') return null;
