@@ -121,8 +121,12 @@ function isDateLike(s) {
   return false;
 }
 
-/** A numeric date opening a string: `06/08/2026`, `6-8-26`. */
-const DATE_AT_FRONT = /^\d{1,2}\s*[/-]\s*\d{1,2}\s*[/-]\s*\d{2,4}\b/;
+/**
+ * A numeric date opening a string: `06/08/2026`, `6-8-26`, `06.08.2026`,
+ * and year first `2026-08-06`. Only the space run asks: without the dotted
+ * and year-first forms it read `06` / `2026` as bale numbers.
+ */
+const DATE_AT_FRONT = /^(?:\d{1,2}\s*[/.-]\s*\d{1,2}\s*[/.-]\s*\d{2,4}|(?:19|20)\d{2}\s*[.-]\s*\d{1,2}\s*[.-]\s*\d{1,2})\b/;
 
 /**
  * Read ONE item off the front of `s`.
@@ -227,7 +231,10 @@ function parseThanList(raw) {
       if (!/^\d{2,}/.test(next) || DATE_AT_FRONT.test(next)) break;
       const more = readItem(next);
       if (!more) break;
-      if (more.bad) {
+      // A than spec that cannot be read is reported, never loaded as the
+      // whole bale: `1100/abc`, and a range that makes no sense (`1100/5-3`),
+      // which readItem hands back as the bare bale with `/5-3` left over.
+      if (more.bad || (more.bare && /^\s*\//.test(next.slice(more.used)))) {
         const [token] = next.match(/^\S+/);
         bad.push(token);
         rest = next.slice(token.length);

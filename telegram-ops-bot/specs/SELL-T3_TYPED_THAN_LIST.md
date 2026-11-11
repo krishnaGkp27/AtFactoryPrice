@@ -284,7 +284,13 @@ AI door (SELL-T3c kept "bare-only lines through the local parser" aside).
   kano` answered "a store called 1112 kano"). `parseThanList` now reads on
   while the next token is a bale number of two digits or more (also
   `771 x3` / `6189/5`) and not a date; the first word starts the tail. The
-  return line shares the tokeniser and is fixed with it.
+  return line shares the tokeniser and is fixed with it. Review, same day:
+  in the run a date written `06.08.2026` or `2026-08-06` ends it as well
+  (its `06` / `2026` were read as bales), and a than range that cannot be
+  read (`1100/5-3`) is reported under ❓ instead of loading bale 1100 whole
+  and dropping the bales typed after it. Still open: the same range after a
+  COMMA loads the whole bale, and a buyer whose name starts like a month
+  (`to Maryam`) makes its segment read as a date.
 - The chips card's sell example is now `Sell 1111, 1112 to Abba`.
 - Tests: `thanListParser.test.js` (claimed / not claimed, the parse),
   `sellThanList.test.js` (the review card through the real controller,

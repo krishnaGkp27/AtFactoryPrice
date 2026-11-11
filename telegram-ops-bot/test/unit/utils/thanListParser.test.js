@@ -241,6 +241,36 @@ test('space-joined: an unreadable than spec in the run is reported, the bales ar
   assert.equal(out.warehouseHint, 'kano');
 });
 
+// FIX-TYPED review (11-Nov-2026) — two holes in the space run. A date written
+// with dots or year first was read as bale `06` / `2026`; a than range that
+// cannot be read (`1100/5-3`) loaded bale 1100 WHOLE and silently dropped
+// every bale typed after it.
+test('space-joined: a dotted or year-first date ends the run too — its numbers are never bales', () => {
+  for (const line of ['sell 1111 1112 06.08.2026', 'sell 1111 1112 6.8.26', 'sell 1111 1112 2026-08-06', 'sell 1111 1112 2026.08.06']) {
+    const out = parseThanList(line);
+    assert.deepEqual(out.items, [{ packageNo: '1111' }, { packageNo: '1112' }], line);
+    assert.equal(out.commaThanHint, false, line);
+    assert.deepEqual(out.bad, [], line);
+  }
+  assert.deepEqual(parseThanList('Return 771 779 2026-11-10').items, [{ packageNo: '771' }, { packageNo: '779' }]);
+  // A four-digit bale that merely starts with 20 is still a bale.
+  assert.deepEqual(parseThanList('sell 1111 2026 kano').items, [{ packageNo: '1111' }, { packageNo: '2026' }]);
+  assert.deepEqual(parseThanList('sell 1111 2026/1-3 kano').items, [{ packageNo: '1111' }, { packageNo: '2026', thans: [1, 2, 3] }]);
+});
+
+test('space-joined: a than range that cannot be read is reported — never the whole bale, and the bales after it are kept', () => {
+  const out = parseThanList('sell 1111 1100/5-3 1112 kano');
+  assert.deepEqual(out.items, [{ packageNo: '1111' }, { packageNo: '1112' }], 'bale 1100 is not loaded whole; 1112 is not lost');
+  assert.deepEqual(out.bad, ['1100/5-3']);
+  assert.equal(out.warehouseHint, 'kano');
+  const wide = parseThanList('Return 771 6189/1-900 779');
+  assert.deepEqual(wide.items, [{ packageNo: '771' }, { packageNo: '779' }]);
+  assert.deepEqual(wide.bad, ['6189/1-900']);
+  // A readable range in the run is untouched.
+  assert.deepEqual(parseThanList('sell 1111 1100/3-5 1112').items,
+    [{ packageNo: '1111' }, { packageNo: '1100', thans: [3, 4, 5] }, { packageNo: '1112' }]);
+});
+
 test('space-joined: what was NOT a bale list before is still not one', () => {
   // A count sentence — not claimed by the pre-check, and the parse does not
   // start reading the design number as a bale.

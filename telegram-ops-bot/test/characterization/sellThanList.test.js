@@ -380,6 +380,24 @@ test('SELL-T3d: a space-joined list loads EVERY bale, with or without a trailing
   }
 });
 
+// FIX-TYPED review (11-Nov-2026) — in the space run a than range that cannot
+// be read ("1100/3-1") loaded bale 1100 WHOLE and dropped 1091 without a word.
+test('SELL-T3d: an unreadable than range in a space-joined list is reported — the bale is not loaded whole, the next bale is kept', async () => {
+  sessionStore.clear('4242');
+  intentCalls = 0;
+  const bot = createFakeBot();
+  await controller.handleMessage(bot, msg('sell 1082 1100/3-1 1091'));
+  const text = lastText(bot).replace(/\\/g, '');
+  assert.equal(intentCalls, 0);
+  assert.match(text, /4 of 4 typed than\(s\) loaded/, `2 thans of 1082 + 2 of 1091 — got: ${text}`);
+  assert.match(text, /Loaded whole[^\n]*1082[^\n]*1091/);
+  assert.doesNotMatch(text, /📦 1100/, 'bale 1100 is not in the cart');
+  assert.match(text, /Could not read: `1100\/3-1`/);
+  const cart = sessionStore.get('4242').cart.lines.map((l) => String(l.packageNo));
+  assert.ok(!cart.includes('1100'), 'no than of 1100 was loaded');
+  sessionStore.clear('4242');
+});
+
 // ── SELL-T3e (owner's go, 04-Nov-2026) — a whole bale is ONE line on the card ──
 
 const usersRepository = require(path.join(SRC, 'repositories/usersRepository'));
