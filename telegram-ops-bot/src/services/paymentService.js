@@ -288,7 +288,11 @@ async function isAboveThreshold(amount) {
  *      written the way the house writes a company bank account,
  *      `BANK — ACCOUNT NAME` (src/utils/bankEntry.js; a plain name with no
  *      dash is accepted as written). So `ZENITH — BLACK PANTHER CO., LTD;
- *      GTBANK — BLACK PANTHER` is two accounts, the comma kept in the name.
+ *      GTBANK — BLACK PANTHER` is two accounts, the comma kept in the name;
+ *      on a comma-split cell a fragment naming no account joins the account
+ *      before it, so `ZENITH — BLACK PANTHER CO., LTD` alone is ONE account.
+ *      `0` / `off` / `none` / `-` / `—`, or a cell with no letter, = no
+ *      paying account at all (no BANK_LIST fallback).
  *   2. That cell blank → the entries of Settings `BANK_LIST` that NAME an
  *      account (`ZENITH — BLACK PANTHER`). A plain bank name (`GTBank`) is a
  *      payee bank, not a company account, and is never offered.
@@ -306,14 +310,30 @@ async function isAboveThreshold(amount) {
 async function sourceAccounts() {
   const s = (await settingsRepository.getAllStrict()) || {};
   const own = String(s.PAYMENT_SOURCE_ACCOUNTS == null ? '' : s.PAYMENT_SOURCE_ACCOUNTS).trim();
-  const entries = own
-    ? own.split(/[;\n\r]/.test(own) ? /[;\n\r]+/ : /,+/)
-    : String(s.BANK_LIST == null ? '' : s.BANK_LIST).split(',');
+  // PAY-6 review 2: the off value. `0` / `off` / `none` / `-` / `—`, or a
+  // cell with no letter at all (an account is kept by NAME), means "no
+  // paying account" — never the BANK_LIST fallback, never a stamped `0`.
+  if (own && (/^(0|off|none|-|—)$/i.test(own) || !/\p{L}/u.test(own))) return [];
+  let entries;
+  if (!own) entries = String(s.BANK_LIST == null ? '' : s.BANK_LIST).split(',');
+  else if (/[;\n\r]/.test(own)) entries = own.split(/[;\n\r]+/);
+  else {
+    // Comma mode: a fragment that names no account (`LTD` of
+    // `ZENITH — BLACK PANTHER CO., LTD`) belongs to the account before it.
+    entries = [];
+    for (const frag of own.split(/,+/)) {
+      if (!frag.trim()) continue;
+      const prev = entries[entries.length - 1];
+      if (prev != null && !bankEntry.parse(frag).account && bankEntry.parse(prev).account) {
+        entries[entries.length - 1] = `${prev},${frag}`;
+      } else entries.push(frag);
+    }
+  }
   const out = [];
   const seen = new Set();
   for (const raw of entries) {
     const label = bankEntry.normalize(raw);
-    if (!label) continue;
+    if (!label || !/\p{L}/u.test(label)) continue;
     const { bank, account } = bankEntry.parse(label);
     // BANK_LIST is first of all the list of payee banks: only an entry that
     // names an account under its bank is one of the company's own.

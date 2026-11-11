@@ -142,7 +142,8 @@ const DEFAULTS = {
   // picks one (two or more listed), or the only one is stamped (one
   // listed). Blank = the entries of BANK_LIST that name an account
   // (`ZENITH — BLACK PANTHER`); none there either = no paying account is
-  // asked for or shown, as before PAY-6.
+  // asked for or shown, as before PAY-6. `0` / `off` / `none` / `-` = off
+  // (no paying account, BANK_LIST not consulted).
   PAYMENT_SOURCE_ACCOUNTS: '',
   // MORN-1 — 09:15 admin morning digest (owner, 17-Jul-2026). Time is
   // HH:MM Nigeria local; category toggles editable in-bot (⏰ Morning

@@ -775,7 +775,7 @@ async function markDone(bot, chatId, userId, paymentId, cbId, cardMessageId) {
     // PAY-6 — source and recipient together, in the finance card's words;
     // a payment that has no paying account reads exactly as before.
     pay.paid_from ? `📤 From: ${pay.paid_from}` : '',
-    `${pay.paid_from ? '📥 To:' : '🏦'} ${[pay.bank, pay.account_number].filter(Boolean).join(' ')}`,
+    pay.paid_from ? `📥 To: ${[pay.account_number, pay.bank].filter(Boolean).join(' · ')}` : `🏦 ${[pay.bank, pay.account_number].filter(Boolean).join(' ')}`,
     `Paid by ${doneBy} · ${doneAt}`,
     `Ref ${pay.payment_id}${pay.approved_by ? ` · approved by ${pay.approved_by}` : ''}`,
   ].filter(Boolean).join('\n');

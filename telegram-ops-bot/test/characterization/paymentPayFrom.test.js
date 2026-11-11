@@ -184,10 +184,22 @@ async function openPicker(bot, requestId, admin = JOHN, cardMsgId = 72) {
   return drawn[0];
 }
 
+/** The decision chips the approval card still carries (Telegram sends the
+ *  replied-to message as it now stands). */
+const cardChips = (requestId) => ({ inline_keyboard: [[
+  { text: '✅ Approve', callback_data: `approve:${requestId}` },
+  { text: '❌ Reject', callback_data: `reject:${requestId}` },
+]] });
+
 /** A picker chip's tap: the picker is a reply to the approval card it answers. */
 const chipCb = (data, uid, msgId, cardId, extra = {}) => ({
   ...cb(data, uid, msgId),
-  message: { chat: { id: uid }, message_id: msgId, reply_to_message: { message_id: cardId }, ...extra },
+  message: {
+    chat: { id: uid },
+    message_id: msgId,
+    reply_to_message: { message_id: cardId, reply_markup: cardChips(String(data).replace(/^pay:fromx?:/, '').replace(/:[^:]*$/, '')) },
+    ...extra,
+  },
 });
 
 const financeCard = (lines, row) => [
@@ -356,7 +368,7 @@ test('PAY-6: after a pick — the Paid notice, finance\'s confirmation, the reop
     '💸 Paid — ₦25,000 to Abdul (employee)',
     '📝 Transport to Idumota',
     '📤 From: GTBANK — BLACK PANTHER',
-    '📥 To: GTBank 0123456789',
+    '📥 To: 0123456789 · GTBank',
     `Paid by Office · ${done.done_at}`,
     `Ref ${paymentId} · approved by Ajeet ‖ John`,
   ].join('\n');
@@ -697,6 +709,36 @@ test('PAY-6: ✅ Approve in the 🛂 inbox reaches the picker too; the inbox sti
   sessionStore.clear(JOHN);
 });
 
+test('PAY-6 review 2: a pick after the inbox card became the menu approves — and leaves the menu\'s buttons alone', async () => {
+  reset(TWO);
+  const bot = createFakeBot();
+  const { requestId } = await raiseAndSignOnce(bot);
+  await inboxFlow.start(bot, JOHN, JOHN, null);
+  await controller.handleCallbackQuery(bot, cb('abx:cat:payments', JOHN));
+  await controller.handleCallbackQuery(bot, cb('abx:i:0', JOHN));
+  const card = sessionStore.get(JOHN).flowMessageId;
+  const from = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb(`abx:ok:${requestId}`, JOHN, card));
+  const [picker] = pickersTo(bot, JOHN, from);
+
+  // 🏠 Menu on the card: the same message is now the main menu.
+  const nav = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb('act:__back__', JOHN, card));
+  const menuEdit = bot.calls.slice(nav).filter((c) => c.args && c.args.opts && c.args.opts.message_id === card
+    && c.args.opts.reply_markup).pop();
+  const menuKb = (menuEdit && menuEdit.args.opts.reply_markup) || { inline_keyboard: [[{ text: '💰 Finance', callback_data: 'act:__hub__:finance' }]] };
+  assert.ok(!JSON.stringify(menuKb).includes(requestId), 'the menu carries no decision chip');
+
+  const after = bot.calls.length;
+  await controller.handleCallbackQuery(bot, chipCb(picker.chips[0].callback_data, JOHN, 1500, card,
+    { reply_to_message: { message_id: card, reply_markup: menuKb } }));
+  assert.equal(queueRow()[4], 'approved', 'the pick still approves');
+  assert.equal(payRow()[T], ZENITH);
+  assert.equal(bot.calls.slice(after).filter((c) => c.method === 'editMessageReplyMarkup'
+    && c.args.opts.message_id === card).length, 0, 'the menu keeps every button');
+  sessionStore.clear(JOHN);
+});
+
 /* ── 7. the first review round (PAY-6 review) ───────────────────────── */
 
 test('PAY-6 review: a Settings read that FAILS at the completing Approve approves nothing — it is never "no account"', async () => {
@@ -883,4 +925,13 @@ test('PAY-6 review: two completing taps at the same instant — one approval; th
     assert.ok(!abdul.some((t) => /could not be completed/.test(t)), 'no false alarm to the requester');
     assert.equal(abdul.filter((t) => /^✅ Approved · 2 of 2/.test(t)).length, 1);
   }
+});
+
+test('PAY-6 review 2: Approve on a request id that does not exist is NOT "Already decided" — it reads as it did before PAY-6', async () => {
+  reset(NONE);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('approve:deadbeef-0000-0000-0000-000000000000', JOHN, 72));
+  const told = textsTo(bot, JOHN);
+  assert.ok(!told.includes('Already decided — nothing to do.'), 'a typo or forged id was never decided');
+  assert.deepEqual(told, ['⚠️ Approved but execution failed: Request not found or already resolved.']);
 });

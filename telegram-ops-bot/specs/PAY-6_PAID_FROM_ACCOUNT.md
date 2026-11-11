@@ -36,11 +36,17 @@ two simultaneous completing taps.
 - Settings `PAYMENT_SOURCE_ACCOUNTS` (new key, text, default blank). Entries are
   separated by `;` or a new line. A comma separates entries ONLY in a single-line
   cell with no `;` — otherwise it stays inside the name, so
-  `ZENITH — BLACK PANTHER CO., LTD; GTBANK — BLACK PANTHER` is two accounts. Owner:
-  one account per line is the safe way to write the cell. Each entry is written the way the house
+  `ZENITH — BLACK PANTHER CO., LTD; GTBANK — BLACK PANTHER` is two accounts. In a
+  comma-split cell a fragment that names no account (no dash) joins the account
+  before it, so `ZENITH — BLACK PANTHER CO., LTD` alone is ONE account, never a
+  bogus `LTD`. Owner: one account per line is the safe way to write the cell. Each entry is written the way the house
   already writes a company bank account, `BANK — ACCOUNT NAME` (the grammar of
   `src/utils/bankEntry.js`; a hyphen is read as the dash; a plain name with no dash
   is accepted as written).
+- **Off value:** `0`, `off`, `none`, `-` or `—` (any case), or a cell with no letter
+  at all (Settings hands `0` and a digits-only cell over as numbers), means NO paying
+  account: nobody is asked, nothing is stamped, and BANK_LIST is NOT consulted. An
+  entry with no letter is dropped from a longer list (an account is kept by NAME).
 - When that cell is blank: the entries of Settings `BANK_LIST` that NAME an account
   (`bankEntry.parse(bankEntry.normalize(entry)).account` is not empty, e.g.
   `ZENITH — BLACK PANTHER`). Plain bank names (`GTBank`, `Zenith`, ...) and the
@@ -133,7 +139,10 @@ _You are giving the last approval. Finance will be told to pay from the account 
   card does.
 - After the approval has gone through on a chip tap, the approval card the picker
   answered (`callbackQuery.message.reply_to_message`) loses its buttons too,
-  best-effort and stateless; a card that cannot be edited changes nothing else.
+  best-effort and stateless — but ONLY while that message still carries this
+  request's own decision chip (`approve:<id>` or `abx:ok:<id>`). An admin who turned
+  the card into the menu or the inbox list (🏠 Menu / ⬅ Back) before picking keeps
+  those buttons; a card that cannot be edited changes nothing else.
 - 🛂 inbox: when ✅ Approve on an inbox card only drew the picker, the inbox leaves
   its card exactly as it is (buttons kept, no `still pending` footer) and stays
   anchored on it. A pick whose picker answers the admin's open inbox card goes back
@@ -185,7 +194,7 @@ what it printed before (so every existing pin still holds).
 |---|---|
 | Finance card (first send, reminder re-send, opened from 💳 Waiting for me to pay) | the payee line `🏦 0123456789 · GTBank` becomes two lines: `📤 From: ZENITH — BLACK PANTHER` / `📥 To: 0123456789 · GTBank` |
 | The approving admin's result and the requester's closing card (the executor's note) | `... — now with finance to pay.` gains ` Paying from ZENITH — BLACK PANTHER.` |
-| Paid notice (plain text: requester + both approvers) | `📤 From: ZENITH — BLACK PANTHER` directly above the payee line, and the payee line reads `📥 To: GTBank 0123456789` (without an account it stays `🏦 GTBank 0123456789`) |
+| Paid notice (plain text: requester + both approvers) | `📤 From: ZENITH — BLACK PANTHER` directly above the payee line, and the payee line reads `📥 To: 0123456789 · GTBank`, the finance card's order (without an account it stays `🏦 GTBank 0123456789`) |
 | Finance's own `✅ Paid` confirmation | the same From line, directly under the first line |
 | 🛂 Approvals → 💳 Payments record: the status line (`With finance to pay` / `Paid by ...`) | ` · from ZENITH — BLACK PANTHER` at the end of the line |
 | 🛂 Approvals record body (rebuilt from the queue payload) | `Pay from: ZENITH — BLACK PANTHER` under `Account:` (a label true whether the payment waits, was paid or was declined) |
@@ -210,12 +219,23 @@ Known and left as it is: another admin's copy of the approval card (a DM or a
 reminder copy) keeps its buttons after the approval, as before PAY-6; a tap on it is
 answered `Already approved — nothing to do.`, as on every stale card. On the retry of
 a half-finished approval the closing admin's id is not added to `approverIds` (the
-pair that approved the payment is already saved).
+pair that approved the payment is already saved); when a DIFFERENT admin makes that
+retry, the queue's Approver label names them while the payment row names the pair
+that approved it. With the paying-account list on the 30 s cache, a Settings read
+outage longer than the cache stops every completing payment approval with the
+"could not read" alert, even where no paying account is configured (fail-closed by
+design). The sale wizard (APC-1, `runApprovedSaleWithEnrichment`) has its own
+executor call and still answers a second finishing admin "Approved but execution
+failed" — pre-existing, identical before PAY-6, outside this feature.
 
 ## 7. Live check (owner)
 
 1. Settings: leave `PAYMENT_SOURCE_ACCOUNTS` blank if 🏦 Manage Banks already lists
    your accounts as `BANK — ACCOUNT NAME`; otherwise type them there, one per line.
+   Those BANK_LIST entries are the accounts customers PAY INTO (BANK-2); with a blank
+   cell every one of them is offered as a paying account, and with exactly ONE named
+   entry nobody is ever asked — it is stamped on every payment. Type `0` to switch
+   the paying account off.
 2. Abdul asks for a small payment. First admin approves. Second admin taps ✅ Approve:
    the picker appears; tap `✖ Not now` — Abdul's request still reads 1 of 2.
 3. Second admin taps ✅ Approve again and picks an account: the result names it, the
@@ -240,9 +260,21 @@ pair that approved the payment is already saved).
    down (§2).
 8. Commas separate entries only in a single-line cell with no `;` (§1).
 9. The Paid notice reads `📤 From:` / `📥 To:` (§4).
-10. Two completing taps at the same instant (any request type): the executor's
+10. Two completing taps at the same instant (every type that runs through
+    `handleApprovalCallback`; the sale wizard does not — §6): the executor's
     `Request not found or already resolved.` is the stale case — the loser is told
     `Already decided — nothing to do.` and the requester is sent nothing (before, the
     loser read "Approved but execution failed" and the requester a false
     "approved but could not be completed").
 
+## 9. Second review round (11-Nov-2026)
+
+1. The off value: `0` / `off` / `none` / `-` / `—` or a letterless cell is no paying
+   account, never BANK_LIST and never a stamped `0` (§1).
+2. A comma-split fragment that names no account joins the account before it (§1).
+3. A pick wipes the replied-to message only while it still carries this request's
+   decision chip — never the menu or the list it became (§2).
+4. Approve on a request id that does not exist reads as before PAY-6
+   (`⚠️ Approved but execution failed: Request not found or already resolved.`);
+   `Already decided` is kept for a row that existed.
+5. The Paid notice's To line uses the finance card's order (§4).

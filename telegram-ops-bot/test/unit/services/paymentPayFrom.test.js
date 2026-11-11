@@ -130,10 +130,47 @@ test('PAY-6 review: settingsRepository.getAllStrict throws on a refused read, se
   }
 });
 
-test('PAY-6: a cell Settings handed over as a NUMBER is still read as written', async () => {
-  // settingsRepository coerces a digits-only cell to a Number.
-  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: 1002 };
-  assert.deepEqual(await paymentService.sourceAccounts(), [{ label: '1002', bank: '1002', account: '' }]);
+test('PAY-6 review 2: the off value — `0`, `off`, `none`, `-`, `—` or a cell with no letter is NO paying account, never the BANK_LIST fallback', async () => {
+  // Read through the REAL strict reader, so its Number coercion of `0` and
+  // of a digits-only cell is exercised (Settings hands `0` over as 0).
+  const sheetsClient = require(path.join(SRC, 'repositories/sheetsClient'));
+  const real = require(path.join(SRC, 'repositories/settingsRepository'));
+  delete require.cache[require.resolve(path.join(SRC, 'repositories/settingsRepository'))];
+  const fresh = require(path.join(SRC, 'repositories/settingsRepository'));
+  require.cache[require.resolve(path.join(SRC, 'repositories/settingsRepository'))].exports = real;
+  const orig = sheetsClient.readRange;
+  settingsRepository.getAllStrict = fresh.getAllStrict;
+  try {
+    for (const cell of ['0', 'off', 'OFF', 'None', '-', '—', ' 0 ', '0123456789', '1002', '--', ';', ' , ']) {
+      sheetsClient.readRange = async () => [
+        ['BANK_LIST', 'ZENITH — BLACK PANTHER,GTBANK — BLACK PANTHER'],
+        ['PAYMENT_SOURCE_ACCOUNTS', cell],
+      ];
+      fresh.invalidateCache();
+      assert.deepEqual(await paymentService.sourceAccounts(), [], JSON.stringify(cell));
+    }
+    // The same read with the cell blank still falls back to BANK_LIST.
+    sheetsClient.readRange = async () => [['BANK_LIST', 'ZENITH — BLACK PANTHER,GTBANK — BLACK PANTHER'], ['PAYMENT_SOURCE_ACCOUNTS', '']];
+    fresh.invalidateCache();
+    assert.deepEqual(await paymentService.sourceAccounts(), [ZENITH, GTB]);
+  } finally {
+    sheetsClient.readRange = orig;
+    settingsRepository.getAllStrict = readSettings;
+  }
+  // An entry with no letter is dropped from a list that has real names.
+  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: 'ZENITH — BLACK PANTHER; 1002; -' };
+  assert.deepEqual(await paymentService.sourceAccounts(), [ZENITH]);
+});
+
+test('PAY-6 review 2: on a comma-split cell a fragment that names no account belongs to the account before it', async () => {
+  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: 'ZENITH — BLACK PANTHER CO., LTD' };
+  assert.deepEqual((await paymentService.sourceAccounts()).map((a) => a.label), ['ZENITH — BLACK PANTHER CO., LTD'], 'one account, never a bogus `LTD`');
+  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: 'ACCESS — XYZ NIG., LTD, GTBANK — BLACK PANTHER,' };
+  assert.deepEqual((await paymentService.sourceAccounts()).map((a) => a.label), ['ACCESS — XYZ NIG., LTD', 'GTBANK — BLACK PANTHER']);
+  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: 'A — X, B — Y' };
+  assert.deepEqual((await paymentService.sourceAccounts()).map((a) => a.label), ['A — X', 'B — Y'], 'two accounts');
+  SETTINGS = { PAYMENT_SOURCE_ACCOUNTS: 'Petty cash, Office float' };
+  assert.deepEqual((await paymentService.sourceAccounts()).map((a) => a.label), ['Petty cash', 'Office float'], 'plain names still split');
 });
 
 /* ── 2. the chip key ───────────────────────────────────────────────── */

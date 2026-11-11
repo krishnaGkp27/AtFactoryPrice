@@ -2371,8 +2371,11 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
         const noteTail = result.note ? `\n${result.note}` : '';
         // PAY-6 — a pick from the picker: the approval card it answered
         // (the picker is a reply to it) loses its buttons too. Best-effort.
+        // Only while it still IS that card (its decision chips for this
+        // request): the admin may have turned it into the menu or a list.
         const cardMsg = opts && opts.payFromKey !== undefined && callbackQuery.message.reply_to_message;
-        if (cardMsg) {
+        const cardKb = (cardMsg && cardMsg.reply_markup && cardMsg.reply_markup.inline_keyboard) || [];
+        if (cardKb.flat().some((b) => b && (b.callback_data === `approve:${requestId}` || b.callback_data === `abx:ok:${requestId}`))) {
           try { await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: cardMsg.message_id }); } catch (_) { /* stale card */ }
         }
         await bot.sendMessage(chatIdCb, approvedMsg + creditTail + noteTail);
@@ -2462,7 +2465,7 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
             await bot.sendMessage(chatIdCb, `📒 *${customer}* — Outstanding as of today: ${money.sale(outstandingAsOfToday)}`);
           } catch (_) {}
         }
-      } else if (result.message === 'Request not found or already resolved.') {
+      } else if (item && result.message === 'Request not found or already resolved.') {
         // Two completing taps at the same instant: the other one decided it.
         // Not a failure — and the requester already has the real outcome.
         await bot.sendMessage(chatIdCb, 'Already decided — nothing to do.');
