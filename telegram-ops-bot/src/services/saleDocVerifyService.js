@@ -304,6 +304,10 @@ function compareItemsToLabels(items, labels, opts = {}) {
     // paper and the request agreed perfectly. Selling LESS than the label
     // is consistent (noted, not flagged); only a bill showing FEWER pieces
     // or fewer yards than the request claims is a real discrepancy.
+    // A label count of 0 means the reader read NO count from the paper (the
+    // local reader lifts bale numbers only, VRF-6; a paid reader's unread
+    // pcs): the pieces are then not compared at all — the bale was found on
+    // the bill, so it is confirmed. Only a count really read can differ.
     let partialPcs = false;
     if (Number(l.thanNo) && Number(it.thans) && Number(l.thanNo) !== Number(it.thans)) {
       if (Number(l.thanNo) > Number(it.thans)) {

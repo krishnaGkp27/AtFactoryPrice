@@ -22,7 +22,11 @@
  *     provider: string,           // 'stub' | 'openai' | 'anthropic'
  *     bales: Array<{
  *       packageNo:   string,
- *       thanNo:      number,
+ *       thanNo:      number,      // a receive slip's than number, or a bale
+ *                                 // label's piece count; 0 = NOT READ. A
+ *                                 // reader with no count must say 0 — an
+ *                                 // omitted field is filled with the row
+ *                                 // number (see normalise)
  *       design:      string,
  *       shade?:      string,
  *       yards:       number,
@@ -214,6 +218,11 @@ function normalise(raw, providerName) {
     const conf = clampConfidence(b.confidence);
     return {
       packageNo: String(b.packageNo || '').trim(),
+      // An integer is kept as given — 0 included ("no count read": the paid
+      // label readers' unread pcs, every row of the local reader). Only a
+      // row whose provider left the field out gets its row number, the
+      // P5-C1 receive-slip fallback; the bill check would read that as a
+      // piece count, so a label reader states 0 itself (vision/local.js).
       thanNo: Number.isInteger(b.thanNo) ? b.thanNo : parseInt(b.thanNo, 10) || (idx + 1),
       design: String(b.design || '').trim(),
       shade: String(b.shade || '').trim(),

@@ -31,6 +31,13 @@ ends `✅`, a differing one `🔴`, and above `BILL_MARKS_OFF_ABOVE_PCT` the mar
 come off — so a handwritten bill Tesseract misreads shows as "marks off, compare
 by hand" or as unreadable, never as a confident wrong tick.
 
+**Numbers only (fixed 11-Nov-2026).** The reader lifts no piece count, design,
+shade or yardage, and says so: every row carries `thanNo: 0` ("no count read").
+The bill check compares a count only when one was read from the paper, so a
+bale found on the bill is confirmed (`✅`). Before the fix the dispatcher filled
+the missing count with the row's position on the paper and every confirmed bale
+read `pcs: bill says 1, request says 5`.
+
 ## 2. What the card shows
 
 ```
@@ -103,4 +110,6 @@ first lines of raw text. Reads the file only.
 - `tesseract.js@5`, `pdfjs-dist@3` (legacy build) added; `pdf-parse` was tried
   and rejected (cannot open modern PDFs).
 - Tests: `test/unit/services/vision/localProvider.test.js` (10) — pure text
-  parsing, both readers through the seams, the honest failures, the registry.
+  parsing, both readers through the seams, the honest failures, the registry;
+  `localReaderPieceCount.test.js` (11) — no count on any row, the verifier's
+  three cases, the flagged share behind the marks-off rule, the whole check.

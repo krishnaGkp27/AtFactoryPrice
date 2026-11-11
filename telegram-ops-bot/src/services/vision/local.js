@@ -20,8 +20,16 @@
  * file (~4 MB) is fetched once and cached under OCR_LOCAL_CACHE_DIR.
  *
  * Provider contract (vision/index.js normalise): { ok, provider, bales[{
- * packageNo, confidence, …}], rawText, overallConfidence, warnings, error? }.
- * `method` names which reader answered, for the card and the try-out script.
+ * packageNo, thanNo, confidence, …}], rawText, overallConfidence, warnings,
+ * error? }. `method` names which reader answered, for the card and the
+ * try-out script.
+ *
+ * This reader lifts bale NUMBERS only — no piece count, design, shade or
+ * yardage. Every row therefore says `thanNo: 0` ("no count read", the same
+ * value the paid label readers give an unread NO. OF PCS). Left out, the
+ * dispatcher filled in the row's position on the paper (1, 2, 3 …) and the
+ * bill check compared that with the bale's than count: a bale that WAS on
+ * the bill read "pcs: bill says 1, request says 5" (fixed 11-Nov-2026).
  */
 const config = require('../../config');
 const logger = require('../../utils/logger');
@@ -38,7 +46,8 @@ const UNIT_AFTER = /^\s*(?:\.\d+)?\s*(?:yds?|yards?|y|m|mtrs?|meters?|metres?|kg
 /**
  * @param {string} text
  * @param {Map<string, number>} [wordConf] number → confidence 0..1 (from OCR words)
- * @returns {{bales:Array<{packageNo:string, confidence:number}>, method:'keyed'|'all-numbers', warnings:string[]}}
+ * @returns {{bales:Array<{packageNo:string, thanNo:0, confidence:number}>, method:'keyed'|'all-numbers', warnings:string[]}}
+ *          `thanNo` is always 0: no piece count is read from the paper.
  */
 function balesFromText(text, wordConf = new Map()) {
   const t = String(text || '');
@@ -49,7 +58,7 @@ function balesFromText(text, wordConf = new Map()) {
     if (seen.has(no)) return;
     seen.add(no);
     const c = wordConf.has(no) ? Math.min(base, wordConf.get(no)) : base;
-    bales.push({ packageNo: no, confidence: Math.round(c * 100) / 100 });
+    bales.push({ packageNo: no, thanNo: 0, confidence: Math.round(c * 100) / 100 });
   };
   for (const m of t.matchAll(KEYED)) push(m[1], 0.95);
   if (bales.length) return { bales, method: 'keyed', warnings };
