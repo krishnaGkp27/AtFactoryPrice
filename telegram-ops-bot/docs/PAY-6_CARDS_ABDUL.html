@@ -1,0 +1,334 @@
+<!doctype html><html><head><meta charset='utf-8'><title>Payments card by card — Abdul</title><style>
+@page { size: A4 landscape; margin: 9mm 10mm 13mm;
+  @bottom-left { content: "black_panther bot (formerly AtFactoryPrice) · Payments, card by card · Abdul's copy · 11-Nov-2026 · page " counter(page); font: 7.6pt "DejaVu Sans", Arial, sans-serif; color: #7d8b99; } }
+* { box-sizing: border-box; }
+body { margin:0; font-family:"DejaVu Sans","Segoe UI",Arial,sans-serif; color:#16202a; font-size:9.6pt; line-height:1.38; }
+section { page-break-after: always; }
+section:last-child { page-break-after: auto; }
+h1 { font-size:30pt; margin:3mm 0 1mm; letter-spacing:-.5px; color:#0e2a47; }
+.brand { font-size:8.4pt; letter-spacing:2px; text-transform:uppercase; color:#7d8b99; font-weight:700; }
+.sub { font-size:11.4pt; color:#3d4b59; margin-bottom:3mm; max-width:240mm; }
+.small { font-size:8.4pt; color:#5d6b79; }
+code { font-family:"DejaVu Sans Mono",monospace; font-size:.9em; background:#eef2f6; border-radius:1mm; padding:0 .8mm; }
+
+.three { display:flex; gap:5mm; margin:4mm 0; }
+.box { flex:1; border:1px solid #dde4ea; border-radius:3mm; padding:3.4mm 4mm; background:#fbfcfd; }
+.btitle { font-weight:700; color:#0e2a47; margin-bottom:2mm; font-size:10.4pt; }
+.box p { margin:0 0 1.8mm; }
+.castrow { display:flex; align-items:center; gap:2.4mm; margin-bottom:2mm; font-size:9pt; }
+.castrow .badge { min-width:20mm; text-align:center; }
+.toc { margin:0; padding-left:5mm; font-size:9pt; } .toc li { margin-bottom:.8mm; }
+
+.badge { display:inline-block; color:#fff; font-weight:800; border-radius:2mm; padding:.6mm 2.6mm; font-size:9.4pt; letter-spacing:.2px; }
+.chip { display:inline-block; background:#22303f; color:#e9eef3; border-radius:1.4mm; padding:0 1.6mm; font-size:.92em; white-space:nowrap; }
+.typed { display:inline-block; background:#fff7dc; border:1px solid #e3c770; color:#3b2f05; border-radius:1.2mm; padding:0 1.4mm;
+         font-family:"DejaVu Sans Mono",monospace; font-size:.9em; }
+
+.legend { display:flex; flex-wrap:wrap; gap:3mm 6mm; border:1px solid #dde4ea; border-radius:3mm; padding:3mm 4mm; background:#f4f7fa; }
+.lgi { display:flex; align-items:center; gap:2.4mm; font-size:8.8pt; width:85mm; }
+.snum.mini { width:9mm; height:9mm; line-height:7.6mm; font-size:11pt; margin:0; }
+.tg.mini { width:22mm; padding:1.4mm; position:relative; } .tg.mini .txt { font-size:7pt; }
+
+/* swim-lane */
+.lanebox { border:1px solid #dde4ea; border-radius:3mm; padding:3mm 4mm 2mm; }
+.ltitle { font-weight:800; color:#0e2a47; font-size:13pt; margin-bottom:2.4mm; }
+.lane { display:grid; grid-template-columns: 13mm repeat(4, 1fr) 38mm; }
+.lh { padding:1.2mm 1.6mm 2mm; text-align:center; border-bottom:2px solid #0e2a47; }
+.lrole { font-size:7.4pt; color:#5d6b79; margin-top:.8mm; }
+.lc { position:relative; padding:1.5mm 1.8mm; min-height:16.5mm; display:flex; align-items:center; justify-content:center;
+      border-bottom:1px solid #eef2f5; }
+.lline { position:absolute; left:50%; top:0; bottom:0; border-left:2px dashed; opacity:.35; }
+.ldo { position:relative; color:#fff; font-weight:700; border-radius:2mm; padding:1.4mm 2mm; font-size:8.4pt; text-align:center; width:100%; }
+.lget { position:relative; background:#fff; border:1.8px solid; border-radius:2mm; padding:1.2mm 1.8mm; font-size:8pt; text-align:center; width:100%; }
+.lstep { font-size:11pt; color:#0e2a47; }
+.lwait { font-size:8.2pt; color:#3d4b59; justify-content:flex-start; text-align:left; }
+.lh.lwait, .lh.lstep { font-weight:700; font-size:8.4pt; display:flex; align-items:flex-end; justify-content:center; }
+.hl { background:#e8f1fa; }
+.lnew { display:inline-block; background:#c0392b; color:#fff; font-size:6.6pt; font-weight:800; border-radius:1mm; padding:0 1mm; margin-left:1.2mm; vertical-align:1px; }
+.lfoot { font-size:8.2pt; color:#5d6b79; margin-top:2mm; }
+
+/* parts and steps */
+.pband { display:flex; align-items:center; gap:3mm; background:#0e2a47; color:#fff; border-radius:2.4mm; padding:2mm 3.4mm; }
+.pkey { display:inline-block; background:#fff; color:#0e2a47; font-weight:900; border-radius:1.6mm; padding:.2mm 2.4mm; font-size:11.6pt; }
+.ptitle { font-size:13.4pt; font-weight:800; }
+.pintro { margin:2.2mm 0 3mm; color:#31404e; font-size:9.6pt; }
+.stepwrap { page-break-inside:avoid; break-inside:avoid; }
+.step { display:flex; gap:4mm; margin:0; }
+.sl { width:54mm; flex:none; border-left:3px solid; padding-left:2.6mm; }
+.sr { flex:1; min-width:0; }
+.snum { display:inline-block; width:12mm; height:12mm; line-height:10mm; text-align:center; border:2.4px solid; border-radius:6mm;
+        font-weight:900; font-size:15pt; background:#fff; }
+.whorow { margin:1.6mm 0 1.6mm; }
+.do { color:#16202a; font-size:9.4pt; }
+.cap { margin-top:1.8mm; font-size:8.8pt; color:#3d4b59; }
+.snote { margin-top:1.8mm; font-size:8.6pt; background:#fff4f4; border-left:3px solid #a3232a; padding:1.2mm 2mm; border-radius:0 2mm 2mm 0; }
+.tick { margin-top:2.2mm; display:inline-block; border:1.4px solid #1c6b45; color:#1c6b45; border-radius:1.6mm; padding:.6mm 2.4mm; font-weight:700; font-size:8.6pt; }
+.part { margin-top:5mm; }
+.part:first-child { margin-top:0; }
+.keep { break-inside:avoid; page-break-inside:avoid; }
+.tsteps { display:flex; gap:4mm; align-items:stretch; break-inside:avoid; page-break-inside:avoid; }
+.tstep { flex:1; border:1px solid #dde4ea; border-top:3px solid; border-radius:2mm; padding:2.4mm 3mm; background:#fbfcfd; }
+.tshead { display:flex; align-items:center; gap:2.4mm; margin-bottom:1.6mm; }
+.then { display:flex; align-items:center; gap:2mm; height:3.4mm; margin:1.4mm 0 .8mm; color:#7d8b99; font-size:7pt; letter-spacing:1px; }
+.then::before, .then::after { content:""; flex:1; border-top:1px dashed #c9d3dc; }
+
+/* cards */
+.cards { display:flex; flex-wrap:wrap; gap:3.4mm 3.6mm; align-items:flex-start; }
+.col { width:52mm; break-inside:avoid; page-break-inside:avoid; }
+.col.wide { width:70mm; }
+.onphone { font-size:7.4pt; color:#3d4b59; font-weight:700; margin:0 0 .8mm; }
+.dot { display:inline-block; width:2.4mm; height:2.4mm; border-radius:1.2mm; margin-right:1mm; vertical-align:-.2mm; }
+.poplbl { font-size:6.8pt; color:#7d8b99; text-transform:uppercase; letter-spacing:.6px; margin-bottom:.4mm; }
+.toast { display:inline-block; background:#3a4652; color:#fff; font-size:7.8pt; border-radius:3mm; padding:.8mm 3mm; margin-bottom:1.2mm; box-shadow:0 .4mm 1mm rgba(0,0,0,.25); }
+.alertbox { background:#fff; border:1px solid #c5ced8; border-radius:2.4mm; padding:2mm 2.6mm 1.4mm; margin-bottom:1.2mm; box-shadow:0 .6mm 1.6mm rgba(0,0,0,.25); font-size:8pt; }
+.aok { text-align:right; color:#1d6fa5; font-weight:700; font-size:8pt; margin-top:1mm; }
+.tg { position:relative; background:#0e1621; border-radius:3mm; padding:2.2mm; }
+.newrib { position:absolute; top:-1.6mm; right:-1.6mm; background:#c0392b; color:#fff; font-weight:900; font-size:7.6pt; letter-spacing:1px;
+          border-radius:1.4mm; padding:.4mm 2.2mm; box-shadow:0 .4mm 1mm rgba(0,0,0,.3); z-index:2; }
+.bubble { background:#182533; border-radius:2.4mm; padding:2mm 2.4mm 1.8mm; }
+.txt { color:#e9eef3; font-size:7.7pt; line-height:1.36; white-space:pre-wrap; word-wrap:break-word; overflow-wrap:anywhere; }
+.txt b { color:#fff; }
+.txt i { color:#8fa3b5; font-style:italic; }
+.txt code { background:#0e1621; border-radius:1mm; padding:0 .6mm; font-family:"DejaVu Sans Mono",monospace; font-size:7.2pt; color:#a9c7e4; }
+.krow { display:flex; gap:1.2mm; margin-top:1mm; }
+.kbtn { flex:1; min-width:0; background:#22303f; color:#e9eef3; text-align:center; font-size:7.3pt; padding:1.3mm 1mm; border-radius:1.6mm; overflow-wrap:anywhere; }
+.pic { height:20mm; border-radius:1.8mm; margin-bottom:1.6mm; overflow:hidden; }
+.doc { display:flex; align-items:center; gap:2mm; background:#0e1621; border-radius:1.8mm; padding:1.6mm 2mm; margin-bottom:1.4mm; }
+.dicon { font-size:12pt; } .dname { color:#a9c7e4; font-size:7.8pt; }
+.mockbill, .mockshot { height:100%; display:flex; align-items:center; justify-content:center; font-size:7.6pt; text-align:center; }
+.mockbill { background:repeating-linear-gradient(0deg,#f3efe4 0 2.4mm,#e6e0cf 2.4mm 2.7mm); color:#3b3524; }
+.mockbill span, .mockshot span { background:rgba(255,255,255,.92); border-radius:1.4mm; padding:1mm 2.4mm; font-weight:700; }
+.mockshot { background:linear-gradient(180deg,#0b5d3b 0 24%,#f6f8f7 24% 100%); color:#0b3b27; }
+.gonebox { border:1px dashed #93a3b2; border-radius:2mm; padding:2mm; font-size:8pt; color:#4a5866; }
+
+/* info boxes */
+.infobox { margin-top:4mm; border:1.6px solid #1d6fa5; background:#f3f8fd; border-radius:3mm; padding:3mm 4mm; page-break-inside:avoid; }
+.ibtitle { font-weight:800; color:#0e2a47; font-size:11pt; margin-bottom:1.6mm; }
+.infobox p { margin:0 0 1.6mm; } .infobox ul { margin:0 0 2mm; padding-left:5mm; } .infobox li { margin-bottom:1mm; }
+.rules { border-collapse:collapse; margin:1mm 0 2mm; font-size:9pt; }
+.rules th { background:#0e2a47; color:#fff; text-align:left; padding:1.2mm 2.4mm; font-size:8.4pt; }
+.rules td { border-bottom:1px solid #d5dde5; padding:1.2mm 2.4mm; vertical-align:top; }
+.rules td:first-child { font-weight:700; white-space:nowrap; }
+.sheet { border-collapse:collapse; font-size:8.4pt; margin:1mm 0 2mm; }
+.sheet th { background:#e8edf2; color:#3d4b59; border:1px solid #c5ced8; padding:.8mm 2.4mm; font-weight:700; }
+.sheet td { border:1px solid #c5ced8; padding:.8mm 2.4mm; background:#fff; white-space:nowrap; }
+.sheet .rn { background:#e8edf2; color:#3d4b59; text-align:center; }
+.sheet .tnew { background:#fdecea; border:2px solid #c0392b; font-weight:700; }
+
+/* checklist */
+.ckgrid { display:grid; grid-template-columns: repeat(4, 1fr); gap:3mm; }
+.ckgrid.two { grid-template-columns: 1fr 1fr; }
+.ckh { margin-bottom:1.4mm; }
+.ckcol ul { list-style:none; margin:0; padding:0; }
+.ckcol li { font-size:7.4pt; line-height:1.3; padding:.7mm 0; border-bottom:1px solid #eef2f5; display:flex; gap:1.2mm; align-items:baseline; }
+.cbx { color:#1c6b45; font-size:9pt; }
+.cstep { display:inline-block; min-width:5mm; font-weight:800; color:#0e2a47; }
+.golden { margin:4mm 0 0; border:2.4px solid #b8860b; background:#fffaf0; border-radius:3mm; padding:3mm 4mm; }
+.gbody { font-size:13pt; font-weight:700; margin:0 0 1.4mm; color:#1d1502; }
+.gwhy { font-size:9pt; color:#4a4231; }
+</style></head><body>
+<section class="cover">
+ <div class="brand">black_panther bot (formerly AtFactoryPrice) · Abdul's copy · 11-Nov-2026</div>
+ <h1>Payments, card by card</h1>
+ <div class="sub">Abdul — this shows only what <b>you</b> tap and what arrives on <b>your</b> phone. Krishna has the same
+ pages with every other phone. Go through it together, card by card.</div>
+ <div class="three">
+  <div class="box"><div class="btitle">What you will do</div>
+   <p>Register your bank account once. Ask for a payment (amount, what it is for, the bill). Wait while two admins
+   approve. Receive the Paid message. Record a payment a customer made.</p></div>
+  <div class="box"><div class="btitle">Who else is involved</div>
+   <div class="castrow"><span class="badge" style="background:#1e8449">Krishna</span><span>admin — approves</span></div>
+   <div class="castrow"><span class="badge" style="background:#7b3fa8">Musa</span><span>admin — approves, and chooses the company account that pays you</span></div>
+   <div class="castrow"><span class="badge" style="background:#d9730d">Finance</span><span>the person who makes the bank transfer</span></div></div>
+  <div class="box"><div class="btitle">In this copy</div><ol class="toc"><li>Register your bank account (once)</li><li>Ask for a payment</li><li>While you wait</li><li>Approved</li><li>Paid — or declined</li><li>My requests</li><li>Two things the bot will refuse</li><li>Recording a customer&#x27;s payment</li><li>Your checklist — and if a card looks different</li></ol></div>
+ </div>
+ 
+<div class="legend">
+ <div class="lgi"><div class="snum mini">7</div><div>The <b>step number</b>. Quote it when something differs.</div></div>
+ <div class="lgi"><span class="badge" style="background:#1f6fb2">Abdul</span><div><b>Who acts</b> — the colour never changes.</div></div>
+ <div class="lgi"><div><b>Do:</b> what to tap <span class="chip">like this</span> or type <span class="typed">like this</span>.</div></div>
+ <div class="lgi"><div class="toast">🔏 Approval 1 of 2 recorded.</div><div>A <b>pop-up</b>: the small grey note after a tap. A white box with OK must be closed.</div></div>
+ <div class="lgi"><div class="tg mini"><div class="newrib">NEW</div><div class="bubble"><div class="txt">card</div></div></div><div>New with this release.</div></div>
+ <div class="lgi"><div class="tick">☐ matches</div><div>Tick when the phone shows exactly this.</div></div>
+</div>
+</section><section class="lanepage"><div class="lanebox"><div class="ltitle">The whole journey at a glance — your column is highlighted</div><div class="lane"><div class="lh lstep">Part</div><div class="lh hl"><span class="badge" style="background:#1f6fb2">You (Abdul)</span><div class="lrole">Lagos office manager · employee</div></div><div class="lh"><span class="badge" style="background:#1e8449">Krishna</span><div class="lrole">owner · admin 1 · gives the first approval</div></div><div class="lh"><span class="badge" style="background:#7b3fa8">Musa</span><div class="lrole">admin 2 · gives the last approval</div></div><div class="lh"><span class="badge" style="background:#d9730d">Finance</span><div class="lrole">the finance phone · the person who pays</div></div><div class="lh lwait">Now waiting on</div><div class="lc lstep"><b>A</b></div><div class="lc hl"><div class="lline" style="border-color:#1f6fb2"></div><div class="ldo" style="background:#1f6fb2">Registers his bank account (once)</div></div><div class="lc"><div class="lline" style="border-color:#1e8449"></div><div class="lget" style="border-color:#1e8449">receives approval card</div></div><div class="lc"><div class="lline" style="border-color:#7b3fa8"></div><div class="lget" style="border-color:#7b3fa8">receives approval card</div></div><div class="lc"><div class="lline" style="border-color:#d9730d"></div></div><div class="lc lwait">⏳ Krishna and Musa</div><div class="lc lstep"><b>A</b></div><div class="lc hl"><div class="lline" style="border-color:#1f6fb2"></div><div class="lget" style="border-color:#1f6fb2">receives “Approval 1 of 2”</div></div><div class="lc"><div class="lline" style="border-color:#1e8449"></div><div class="ldo" style="background:#1e8449">Approves the account — 1 of 2</div></div><div class="lc"><div class="lline" style="border-color:#7b3fa8"></div><div class="lget" style="border-color:#7b3fa8">receives “needs a second”</div></div><div class="lc"><div class="lline" style="border-color:#d9730d"></div></div><div class="lc lwait">⏳ Musa</div><div class="lc lstep"><b>A</b></div><div class="lc hl"><div class="lline" style="border-color:#1f6fb2"></div><div class="lget" style="border-color:#1f6fb2">receives “Approved · 2 of 2”</div></div><div class="lc"><div class="lline" style="border-color:#1e8449"></div></div><div class="lc"><div class="lline" style="border-color:#7b3fa8"></div><div class="ldo" style="background:#7b3fa8">Approves the account — 2 of 2</div></div><div class="lc"><div class="lline" style="border-color:#d9730d"></div></div><div class="lc lwait">⏳ Abdul (the account is ready)</div><div class="lc lstep"><b>B</b></div><div class="lc hl"><div class="lline" style="border-color:#1f6fb2"></div><div class="ldo" style="background:#1f6fb2">Asks for ₦25,000 · Transport to Idumota · bill</div></div><div class="lc"><div class="lline" style="border-color:#1e8449"></div><div class="lget" style="border-color:#1e8449">receives approval card + bill</div></div><div class="lc"><div class="lline" style="border-color:#7b3fa8"></div><div class="lget" style="border-color:#7b3fa8">receives approval card + bill</div></div><div class="lc"><div class="lline" style="border-color:#d9730d"></div></div><div class="lc lwait">⏳ Krishna and Musa</div><div class="lc lstep"><b>C</b></div><div class="lc hl"><div class="lline" style="border-color:#1f6fb2"></div><div class="lget" style="border-color:#1f6fb2">receives “Approval 1 of 2”</div></div><div class="lc"><div class="lline" style="border-color:#1e8449"></div><div class="ldo" style="background:#1e8449">First approval</div></div><div class="lc"><div class="lline" style="border-color:#7b3fa8"></div><div class="lget" style="border-color:#7b3fa8">receives “needs a second”</div></div><div class="lc"><div class="lline" style="border-color:#d9730d"></div></div><div class="lc lwait">⏳ Musa</div><div class="lc lstep"><b>D</b></div><div class="lc hl"><div class="lline" style="border-color:#1f6fb2"></div><div class="lget" style="border-color:#1f6fb2">receives “Approved” + Paying from ZENITH<span class="lnew">NEW</span></div></div><div class="lc"><div class="lline" style="border-color:#1e8449"></div></div><div class="lc"><div class="lline" style="border-color:#7b3fa8"></div><div class="ldo" style="background:#7b3fa8">Last approval — taps the account to pay FROM</div></div><div class="lc"><div class="lline" style="border-color:#d9730d"></div><div class="lget" style="border-color:#d9730d">receives payment card: From and To<span class="lnew">NEW</span></div></div><div class="lc lwait">⏳ Finance</div><div class="lc lstep"><b>E</b></div><div class="lc hl"><div class="lline" style="border-color:#1f6fb2"></div><div class="lget" style="border-color:#1f6fb2">receives “Paid” · From and To<span class="lnew">NEW</span></div></div><div class="lc"><div class="lline" style="border-color:#1e8449"></div><div class="lget" style="border-color:#1e8449">receives “Paid” · From and To<span class="lnew">NEW</span></div></div><div class="lc"><div class="lline" style="border-color:#7b3fa8"></div><div class="lget" style="border-color:#7b3fa8">receives “Paid” · From and To<span class="lnew">NEW</span></div></div><div class="lc"><div class="lline" style="border-color:#d9730d"></div><div class="ldo" style="background:#d9730d">Pays at the bank, taps ✔ Mark Done</div></div><div class="lc lwait">⏳ Finance (the proof)</div><div class="lc lstep"><b>E</b></div><div class="lc hl"><div class="lline" style="border-color:#1f6fb2"></div><div class="lget" style="border-color:#1f6fb2">receives proof picture</div></div><div class="lc"><div class="lline" style="border-color:#1e8449"></div><div class="lget" style="border-color:#1e8449">receives proof picture</div></div><div class="lc"><div class="lline" style="border-color:#7b3fa8"></div><div class="lget" style="border-color:#7b3fa8">receives proof picture</div></div><div class="lc"><div class="lline" style="border-color:#d9730d"></div><div class="ldo" style="background:#d9730d">Sends the transfer screenshot</div></div><div class="lc lwait">⏳ nobody — finished</div></div><div class="lfoot">Read down: each row is one moment. A filled box is the person who acts; an outlined box is what lands on that person's phone at that moment. The right-hand column says who everyone is waiting for next.</div></div></section><section class="flow"><div class="part"><div class="keep"><div class="pband"><span class="pkey">1</span><span class="ptitle">Register your bank account (once)</span></div><div class="pintro">Do this once. Money can only be paid into an account that two admins have approved.</div><div class="stepwrap"><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">1</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You</span></div><div class="do"><b>Do:</b> Type <span class="typed">menu</span>, tap <span class="chip">💰 Finance</span>, then <span class="chip">💳 Payments</span>.</div><div class="cap">The same message changes each time you tap.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">👋 Hi <b>Abdul</b> (Operations)! What would you like to do?</div></div><div class="krow"><div class="kbtn">🛒 Sales &amp; Marketing</div><div class="kbtn">📦 Inventory</div></div><div class="krow"><div class="kbtn">👥 CRM</div><div class="kbtn">💰 Finance</div></div><div class="krow"><div class="kbtn">📍 Mark Attendance</div><div class="kbtn">📋 My Tasks</div></div><div class="krow"><div class="kbtn">📋 More Options (1)</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💰 <b>Finance</b>
+
+Pick an action:</div></div><div class="krow"><div class="kbtn">💵 Payment Received</div><div class="kbtn">💳 Payments</div></div><div class="krow"><div class="kbtn">⬅ Back</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💳 <b>Payments</b>
+
+<i>You have no registered account yet — register one before requesting a payment.</i></div></div><div class="krow"><div class="kbtn">🏦 Register account</div></div><div class="krow"><div class="kbtn">💸 Request payment</div></div><div class="krow"><div class="kbtn">📋 My requests</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div></div></div></div></div><div class="stepwrap"><div class="then"><span>▼ then</span></div><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">2</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You</span></div><div class="do"><b>Do:</b> Tap <span class="chip">🏦 Register account</span>. Type your 10-digit account number. Type it once more.</div><div class="cap">The bot compares the two. If they differ (third card), type it again. Then pick your bank.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">🏦 <b>Account for Abdul</b>
+
+Type the <b>10-digit account number</b>.</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">🔁 <b>Type it once more</b>
+
+An account number is the one thing here nothing else can check — so type it again and the bot will compare.</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">⚠️ <b>The two did not match.</b>
+
+That is exactly what this step is for. Type the 10-digit account number again.</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">🏦 <b>0123456789</b>
+
+Which bank?</div></div><div class="krow"><div class="kbtn">🏛 GTBank</div><div class="kbtn">🏛 Zenith</div></div><div class="krow"><div class="kbtn">🏛 FirstBank</div><div class="kbtn">🏛 Access</div></div><div class="krow"><div class="kbtn">🏛 UBA</div><div class="kbtn">🏛 OPAY</div></div><div class="krow"><div class="kbtn">🏛 ZENITH — BLACK PANTHER</div><div class="kbtn">🏛 GTBANK — BLACK PANTHER</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div></div></div></div></div><div class="stepwrap"><div class="then"><span>▼ then</span></div><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">3</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You</span></div><div class="do"><b>Do:</b> Tap your bank (<span class="chip">🏛 GTBank</span>), check, tap <span class="chip">✅ Submit for approval</span>.</div><div class="cap">Now two admins check it.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">🏦 <b>Register this account?</b>
+
+👤 Abdul · employee
+🔢 0123456789
+🏛 GTBank
+
+<i>Two admins must approve before any payment can be raised against it.</i></div></div><div class="krow"><div class="kbtn">✅ Submit for approval</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">⏳ <b>Sent for approval</b>
+
+🏦 GTBank 0123456789
+👤 Abdul
+
+<i>You’ll be told when two admins have signed it.</i></div></div><div class="krow"><div class="kbtn">🔔 Remind approvers</div><div class="kbtn">📋 Status</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div></div></div></div><div class="stepwrap"><div class="then"><span>▼ then</span></div><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">4</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You wait</span></div><div class="do"><b>Do:</b> Wait. You receive one card at each approval.</div><div class="cap">After the second approval, 💳 Payments says you have 1 registered account.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">🔏 Approval 1 of 2
+🏦 Payee account · Abdul · GTBank 0123456789
+✅ Krishna · 11-Nov 10:34
+⏳ Waiting on 1 more admin
+Ref R-4F72</div></div><div class="krow"><div class="kbtn">🔔 Remind approvers</div><div class="kbtn">📋 Status</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">✅ Approved · 2 of 2
+🏦 Payee account · Abdul · GTBank 0123456789
+✅ Krishna · 11-Nov 10:34
+✅ Musa · 11-Nov 12:40
+Changes applied.
+Ref R-4F72</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💳 <b>Payments</b>
+
+You have <b>1</b> registered account.</div></div><div class="krow"><div class="kbtn">🏦 Register account</div></div><div class="krow"><div class="kbtn">💸 Request payment</div></div><div class="krow"><div class="kbtn">📋 My requests</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div></div></div></div></div><div class="part"><div class="keep"><div class="pband"><span class="pkey">2</span><span class="ptitle">Ask for a payment</span></div><div class="pintro">Example: ₦25,000 for “Transport to Idumota”, with a photo of the bill.</div><div class="stepwrap"><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">5</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You</span></div><div class="do"><b>Do:</b> <span class="chip">💳 Payments</span> → <span class="chip">💸 Request payment</span> → tap your account.</div><div class="cap">You can only pick your own registered account.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💸 <b>Request payment</b>
+
+Pay into which account?</div></div><div class="krow"><div class="kbtn">👤 Abdul · GTBank 0123456789</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💸 <b>Abdul</b>
+🏦 GTBank 0123456789
+
+How much, in naira? Type the figure, e.g. <code>45000</code>.</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div></div></div></div></div></div><div class="stepwrap"><div class="then"><span>▼ then</span></div><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">6</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You</span></div><div class="do"><b>Do:</b> Type the amount in figures: <span class="typed">25000</span>. Type what it is for: <span class="typed">Transport to Idumota</span>.</div><div class="cap">Figures only — not words. A reason of 3 to 120 letters. For a salary use the two Salary buttons (part 7).</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💸 <b>Abdul</b>
+🏦 GTBank 0123456789 · ₦25,000
+
+📝 <b>What is this payment for?</b>
+Type a short reason — e.g. transport to Idumota, loading at the warehouse.
+For a salary, tap 💼 Salary or 💵 Salary advance.</div></div><div class="krow"><div class="kbtn">💼 Salary</div><div class="kbtn">💵 Salary advance</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">📎 <b>Any paperwork?</b>
+
+Send a photo or PDF of the bill or invoice, or skip — it is not required.</div></div><div class="krow"><div class="kbtn">⏭ Skip — no bill</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div></div></div></div></div><div class="stepwrap"><div class="then"><span>▼ then</span></div><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">7</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You</span></div><div class="do"><b>Do:</b> Send the photo of the bill (or tap <span class="chip">⏭ Skip — no bill</span>), check, tap <span class="chip">✅ Submit for approval</span>.</div><div class="cap">Your receipt has the payment number (PAY-…). Keep it.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💸 <b>Send this for approval?</b>
+
+👤 Abdul · employee
+🏦 GTBank 0123456789
+💰 <b>₦25,000</b>
+📝 Transport to Idumota
+📎 Bill attached
+
+<i>Two admins approve, then finance pays.</i></div></div><div class="krow"><div class="kbtn">✅ Submit for approval</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">⏳ <b>Sent for approval</b>
+
+💰 ₦25,000 → Abdul
+📝 Transport to Idumota
+<code>PAY-20261111-55D1E2E6</code>
+
+<i>Two admins sign, then finance pays and marks it done. You are told at each signature.</i></div></div><div class="krow"><div class="kbtn">🔔 Remind approvers</div><div class="kbtn">📋 Status</div></div><div class="krow"><div class="kbtn">📋 My requests</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div></div></div></div></div><div class="part"><div class="keep"><div class="pband"><span class="pkey">3</span><span class="ptitle">While you wait</span></div><div class="pintro">Two admins must approve. You are told at each approval.</div><div class="stepwrap"><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">8</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You wait</span></div><div class="do"><b>Do:</b> Wait for the first approval.</div><div class="cap">Tap <span class="chip">📋 Status</span> any time to see who has signed and how long it has waited (second card).</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">🔏 Approval 1 of 2
+💳 Payment request · ₦25,000 → Abdul · Transport to Idumota
+✅ Krishna · 11-Nov 10:26
+⏳ Waiting on 1 more admin
+Ref R-AFF1</div></div><div class="krow"><div class="kbtn">🔔 Remind approvers</div><div class="kbtn">📋 Status</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">📋 Request R-AFF1
+💳 Payment request · ₦25,000 → Abdul · Transport to Idumota
+Raised by Abdul · 11-Nov 10:20 · under an hour waiting
+🛂 Waiting on approval · 1 of 2 signed
+✅ Krishna · 11-Nov 10:26</div></div><div class="krow"><div class="kbtn">🔔 Remind approvers</div></div><div class="krow"><div class="kbtn">🏠 Menu</div></div></div></div></div></div></div></div></div><div class="stepwrap"><div class="then"><span>▼ then</span></div><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">9</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You</span></div><div class="do"><b>Do:</b> If it waits too long, tap <span class="chip">🔔 Remind approvers</span>.</div><div class="cap">The reminder goes only to the admin who has not signed yet. <b>Once a day</b>: a second tap the same day is refused (last pop-up — close it with OK).</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">📋 <b>My requests</b>
+
+⏳ ₦25,000 — waiting for approval · 📝 Transport to Idumota
+   <i>11-Nov-26</i>
+   🔏 1 signed — Krishna</div></div><div class="krow"><div class="kbtn">🔔 Remind approvers · ₦25,000</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="poplbl">pop-up after the tap</div><div class="toast">🔔 Reminder sent to Musa.</div><div class="tg"><div class="bubble"><div class="txt">🔔 Reminder 1 sent to Musa for R-AFF1.
+You can remind again in 24h.</div></div><div class="krow"><div class="kbtn">⬅ Back to Finance</div><div class="kbtn">🏠 Menu</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · pop-up only</div><div class="alertbox"><div class="atext">Already reminded less than an hour ago. You can remind again in 24h.</div><div class="aok">OK</div></div></div></div></div></div></div></div><div class="part"><div class="keep"><div class="pband"><span class="pkey">4</span><span class="ptitle">Approved — the card now names the account it will be paid from</span></div><div class="pintro">New in this release: the last admin chooses the company account the money comes FROM.</div><div class="stepwrap"><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">10</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You wait</span></div><div class="do"><b>Do:</b> Nothing to tap — wait for the second approval.</div><div class="cap">Approved is not yet paid: the finance person now makes the bank transfer.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="newrib">NEW</div><div class="bubble"><div class="txt">✅ Approved · 2 of 2
+💳 Payment request · ₦25,000 → Abdul · Transport to Idumota
+✅ Krishna · 11-Nov 10:26
+✅ Musa · 11-Nov 10:44
+✅ Payment of ₦25,000 to Abdul approved by Krishna ‖ Musa — now with finance to pay. Paying from ZENITH — BLACK PANTHER.
+Ref R-AFF1</div></div></div></div></div></div></div></div></div></div><div class="part"><div class="keep"><div class="pband"><span class="pkey">5</span><span class="ptitle">Paid — or declined</span></div><div class="pintro">The finance person pays at the bank, then the bot tells you.</div><div class="stepwrap"><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">11</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You wait</span></div><div class="do"><b>Do:</b> Nothing to tap — wait for the money.</div><div class="cap">“From” is the company account; “To” is your account. Check your bank. When the finance person sends the transfer screenshot, you receive it too (second card).</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="newrib">NEW</div><div class="bubble"><div class="txt">💸 Paid — ₦25,000 to Abdul (employee)
+📝 Transport to Idumota
+📤 From: ZENITH — BLACK PANTHER
+📥 To: 0123456789 · GTBank
+Paid by Finance · 11-Nov-2026, 10:20
+Ref PAY-20261111-4F7A2C1B · approved by Krishna ‖ Musa</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · a picture with this text under it</div><div class="tg"><div class="bubble"><div class="pic"><div class="mockshot"><span>the bank-transfer screenshot</span></div></div><div class="txt">📎 Proof of transfer — PAY-20261111-4F7A2C1B · ₦25,000 to Abdul (employee)</div></div></div></div></div></div></div></div></div><div class="stepwrap"><div class="then"><span>▼ then</span></div><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">12</div><div class="whorow"><span class="badge" style="background:#1f6fb2">If declined</span></div><div class="do"><b>Do:</b> If the finance person declines: read the reason, fix it, ask again.</div><div class="cap">Nothing was paid. The last line before “Ref” is the reason. Fix the problem (for example the account), then raise a new request from 💸 Request payment.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">✖ Payment declined — ₦25,000 to Abdul (employee) was not paid.
+📝 Transport to Idumota
+🏦 GTBank 0123456789
+Declined by Finance · 11-Nov-2026, 10:21
+Account name does not match
+Ref PAY-20261111-4F7A2C1B · approved by Krishna ‖ Musa</div></div></div></div></div></div></div></div></div><div class="part"><div class="keep"><div class="pband"><span class="pkey">6</span><span class="ptitle">My requests — every request and where it stands</span></div><div class="stepwrap"><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">13</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You</span></div><div class="do"><b>Do:</b> <span class="chip">💳 Payments</span> → <span class="chip">📋 My requests</span>.</div><div class="cap">⏳ waiting for approval (who signed, and a 🔔 button) · 🏦 with finance to pay · ✅ paid · ✖ declined by finance (with the reason) · ❌ rejected.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">📋 <b>My requests</b>
+
+⏳ ₦9,500 — waiting for approval · 📝 Fuel for the generator
+   <i>11-Nov-26</i>
+   🔏 1 signed — Krishna
+✅ ₦25,000 — paid · 📝 Transport to Idumota
+   <i>11-Nov-26</i>
+✖ ₦18,000 — declined by finance · 📝 Loading at the warehouse
+   <i>10-Nov-26</i> · Account name does not match</div></div><div class="krow"><div class="kbtn">🔔 Remind approvers · ₦9,500</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">📋 <b>My requests</b>
+
+🏦 ₦25,000 — with finance to pay · 📝 Transport to Idumota
+   <i>11-Nov-26</i></div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div></div></div></div></div></div><div class="part"><div class="keep"><div class="pband"><span class="pkey">7</span><span class="ptitle">Two things the bot will refuse</span></div><div class="stepwrap"><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">14</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You</span></div><div class="do"><b>Do:</b> Ask again for the same account and the same amount while the first one is still open.</div><div class="cap">Nothing new is raised. 📋 Open it shows the open request. If it really is a second payment, ask an admin to raise it.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">⏳ This request is already open
+💳 Payment request · ₦25,000 → Abdul · Transport to Idumota
+Raised by Abdul · 11-Nov 10:20
+🛂 Waiting on approval · 0 of 2 signed
+If this really is a second payment, ask an admin to raise it.
+
+Nothing new was raised.</div></div><div class="krow"><div class="kbtn">📋 Open it</div><div class="kbtn">🔔 Remind approvers</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div></div></div></div></div></div><div class="stepwrap"><div class="then"><span>▼ then</span></div><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">15</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You</span></div><div class="do"><b>Do:</b> Salary: after the amount tap <span class="chip">💼 Salary</span>, tap the month, check, submit.</div><div class="cap">Typing “salary” is refused (first card): use the button, so the month is recorded. 💵 Salary advance works the same way.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">⚠️ A salary is picked with the chips below, so its month is on record.
+
+💸 <b>Abdul</b>
+🏦 GTBank 0123456789 · ₦25,000
+
+📝 <b>What is this payment for?</b>
+Type a short reason — e.g. transport to Idumota, loading at the warehouse.
+For a salary, tap 💼 Salary or 💵 Salary advance.</div></div><div class="krow"><div class="kbtn">💼 Salary</div><div class="kbtn">💵 Salary advance</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💸 <b>Abdul</b> · ₦25,000
+
+💼 <b>Salary — for which month?</b></div></div><div class="krow"><div class="kbtn">Oct-2026</div><div class="kbtn">Nov-2026</div><div class="kbtn">Dec-2026</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💸 <b>Send this for approval?</b>
+
+👤 Abdul · employee
+🏦 GTBank 0123456789
+💰 <b>₦25,000</b>
+📝 Salary · Nov-2026
+
+<i>Two admins approve, then finance pays.</i></div></div><div class="krow"><div class="kbtn">✅ Submit for approval</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">⏳ <b>Sent for approval</b>
+
+💰 ₦25,000 → Abdul
+📝 Salary · Nov-2026
+<code>PAY-20261111-F16A22DD</code>
+
+<i>Two admins sign, then finance pays and marks it done. You are told at each signature.</i></div></div><div class="krow"><div class="kbtn">🔔 Remind approvers</div><div class="kbtn">📋 Status</div></div><div class="krow"><div class="kbtn">📋 My requests</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div></div></div></div><div class="stepwrap"><div class="then"><span>▼ then</span></div><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">16</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You</span></div><div class="do"><b>Do:</b> Ask for a second salary for the same month.</div><div class="cap">One salary per month. Nothing new is raised.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💼 Salary for Nov-2026 is already on record
+💳 Payment request · ₦25,000 → Abdul · Salary · Nov-2026
+Raised by Abdul · 11-Nov 10:20
+🛂 Waiting on approval · 0 of 2 signed
+If this really is a second payment, ask an admin to raise it.
+
+Nothing new was raised.</div></div><div class="krow"><div class="kbtn">📋 Open it</div><div class="kbtn">🔔 Remind approvers</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div></div></div></div></div></div><div class="part"><div class="keep"><div class="pband"><span class="pkey">8</span><span class="ptitle">Recording a payment a customer made (Payment Received)</span></div><div class="pintro">Example: customer ABBA paid 50,000 into Zenith.</div><div class="stepwrap"><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">17</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You</span></div><div class="do"><b>Do:</b> <span class="chip">💰 Finance</span> → <span class="chip">💵 Payment Received</span>. Type part of the name (<span class="typed">abb</span>), tap <span class="chip">👤 ABBA</span>.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💵 <b>Payment received</b>
+
+Who paid?
+Tap the customer, or type part of the name.</div></div><div class="krow"><div class="kbtn">👤 ABBA</div></div><div class="krow"><div class="kbtn">👤 Bello Textiles</div></div><div class="krow"><div class="kbtn">👤 Chika Fabrics</div></div><div class="krow"><div class="kbtn">👤 Danjuma Stores</div></div><div class="krow"><div class="kbtn">👤 Emeka &amp; Sons</div></div><div class="krow"><div class="kbtn">👤 Fatima Wholesale</div></div><div class="krow"><div class="kbtn">👤 Garba Kano</div></div><div class="krow"><div class="kbtn">👤 Hauwa Fashion</div></div><div class="krow"><div class="kbtn">1/2</div><div class="kbtn">Next ▶</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💵 <b>Payment received</b>
+
+Who paid?
+Tap the customer, or type part of the name.
+🔎 <i>abb</i> · 1 match</div></div><div class="krow"><div class="kbtn">👤 ABBA</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💵 <b>Payment received</b>
+
+Customer: <b>ABBA</b>
+
+How much did they pay?
+Type the amount, for example <code>50000</code>.</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div></div></div></div></div></div><div class="stepwrap"><div class="then"><span>▼ then</span></div><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">18</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You</span></div><div class="do"><b>Do:</b> Type <span class="typed">50000</span>, tap how it was paid (<span class="chip">🏦 Zenith</span>), tap <span class="chip">✅ Submit for approval</span>.</div><div class="cap">The customer's balance moves only after the admins approve.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💵 <b>Payment received</b>
+
+Customer: <b>ABBA</b>
+Amount: <b>50,000</b>
+
+How was it paid?</div></div><div class="krow"><div class="kbtn">💵 Cash</div></div><div class="krow"><div class="kbtn">🏦 GTBank</div></div><div class="krow"><div class="kbtn">🏦 Zenith</div></div><div class="krow"><div class="kbtn">🏦 FirstBank</div></div><div class="krow"><div class="kbtn">🏦 Access</div></div><div class="krow"><div class="kbtn">🏦 UBA</div></div><div class="krow"><div class="kbtn">🏦 OPAY</div></div><div class="krow"><div class="kbtn">🏦 ZENITH — BLACK PANTHER</div></div><div class="krow"><div class="kbtn">🏦 GTBANK — BLACK PANTHER</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">💵 <b>Payment received</b>
+
+Customer: <b>ABBA</b>
+Amount: <b>50,000</b>
+Paid by: Bank — Zenith
+Date: 11-Nov-2026
+
+An admin approves it before the customer&#x27;s balance moves.</div></div><div class="krow"><div class="kbtn">✅ Submit for approval</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone · the same message changes to</div><div class="tg"><div class="bubble"><div class="txt">⏳ <b>Sent for approval</b>
+
+Customer: <b>ABBA</b>
+Amount: <b>50,000</b>
+Paid by: Bank — Zenith
+Date: 11-Nov-2026
+Ref R-C3A9</div></div><div class="krow"><div class="kbtn">🔔 Remind approvers</div><div class="kbtn">📋 Status</div></div><div class="krow"><div class="kbtn">💵 Record another</div><div class="kbtn">🏠 Menu</div></div></div></div></div></div></div></div><div class="stepwrap"><div class="then"><span>▼ then</span></div><div class="step"><div class="sl" style="border-left-color:#1f6fb2"><div class="snum" style="border-color:#1f6fb2;color:#1f6fb2">19</div><div class="whorow"><span class="badge" style="background:#1f6fb2">You wait</span></div><div class="do"><b>Do:</b> Wait for the approvals.</div><div class="cap">Two approvals today. 💵 Record another starts the next one.</div><div class="tick">☐ matches</div></div><div class="sr"><div class="cards"><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">🔏 Approval 1 of 2
+💵 Payment received · ABBA · 50,000 · Bank — Zenith
+✅ Krishna · 11-Nov 10:26
+⏳ Waiting on 1 more admin
+Ref R-C3A9</div></div><div class="krow"><div class="kbtn">🔔 Remind approvers</div><div class="kbtn">📋 Status</div></div></div></div><div class="col"><div class="onphone"><span class="dot" style="background:#1f6fb2"></span>On your phone</div><div class="tg"><div class="bubble"><div class="txt">✅ Approved · 2 of 2
+💵 Payment received · ABBA · 50,000 · Bank — Zenith
+✅ Krishna · 11-Nov 10:26
+✅ Musa · 11-Nov 10:34
+Changes applied.
+Ref R-C3A9</div></div></div></div></div></div></div></div></div></section>
+<section class="part"><div class="pband"><span class="pkey">9</span><span class="ptitle">Your checklist — and if a card looks different</span></div>
+<div class="pintro">Every screen and message that should appear on your phone in parts 1 to 5 and 8, in order. Each line is the first line
+of the card; the number is the step. Tick it when it arrives.</div>
+<div class="ckgrid two"><div class="ckcol"><ul><li><span class="cbx">☐</span><span class="cstep">1</span>👋 Hi Abdul (Operations)! What would you like to do?</li><li><span class="cbx">☐</span><span class="cstep">1</span>💰 Finance</li><li><span class="cbx">☐</span><span class="cstep">1</span>💳 Payments</li><li><span class="cbx">☐</span><span class="cstep">2</span>🏦 Account for Abdul</li><li><span class="cbx">☐</span><span class="cstep">2</span>🔁 Type it once more</li><li><span class="cbx">☐</span><span class="cstep">2</span>🏦 0123456789</li><li><span class="cbx">☐</span><span class="cstep">3</span>🏦 Register this account?</li><li><span class="cbx">☐</span><span class="cstep">3</span>⏳ Sent for approval</li><li><span class="cbx">☐</span><span class="cstep">4</span>🔏 Approval 1 of 2</li><li><span class="cbx">☐</span><span class="cstep">4</span>✅ Approved · 2 of 2</li><li><span class="cbx">☐</span><span class="cstep">4</span>💳 Payments</li><li><span class="cbx">☐</span><span class="cstep">5</span>💸 Request payment</li><li><span class="cbx">☐</span><span class="cstep">5</span>💸 Abdul</li><li><span class="cbx">☐</span><span class="cstep">6</span>💸 Abdul</li><li><span class="cbx">☐</span><span class="cstep">6</span>📎 Any paperwork?</li><li><span class="cbx">☐</span><span class="cstep">7</span>💸 Send this for approval?</li><li><span class="cbx">☐</span><span class="cstep">7</span>⏳ Sent for approval</li></ul></div><div class="ckcol"><ul><li><span class="cbx">☐</span><span class="cstep">8</span>🔏 Approval 1 of 2</li><li><span class="cbx">☐</span><span class="cstep">8</span>📋 Request R-AFF1</li><li><span class="cbx">☐</span><span class="cstep">9</span>📋 My requests</li><li><span class="cbx">☐</span><span class="cstep">9</span>pop-up: 🔔 Reminder sent to Musa.</li><li><span class="cbx">☐</span><span class="cstep">9</span>🔔 Reminder 1 sent to Musa for R-AFF1.</li><li><span class="cbx">☐</span><span class="cstep">9</span>pop-up: Already reminded less than an hour ago. You can remind again in 24h.</li><li><span class="cbx">☐</span><span class="cstep">10</span>✅ Approved · 2 of 2<span class=lnew>NEW</span></li><li><span class="cbx">☐</span><span class="cstep">11</span>💸 Paid — ₦25,000 to Abdul (employee)<span class=lnew>NEW</span></li><li><span class="cbx">☐</span><span class="cstep">11</span>picture: 📎 Proof of transfer — PAY-20261111-4F7A2C1B · ₦25,000 to Abdul (employee)</li><li><span class="cbx">☐</span><span class="cstep">17</span>💵 Payment received</li><li><span class="cbx">☐</span><span class="cstep">17</span>💵 Payment received</li><li><span class="cbx">☐</span><span class="cstep">17</span>💵 Payment received</li><li><span class="cbx">☐</span><span class="cstep">18</span>💵 Payment received</li><li><span class="cbx">☐</span><span class="cstep">18</span>💵 Payment received</li><li><span class="cbx">☐</span><span class="cstep">18</span>⏳ Sent for approval</li><li><span class="cbx">☐</span><span class="cstep">19</span>🔏 Approval 1 of 2</li><li><span class="cbx">☐</span><span class="cstep">19</span>✅ Approved · 2 of 2</li></ul></div></div>
+<div class="golden"><div class="gbody">If a card looks different from this guide: take a screenshot and send it to Krishna,
+with the step number.</div><div class="gwhy">Send the whole card, with its buttons. A different word, a missing line, a different
+button, or a message arriving in a different order all count. Do not tap anything else on that card until Krishna answers.</div></div>
+</section></body></html>
