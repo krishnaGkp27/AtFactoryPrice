@@ -1,8 +1,21 @@
 # Admin-seat test script for Claude Cowork — the `black_panther` bot, Payments
 
 Paste everything below the line into Claude Cowork. Cowork then works the ADMIN side of
-the payment tests in Telegram Web while Abdul works his side from his own phone with his
-own PDF. Krishna (the owner) supervises and answers Cowork's questions.
+the payment tests in Telegram Web while Abdul works his side from his own phone. Krishna
+(the owner) supervises and answers Cowork's questions.
+
+Abdul's side of each sprint (P1, P2a, P2b, P3, P4, P5) is in the Claude doc "Release test
+sprints — Abdul (Lagos office)", Part 1 (Payments). His PDF (`docs/PAY-6_CARDS_ABDUL.pdf`)
+shows the same cards with a worked example (₦25,000, "Transport to Idumota"); in the live
+test he types the test figures instead, so both seats expect the same thing:
+
+| Sprint | Abdul types | Abdul's PDF steps |
+| --- | --- | --- |
+| P1 | his real account number and bank | 1–4 |
+| P2a / P2b | `1000`, reason `TEST do not pay` (asked twice in P2a) | 5–9, 14 |
+| P3 | `1100` + `💼 Salary`, then `1500` + `💵 Salary advance`, both for NEXT month | 15–16 |
+| P4 | a customer's payment, real or test (the owner says which) | 17–19 |
+| P5 | nothing — the admin alone | — |
 
 Every quoted bot text below was checked on 11-Nov-2026 against the cards the bot's own
 code produces (`scripts/pay6-capture/`, the same cards as `docs/PAY-6_CARDS_OWNER.pdf`).
@@ -11,7 +24,9 @@ code produces (`scripts/pay6-capture/`, the same cards as `docs/PAY-6_CARDS_OWNE
 
 ## 1. Your job
 
-You are operating the admin's Telegram account in Telegram Web. You test one thing:
+You are operating ONE admin's Telegram account in Telegram Web. Before sprint A0, ask the
+owner two names and write them down: the admin whose account you are working, and the
+other admin. "The other admin" in the sprints below means that second person. You test one thing:
 the **Payments** part of the company's Telegram bot, **`black_panther`** (it was called
 AtFactoryPrice before). You do the steps marked for the admin. Abdul, the Lagos office
 manager, does his steps from his phone at the same time. After each sprint you report
@@ -28,15 +43,24 @@ exactly. When a step and a rule disagree, the rule wins.
 2. **Only numbered steps.** Do not explore. Do not tap a button or type a line that a step
    does not name.
 3. **Ask before you approve.** Before any tap on `✅ Approve`, stop, quote the card to the
-   owner and wait for "yes". One exception: a payment whose reason reads exactly
-   `TEST do not pay` may be approved when the step says so, because the same sprint
-   rejects it.
+   owner and wait for "yes". There is no exception, not even for a test payment. Before
+   approving a payment whose reason reads `TEST do not pay`, also open it in
+   `🛂 Approvals` → `💳 Payments` and check its card does NOT carry
+   `⚠️ 1 of 2 approvals already given — a different admin must give the second.` If it
+   does, your tap would be the LAST approval and the test money would go to finance to be
+   paid: do not tap, tell the owner.
 4. **Ask before you choose a paying account.** When the bot asks
    `💳 Pay from which account?`, stop and ask the owner which chip to tap. Never choose
-   by yourself.
+   by yourself. If an `✅ Approve` tap on a TEST payment ever brings that question, or any
+   message other than the pop-up `🔏 Approval 1 of 2 recorded.`, stop and tell the owner.
+   If it ever produces `✅ Request … approved` or `now with finance to pay` on a TEST
+   payment, tell the owner AT ONCE so finance can `✖ Decline` it.
 5. **Never pay.** Never tap `✔ Mark Done`. That button belongs to the finance person.
+   Never tap `✖ Decline`, `⧉ Send anyway` or `⧉ Reject as duplicate` either, unless a
+   step names it and the owner said yes.
 6. **Never type these.** Do not type any line that starts with `Price`, `Sell`, `Return`,
-   `Transfer`, `Receive` or `Delivered`. They act on stock or prices at once.
+   `Transfer`, `Receive`, `Delivered`, `Done`, `Order` or `Task`. They act on stock,
+   prices, orders or tasks.
 7. **Stop on surprise.** If the bot shows something the step does not describe (an error,
    a different card, a button that should not be there), stop. Take a screenshot, write
    down what you saw, and ask the owner.
@@ -97,7 +121,7 @@ and the approval groups.
 | Step | Do | Expect |
 | --- | --- | --- |
 | 1 | Wait for a new copy of the payment card. | The same card, headed `🔔 [Abdul] asks for a decision · waiting … · reminder 1`, with `✅ Approve` and `❌ Reject`. The bill picture follows it again. |
-| 2 | Tap `✅ Approve` on it. (Reason is `TEST do not pay`, so rule 3's exception applies.) | Pop-up `🔏 Approval 1 of 2 recorded.` and the message `🔏 Request [id]: your approval is recorded (1 of 2). Waiting for a second admin.` |
+| 2 | Do the rule 3 check (the card must NOT carry `⚠️ 1 of 2 approvals already given …`). Quote the card to the owner, wait for "yes", then tap `✅ Approve` on it. | Pop-up `🔏 Approval 1 of 2 recorded.` and the message `🔏 Request [id]: your approval is recorded (1 of 2). Waiting for a second admin.` Anything else: stop (rule 4). |
 | 3 | Open `🛂 Approvals` → `💳 Payments` → the request. Tap `✅ Approve` again. | The card says `⚠️ 1 of 2 approvals already given — a different admin must give the second.` The tap is refused with a white pop-up `🔏 You already gave the first approval — a different admin must give the second.` (tap `OK`), then `🛂 💳 Payments — 1 still pending.` with `⬅ Back to list` and `🏠 Menu`. |
 | 4 | Tap `⬅ Back to list`, open the request again, tap `❌ Reject`. | Pop-up `Rejecting...`, then `❌ Request … rejected.` and `🛂 💳 Payments — N still pending.` |
 | 5 | Tap `⬅ Back to categories` if it is offered, then `❌ Close` or `🏠 Menu`. | If the group is now empty it shows `✅ Nothing left here.` with `⬅ Categories` and `❌ Close`. |

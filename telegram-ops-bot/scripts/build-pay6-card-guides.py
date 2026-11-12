@@ -21,7 +21,9 @@ How it works
      of its step label (`step=`, `=` in front = the whole label) and/or of its text
      (`text=`). An entry that matches no card, or more than one, STOPS the build
      with an error — a wording change in the bot can never leave a stale guide.
-     Every button named in a "Do:" line is checked against the captured buttons too.
+     Every button named in a "Do:" line is checked against the captured buttons too,
+     and every “…” quote in the guide's own words (captions, intros, info boxes, the
+     swim-lane) must be found in a captured card — so a quote can never go stale.
   3. The cards are drawn the way the phone shows them (*bold*, _dim italic_,
      `mono`; MarkdownV2 backslashes removed) and both PDFs are printed with
      headless Chromium.
@@ -318,8 +320,9 @@ class Gone:
 
 
 class Step:
-    def __init__(self, who, do, items, caption="", note=None, check=True, who_label=None):
+    def __init__(self, who, do, items, caption="", note=None, check=True, who_label=None, alt=0):
         self.who = who
+        self.alt = alt  # >0: another way to do the previous `alt` steps (drawn with "or, instead of …")
         self.do = do
         self.items = items
         self.caption = caption
@@ -374,6 +377,8 @@ def render_items(items, you=None):
             kind = "a picture with this text under it"
         elif it.card["kind"] == "document":
             kind = "a file with this text under it"
+        if it.edit_note and it.card["kind"] != "edit":
+            kind = (kind + " · " if kind else "") + it.edit_note
         col.append(phone_label(names, you, kind))
         for p in pending:
             if set(phones_of(p.card)) <= set(names):
@@ -402,7 +407,11 @@ def render_step(st, you=None, then=False):
     if st.note:
         left.append(f'<div class="snote">{st.note}</div>')
     left.append('<div class="tick">☐ matches</div>')
-    return ((f'<div class="stepwrap">' + ('<div class="then"><span>▼ then</span></div>' if then else ""))
+    if st.alt:
+        marker = f'<div class="then alt"><span>▼ or, instead of steps {st.num - st.alt}–{st.num - 1}:</span></div>'
+    else:
+        marker = '<div class="then"><span>▼ then</span></div>' if then else ""
+    return ((f'<div class="stepwrap">' + marker)
             + f'<div class="step"><div class="sl" style="border-left-color:{PEOPLE[who]["color"]}">{"".join(left)}</div>'
             f'<div class="sr">{render_items(st.items, you)}</div></div></div>')
 
@@ -450,10 +459,10 @@ def render_part(part, you=None):
 LANE = [
     # (part, actor, what the actor does, {recipient: what arrives}, now waiting on)
     ("A", "Abdul", "Registers his bank account (once)", {"Krishna": "approval card", "Musa": "approval card"}, "Krishna and Musa"),
-    ("A", "Krishna", "Approves the account — 1 of 2", {"Abdul": "“Approval 1 of 2”", "Musa": "“needs a second”"}, "Musa"),
+    ("A", "Krishna", "Approves the account — 1 of 2", {"Abdul": "“Approval 1 of 2”", "Musa": "“needs a SECOND”"}, "Musa"),
     ("A", "Musa", "Approves the account — 2 of 2", {"Abdul": "“Approved · 2 of 2”"}, "Abdul (the account is ready)"),
     ("B", "Abdul", "Asks for ₦25,000 · Transport to Idumota · bill", {"Krishna": "approval card + bill", "Musa": "approval card + bill"}, "Krishna and Musa"),
-    ("C", "Krishna", "First approval", {"Abdul": "“Approval 1 of 2”", "Musa": "“needs a second”"}, "Musa"),
+    ("C", "Krishna", "First approval", {"Abdul": "“Approval 1 of 2”", "Musa": "“needs a SECOND”"}, "Musa"),
     ("D", "Musa", "Last approval — taps the account to pay FROM", {"Abdul": "“Approved” + Paying from ZENITH", "Finance": "payment card: From and To"}, "Finance"),
     ("E", "Finance", "Pays at the bank, taps ✔ Mark Done", {"Abdul": "“Paid” · From and To", "Krishna": "“Paid” · From and To", "Musa": "“Paid” · From and To"}, "Finance (the proof)"),
     ("E", "Finance", "Sends the transfer screenshot", {"Abdul": "proof picture", "Krishna": "proof picture", "Musa": "proof picture"}, "nobody — finished"),
@@ -531,18 +540,23 @@ def owner_parts():
                  "<b>Whoever approves a payment can never pay it</b> (the four-eyes rule) — so the finance phone must "
                  "belong to someone who never approves.", [
         Step("Krishna", "On Railway, open the bot's <b>Variables</b> and set "
-             "<code>FINANCE_IDS</code> = the Telegram id of the person who pays. Save; the bot restarts by itself.",
+             "<code>FINANCE_IDS</code> = the Telegram id of the person who pays. Save (press Deploy if Railway asks); "
+             "the bot restarts with the new value.",
              [], "Use an id that <b>never approves</b>. If an admin's id is put here, that admin can still approve "
              "payments, but can never pay the ones they approved.", who_label="Krishna (you)", check=False),
-        Step("Krishna", "On the laptop, in the bot folder, run <code>node scripts/seed-finance-department.js</code> "
+        Step("Krishna", "On the laptop, in the <code>telegram-ops-bot</code> folder (it needs the bot's "
+             "<code>.env</code> file; or put <code>railway run</code> in front), run "
+             "<code>node scripts/seed-finance-department.js</code> "
              "(it only shows what it would do), then <code>node scripts/seed-finance-department.js --commit</code>.",
              [], "It adds the department <b>Finance</b> to the Departments sheet, with <b>payments</b> as its only "
-             "activity. If the department is already there, it says so and changes nothing.",
+             "activity. If the department is already there, it says so and changes nothing. Or, with no laptop: "
+             "👥 Human Resources → 🏢 Manage Departments → add Finance with only Payments ticked.",
              who_label="Krishna (you)", check=False),
         Step("Krishna", "In the <b>Users</b> sheet, on the finance person's row: <b>department</b> = Finance, "
              "<b>status</b> = active, <b>role</b> = not admin.", [],
-             "Exactly one active person in Finance. With nobody (or several) there, payment cards go to all admins "
-             "with a warning instead.", who_label="Krishna (you)", check=False),
+             "This gives that person the 💰 Finance → 💳 Payments menu. Only if FINANCE_IDS is left empty does the "
+             "bot look here to find who pays: then exactly one active person must be in Finance; with nobody, or "
+             "several, payment cards go to all admins with a warning.", who_label="Krishna (you)", check=False),
         Step("Krishna", f"Check on Telegram: open {b('💰 Finance')} → {b('💳 Payments')} on your phone, then on "
              "the finance phone.",
              [Card(S("setup", step="Krishna taps 💳 Payments")),
@@ -597,7 +611,7 @@ registers an account (Part A, step 2) or records a customer payment (Part H).</p
              [Pop(S("register", step="Musa taps ✅ Approve on the reminder copy", kind="popup")),
               Card(S("register", step="Musa taps ✅ Approve on the reminder copy", to="Musa", kind="message")),
               Card(S("register", step="Musa taps ✅ Approve on the reminder copy", to="Abdul"))],
-             "Two approvals: the account is registered. (In this run Musa tapped the copy Abdul's 🔔 reminder sent him — any copy works.)"),
+             "Two approvals: the account is registered. Any copy of the card works."),
         Step("Abdul", f"Open {b('💳 Payments')} again.",
              [Card(S("register", step="his account is now approved", kind="edit", text="Payments"))],
              "He now has 1 registered account and can ask for payments into it."),
@@ -637,8 +651,10 @@ registers an account (Part A, step 2) or records a customer payment (Part H).</p
              [Card(S("request", step="Abdul opens My requests after the first signature")),
               Pop(S("request", step="reminds the approvers after the first signature", kind="popup")),
               Card(S("request", step="reminds the approvers after the first signature", to="Abdul", kind="message")),
-              Card(S("request", step="reminds the approvers after the first signature", to="Musa", kind="message"))],
-             "The reminder goes only to the admin who has not signed (Musa), with the bill again. Once a day at most.",
+              Card(S("request", step="reminds the approvers after the first signature", to="Musa", kind="message")),
+              Card(S("request", step="reminds the approvers after the first signature", kind="photo"))],
+             "The reminder card goes only to the admin who has not signed (Musa). The bill picture is sent again to "
+             "both admins, Krishna included (last card). Once a day at most.",
              check=False),
     ])
 
@@ -655,17 +671,19 @@ registers an account (Part A, step 2) or records a customer payment (Part H).</p
               Card(S("request", step="MAIN · Abdul checks his request while the picker is open"))],
              "“Not now” approves nothing. Abdul's 📋 Status still reads 1 of 2. Musa can tap ✅ Approve again later "
              "— the same question comes back."),
-        Step("Musa", f"Tap {b('✅ Approve')} again, then {b('🏦 ' + acct_a)}.",
-             [Pop(S("request", step="MAIN · Musa picks the paying account", kind="popup")),
+        Step("Musa", f"Tap {b('✅ Approve')} again — the same question comes as a new message — then tap {b('🏦 ' + acct_a)}.",
+             [Pop(S("request", step="MAIN · Musa taps Approve again", kind="popup")),
+              Card(S("request", step="MAIN · Musa taps Approve again", kind="message"), new=True),
+              Pop(S("request", step="MAIN · Musa picks the paying account", kind="popup")),
               Card(S("request", step="MAIN · Musa picks the paying account", to="Musa", kind="message"), new=True),
               Card(S("request", step="MAIN · Musa picks the paying account", to="Abdul"), new=True)],
              "Now it is approved. Musa's result and Abdul's closing card both end “Paying from …”. "
              "At the same moment the finance phone gets its card (Part E)."),
-        Step("Musa", f"The same from {b('🛂 Approvals')} → {b('💳 Payments — 1 ⚠️ 🟢today')} → the request.",
+        Step("Musa", f"<b>Another way</b>, from {b('🛂 Approvals')} → {b('💳 Payments — 1 ⚠️ 🟢today')} → the request.",
              [Card(S("request", step="Musa opens 🛂 Approvals → 💳 Payments → the request")),
               Card(S("request", step="Musa picks the paying account (picker drawn from the inbox)", text="still pending"))],
              "The inbox card warns that one approval is already given. ✅ Approve asks the same question; after the "
-             "pick the inbox says how many are still pending.", check=False),
+             "pick the inbox says how many are still pending.", check=False, alt=3),
     ])
 
     E = Part("E", "The finance phone pays",
@@ -761,11 +779,19 @@ registers an account (Part A, step 2) or records a customer payment (Part H).</p
               Card(S("received", step="Musa taps ✅ Approve on his approval card", to="Musa", text="Outstanding")),
               Card(S("received", step="Musa taps ✅ Approve on his approval card", to="Abdul"))],
              "Recorded: ABBA's balance moves down by 50,000. Abdul's closing card does not show the balance."),
-        Step("Abdul", "If the very same payment is entered again a few minutes later, it is NOT refused — the admins are warned.",
-             [Card(S("received", step="about three minutes after the open one", to="Krishna")),
-              Card(S("received", step="Krishna taps ⧉ Reject as duplicate", to="Abdul"))],
-             "One tap on ⧉ Reject as duplicate closes the copy and tells Abdul which request is still open.",
+        Step("Abdul", "Enters the very same payment again while the first is still waiting for approval "
+             "(more than 20 seconds later — a quick double tap is simply one request).",
+             [Card(S("received", step="about three minutes after the open one", to="Abdul")),
+              Card(S("received", step="about three minutes after the open one", to="Krishna"),
+                   also=[S("received", step="about three minutes after the open one", to="Musa")])],
+             "A separate example — its numbers differ from steps 30–33: R-E61D, another 50,000 from ABBA, was "
+             "still waiting; R-A2F0 repeats it. It is NOT refused — both admins get it marked ⚠️ Possible duplicate.",
              check=False),
+        Step("Krishna", f"Tap {b('⧉ Reject as duplicate')} on the marked card.",
+             [Pop(S("received", step="Krishna taps ⧉ Reject as duplicate", kind="popup")),
+              Card(S("received", step="Krishna taps ⧉ Reject as duplicate", to="Krishna", kind="message")),
+              Card(S("received", step="Krishna taps ⧉ Reject as duplicate", to="Abdul"))],
+             "One tap closes the copy and tells Abdul which request is still open.", check=False),
     ])
     return [setup, A, B, C, D, E, F, G, H]
 
@@ -796,7 +822,8 @@ def abdul_parts():
               Card(S("register", step="=Abdul types the account number: 0123456789")),
               Card(S("register", step="last digit wrong"), check=False),
               Card(S("register", step="Abdul types the same number once more"))],
-             "The bot compares the two. If they differ (third card), type it again. Then pick your bank."),
+             "The bot compares the two. If they differ (third card), type it again. Then tap YOUR bank (GTBank, "
+             "Zenith …). The two buttons ending “— BLACK PANTHER” are the company's own accounts — never pick them here."),
         Step("Abdul", f"Tap your bank ({b('🏛 GTBank')}), check, tap {b('✅ Submit for approval')}.",
              [Card(S("register", step="Abdul taps 🏛 GTBank", kind="edit")),
               Card(S("register", step="=Abdul taps ✅ Submit for approval", to="Abdul", kind="message"))],
@@ -820,14 +847,16 @@ def abdul_parts():
         Step("Abdul", f"Send the photo of the bill (or tap {b('⏭ Skip — no bill')}), check, tap {b('✅ Submit for approval')}.",
              [Card(S("request", step="MAIN · Abdul attaches the bill")),
               Card(S("request", step="MAIN · Abdul submits", to="Abdul", kind="message"))],
-             "Your receipt has the payment number (PAY-…). Keep it."),
+             "Your receipt has the payment number (PAY-…). Keep it. The approval cards that follow use a short "
+             "number, R-…: both mean this same request — quote either."),
     ])
     three = Part("3", "While you wait",
                  "Two admins must approve. You are told at each approval.", [
         Step("Abdul", "Wait for the first approval.",
              [Card(S("request", step="MAIN · Krishna approves", to="Abdul")),
-              Card(S("request", step="MAIN · Abdul checks his request while the picker is open"))],
-             f"Tap {b('📋 Status')} any time to see who has signed and how long it has waited (second card).",
+              Card(S("request", step="MAIN · Abdul checks his request while the picker is open"), check=False)],
+             f"Tap {b('📋 Status')} any time to see who has signed and how long it has waited (second card — "
+             "only if you tap it).",
              who_label="You wait"),
         Step("Abdul", f"If it waits too long, tap {b('🔔 Remind approvers')}.",
              [Card(S("request", step="Abdul opens My requests after the first signature")),
@@ -835,7 +864,7 @@ def abdul_parts():
               Card(S("request", step="reminds the approvers after the first signature", to="Abdul", kind="message")),
               Pop(S("request", step="Abdul taps the reminder a second time the same day"))],
              "The reminder goes only to the admin who has not signed yet. <b>Once a day</b>: a second tap the same day "
-             "is refused (last pop-up — close it with OK)."),
+             "is refused (last pop-up — close it with OK). Only if you need it.", check=False),
     ])
     four = Part("4", "Approved — the card now names the account it will be paid from",
                 "New in this release: the last admin chooses the company account the money comes FROM.", [
@@ -857,9 +886,9 @@ def abdul_parts():
     ])
     six = Part("6", "My requests — every request and where it stands", "", [
         Step("Abdul", f"{b('💳 Payments')} → {b('📋 My requests')}.",
-             [Card(S("finance", step="=Abdul taps 📋 My requests")),
-              Card(S("request", step="Abdul opens My requests after both signatures"))],
-             "⏳ waiting for approval (who signed, and a 🔔 button) · 🏦 with finance to pay · ✅ paid · "
+             [Card(S("request", step="Abdul opens My requests after both signatures"), edit_note="while finance has it"),
+              Card(S("finance", step="=Abdul taps 📋 My requests"), edit_note="after it is paid")],
+             "An example list — yours shows only the requests you raised. Each line carries one of these states: ⏳ waiting for approval (who signed, and a 🔔 button) · 🏦 with finance to pay · ✅ paid · "
              "✖ declined by finance (with the reason) · ❌ rejected.", check=False),
     ], check=False)
     seven = Part("7", "Two things the bot will refuse", "", [
@@ -889,11 +918,15 @@ def abdul_parts():
              [Card(S("received", step="=Abdul types the amount: 50000")),
               Card(S("received", step="=Abdul taps 🏦 Zenith")),
               Card(S("received", step="=Abdul taps ✅ Submit for approval", to="Abdul"))],
-             "The customer's balance moves only after the admins approve."),
+             "Tap the bank the money went into — in this example 🏦 Zenith. The buttons ending “— BLACK PANTHER” "
+             "are the company's own accounts; which one to tap for money paid into the company's Zenith account is "
+             "Krishna's call — ask him before your first real entry. The customer's balance moves only after the "
+             "admins approve."),
         Step("Abdul", "Wait for the approvals.",
              [Card(S("received", step="Krishna taps ✅ Approve on his approval card", to="Abdul")),
               Card(S("received", step="Musa taps ✅ Approve on his approval card", to="Abdul"))],
-             "Two approvals today. 💵 Record another starts the next one.", who_label="You wait"),
+             "Two approvals today (the card above says “An admin”; Krishna is deciding which is right). "
+             "💵 Record another starts the next one.", who_label="You wait"),
     ])
     return [one, two, three, four, five, six, seven, eight]
 
@@ -954,7 +987,10 @@ def abdul_cover():
  <div class="three">
   <div class="box"><div class="btitle">What you will do</div>
    <p>Register your bank account once. Ask for a payment (amount, what it is for, the bill). Wait while two admins
-   approve. Receive the Paid message. Record a payment a customer made.</p></div>
+   approve. Receive the Paid message. Record a payment a customer made.</p>
+   <p class="small">In the live test Krishna may ask you to type test figures instead of the example here
+   (₦1,000 with the reason <b>TEST do not pay</b>; a salary of ₦1,100 and an advance of ₦1,500 for next month).
+   The cards are the same; only the figures change.</p></div>
   <div class="box"><div class="btitle">Who else is involved</div>
    <div class="castrow">{badge("Krishna")}<span>admin — approves</span></div>
    <div class="castrow">{badge("Musa")}<span>admin — approves, and chooses the company account that pays you</span></div>
@@ -967,6 +1003,7 @@ def abdul_cover():
 
 def checklist_owner(parts):
     per = checklist_rows(parts, messages_only=True)
+    optional = [str(st.num) for p in parts if p.check for st in p.steps if not st.check]
     cols = []
     for n in NAMES:
         items = "".join(
@@ -976,7 +1013,8 @@ def checklist_owner(parts):
     return f"""
 <section class="part"><div class="pband"><span class="pkey">✓</span><span class="ptitle">Checklist — every message each phone should receive, in order</span></div>
 <div class="pintro">Parts A to E and H (the main journey). Each line is the first line of the card; the number is the step.
-Tick it when it arrives. The order is part of the test.</div>
+Tick it when it arrives. The order is part of the test. Left out: the optional steps
+{", ".join(optional)} and the parts F and G (do them only when you test them).</div>
 <div class="ckgrid">{"".join(cols)}</div></section>"""
 
 
@@ -992,7 +1030,7 @@ def checklist_abdul(parts):
     return f"""
 <section class="part"><div class="pband"><span class="pkey">9</span><span class="ptitle">Your checklist — and if a card looks different</span></div>
 <div class="pintro">Every screen and message that should appear on your phone in parts 1 to 5 and 8, in order. Each line is the first line
-of the card; the number is the step. Tick it when it arrives.</div>
+of the card; the number is the step. Tick it when it arrives. Optional taps (📋 Status, 🔔 Remind approvers) are left out.</div>
 <div class="ckgrid two">{"".join(cols)}</div>
 <div class="golden"><div class="gbody">If a card looks different from this guide: take a screenshot and send it to Krishna,
 with the step number.</div><div class="gwhy">Send the whole card, with its buttons. A different word, a missing line, a different
@@ -1021,6 +1059,45 @@ def assert_abdul_only(parts):
                     die(f"Abdul's copy would show a customer's outstanding balance: step {st.num}")
 
 
+# Words in “…” in the guide's own prose that are NOT the bot's: the owner's own words.
+NOT_BOT_WORDS = {"polished later"}
+PROSE = []
+
+
+def check_quotes():
+    """Every “…” quote in the hand-written prose (Do lines, captions, intros,
+    info boxes, covers, the swim-lane) must be the bot's words: each piece of it
+    (split on …) must appear in some captured card's text or buttons. A wording
+    change in the bot then stops the build instead of leaving a stale quote."""
+    corpus = []
+    for seg in CARDS.values():
+        for c in seg:
+            corpus.append(plain(c))
+            corpus.append(c["text"])
+            corpus.extend(x for row in c["buttons"] for x in row)
+    blob = "\n".join(corpus)
+    flat = re.sub(r"\s+", " ", blob)
+    bad = []
+    for chunk in PROSE:
+        t = html.unescape(re.sub(r"<[^>]+>", "", chunk))
+        for q in re.findall(r"“([^”]{2,200})”", t):
+            if q in NOT_BOT_WORDS:
+                continue
+            pieces = [x.strip() for x in re.split(r"…|\.\.\.", q) if x.strip()]
+            if not all(x in blob or re.sub(r"\s+", " ", x) in flat for x in pieces):
+                bad.append(q)
+    if bad:
+        die("the guide quotes words no captured card carries (the bot's wording changed?): "
+            + ", ".join(repr(x) for x in sorted(set(bad))))
+
+
+def collect_prose(parts):
+    for p in parts:
+        PROSE.extend([p.title, p.intro, p.extra_html])
+        for st in p.steps:
+            PROSE.extend([st.do, st.caption or "", st.note or ""])
+
+
 def check_buttons():
     missing = sorted({x for x in USED_BUTTONS if x not in ALL_BUTTONS})
     if missing:
@@ -1036,6 +1113,8 @@ def page(title, copy, body):
 def build_owner():
     parts = owner_parts()
     number_steps(parts)
+    collect_prose(parts)
+    PROSE.append(owner_cover())
     body = [owner_cover(), f'<section class="lanepage">{swimlane()}</section>']
     body.append('<section class="flow">' + "".join(render_part(p) for p in parts) + "</section>")
     body.append(checklist_owner(parts))
@@ -1045,7 +1124,9 @@ def build_owner():
 def build_abdul():
     parts = abdul_parts()
     number_steps(parts)
+    collect_prose(parts)
     assert_abdul_only(parts)
+    PROSE.append(abdul_cover())
     body = [abdul_cover(), f'<section class="lanepage">{swimlane(highlight="Abdul", title="The whole journey at a glance — your column is highlighted")}</section>']
     body.append('<section class="flow">' + "".join(render_part(p, you="Abdul") for p in parts) + "</section>")
     body.append(checklist_abdul(parts))
@@ -1128,6 +1209,7 @@ code { font-family:"DejaVu Sans Mono",monospace; font-size:.9em; background:#eef
 .tshead { display:flex; align-items:center; gap:2.4mm; margin-bottom:1.6mm; }
 .then { display:flex; align-items:center; gap:2mm; height:3.4mm; margin:1.4mm 0 .8mm; color:#7d8b99; font-size:7pt; letter-spacing:1px; }
 .then::before, .then::after { content:""; flex:1; border-top:1px dashed #c9d3dc; }
+.then.alt { color:#a3232a; font-weight:700; font-size:7.6pt; letter-spacing:.4px; }
 
 /* cards */
 .cards { display:flex; flex-wrap:wrap; gap:3.4mm 3.6mm; align-items:flex-start; }
@@ -1145,7 +1227,7 @@ code { font-family:"DejaVu Sans Mono",monospace; font-size:.9em; background:#eef
 .bubble { background:#182533; border-radius:2.4mm; padding:2mm 2.4mm 1.8mm; }
 .txt { color:#e9eef3; font-size:7.7pt; line-height:1.36; white-space:pre-wrap; word-wrap:break-word; overflow-wrap:anywhere; }
 .txt b { color:#fff; }
-.txt i { color:#8fa3b5; font-style:italic; }
+.txt i { color:#b4c4d3; font-style:italic; }
 .txt code { background:#0e1621; border-radius:1mm; padding:0 .6mm; font-family:"DejaVu Sans Mono",monospace; font-size:7.2pt; color:#a9c7e4; }
 .krow { display:flex; gap:1.2mm; margin-top:1mm; }
 .kbtn { flex:1; min-width:0; background:#22303f; color:#e9eef3; text-align:center; font-size:7.3pt; padding:1.3mm 1mm; border-radius:1.6mm; overflow-wrap:anywhere; }
@@ -1202,6 +1284,9 @@ def chromium():
 
 def print_pdf(html_path, pdf_path):
     exe = chromium()
+    pdf = pathlib.Path(pdf_path)
+    if pdf.exists():
+        pdf.unlink()  # so a run that writes nothing can never leave the old PDF looking fresh
     p = subprocess.run([exe, "--headless=new", "--no-sandbox", "--disable-gpu", "--no-pdf-header-footer",
                         f"--print-to-pdf={pdf_path}", str(html_path)], capture_output=True, text=True)
     if p.returncode != 0 or not pathlib.Path(pdf_path).exists():
@@ -1227,6 +1312,8 @@ def main():
     outputs = [("PAY-6_CARDS_OWNER", "Payments card by card — owner", build_owner()),
                ("PAY-6_CARDS_ABDUL", "Payments card by card — Abdul", build_abdul())]
     check_buttons()
+    PROSE.extend(x for row in LANE for x in [row[2], row[4], *row[3].values()])
+    check_quotes()
     for name, _title, doc in outputs:
         hp = DOCS / f"{name}.html"
         hp.write_text(doc, encoding="utf-8")

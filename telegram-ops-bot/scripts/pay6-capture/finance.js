@@ -42,8 +42,8 @@ const MUSA = '9002';
 const FINANCE = '7001';
 const CAST = { [ABDUL]: 'Abdul', [KRISHNA]: 'Krishna', [MUSA]: 'Musa', [FINANCE]: 'Finance' };
 
-const PAY_ID = 'PAY-20261111-4F7A2C1B';
-const REQ_ID = '4f72a9c1-3b5e-4d8a-9c1f-2e7b6a5d4c3b';      // shows as R-4F72
+const PAY_ID = 'PAY-20261111-55D1E2E6';   // the same payment as request.js
+const REQ_ID = 'aff1f05e-86f3-44c1-a086-d027e1350082';      // shows as R-AFF1 — request.js's id
 const BILL_FILE = 'BILL-PHOTO-ABDUL-1';
 const PROOF_FILE = 'PROOF-SCREENSHOT-1';
 const PROOF_PDF = 'PROOF-RECEIPT-PDF-1';
@@ -57,12 +57,14 @@ const REQ2_ID = '8b1d44e7-52aa-4c0f-b6d3-90f1a2c7e511';     // R-8B1D
 const PAY3_ID = 'PAY-20261111-A91F0B6E';
 const REQ3_ID = 'c6e0d2f4-1a7b-4e39-8f55-3d2c9b7a6e10';     // R-C6E0
 
-// Lagos is UTC+1: 10:20 Lagos = 09:20Z.
+// Lagos is UTC+1: 10:20 Lagos = 09:20Z. The worked payment's clock follows on
+// from request.js (raised 10:20, Krishna 10:26, Musa 10:44), so the guides show
+// ONE payment with one number and one timeline.
 const T = {
-  raised: '2026-11-11T08:40:00.000Z',      // 09:40 Lagos — Abdul raises
-  sign1: '2026-11-11T08:55:00.000Z',       // 09:55 — Krishna signs first
-  approved: '2026-11-11T09:05:00.000Z',    // 10:05 — Musa gives the second approval
-  now: '2026-11-11T09:20:00.000Z',         // 10:20 — the finance phone acts
+  raised: '2026-11-11T09:20:00.000Z',      // 10:20 Lagos — Abdul raises
+  sign1: '2026-11-11T09:26:00.000Z',       // 10:26 — Krishna signs first
+  approved: '2026-11-11T09:44:00.000Z',    // 10:44 — Musa gives the second approval
+  now: '2026-11-11T09:50:00.000Z',         // 10:50 — the finance phone acts
 };
 
 /* ───────────────────────────── scenarios (parent) ─────────────────────── */
@@ -99,9 +101,9 @@ function runParent() {
   const fs = require('fs');
   const out = {
     segment: 'finance',
-    clock: 'Fake Date (global.Date replaced; frozen, moved only by the script). The finance phone acts at 11-Nov-2026 10:20 Lagos (09:20Z); raised 09:40, first approval 09:55, second approval 10:05.',
+    clock: 'Fake Date (global.Date replaced; frozen, moved only by the script). The finance phone acts at 11-Nov-2026 10:50 Lagos (09:50Z); raised 10:20, first approval 10:26, second approval 10:44 — the same payment and clock as request.js.',
     cast: { Abdul: ABDUL, Krishna: KRISHNA, Musa: MUSA, Finance: FINANCE },
-    payment: { payment_id: PAY_ID, approval_request_id: REQ_ID, ref: 'R-4F72', amount_ngn: 25000, reason: 'Transport to Idumota', bank: 'GTBank', account_number: '0123456789', bill_file_id: BILL_FILE },
+    payment: { payment_id: PAY_ID, approval_request_id: REQ_ID, ref: 'R-AFF1', amount_ngn: 25000, reason: 'Transport to Idumota', bank: 'GTBank', account_number: '0123456789', bill_file_id: BILL_FILE },
     scenarios: [],
     cards: [],
     checks: [],
@@ -209,7 +211,7 @@ async function runChild(name) {
     // …and its ids are pinned so the result can be compared with the seed.
     const crypto = require('crypto');
     crypto.randomUUID = () => REQ_ID;
-    crypto.randomBytes = (len) => Buffer.from('4F7A2C1B'.repeat(Math.ceil(len / 4)), 'hex').subarray(0, len);
+    crypto.randomBytes = (len) => Buffer.from('55D1E2E6'.repeat(Math.ceil(len / 4)), 'hex').subarray(0, len);
   }
   installFakeSheets(sheets);
   installFakeIntent(() => ({ action: 'unknown', confidence: 0 }));
@@ -476,7 +478,7 @@ async function runChild(name) {
       p.id, 'Abdul', 'employee', ACCOUNT_ID, '0123456789', 'GTBank', p.amount, p.amount >= 50000 ? '1' : '',
       ABDUL, p.raisedAt, p.req, approvedLike ? 'Krishna ‖ Musa' : '', sheetStatus,
       p.bill || '', p.proof || '', ['done', 'declined'].includes(st) ? FINANCE : '',
-      ['done', 'declined'].includes(st) ? (p.doneAt || '11-Nov-2026, 10:20') : '', p.declineReason || '', p.reason, from,
+      ['done', 'declined'].includes(st) ? (p.doneAt || '11-Nov-2026, 10:50') : '', p.declineReason || '', p.reason, from,
     ]);
     paymentRequestsRepo.invalidateCache();
     REASONS.push({ paymentId: p.id, approvalRequestId: p.req, requesterId: ABDUL, requesterName: 'Abdul', payeeName: 'Abdul', payeeType: 'employee', amountNgn: p.amount, reasonText: p.reason });
@@ -512,7 +514,7 @@ async function runChild(name) {
   S.card_paid_proof = async () => {
     seedPayment({ ...WORKED, state: 'approved' });
     setClock(T.approved);
-    step('Bot (after Musa\'s second approval)', 'Musa has just given the second approval (10:05) — the bot hands the payment to the finance phone', CARD_NOTE, cardEach);
+    step('Bot (after Musa\'s second approval)', 'Musa has just given the second approval (10:44) — the bot hands the payment to the finance phone', CARD_NOTE, cardEach);
     await firstFinanceCard();
     checks.push({ internal: true, what: 'seeded', value: comparable() });
 
@@ -687,9 +689,9 @@ async function runChild(name) {
   // (5) My requests.
   S.my_requests = async () => {
     seedPayment({ ...SECOND, state: 'declined', doneAt: '10-Nov-2026, 17:05', declineReason: 'Account name does not match' });
-    seedPayment({ ...WORKED, state: 'done', doneAt: '11-Nov-2026, 10:20', proof: PROOF_FILE });
+    seedPayment({ ...WORKED, state: 'done', doneAt: '11-Nov-2026, 10:50', proof: PROOF_FILE });
     seedPayment({ ...THIRD, state: 'pending', signed: 1 });
-    setClock('2026-11-11T09:30:00.000Z');
+    setClock('2026-11-11T10:00:00.000Z');   // 11:00 Lagos
     step('Abdul', 'Abdul types "menu"', 'Context card. Abdul\'s tiles depend on his department\'s allowed_activities in the Departments sheet — seeded here (ILLUSTRATIVE) as Operations = supply_request, sell_bale, check_stock, transfer_stock, mark_attendance. 💳 Payments and 📋 My Tasks are added by the bot for everyone.');
     await type(ABDUL, 'menu');
     await openPayments(ABDUL);
@@ -700,8 +702,8 @@ async function runChild(name) {
 
   // (6) the Decided record.
   S.decided_record = async () => {
-    seedPayment({ ...WORKED, state: 'done', doneAt: '11-Nov-2026, 10:20', proof: PROOF_FILE });
-    setClock('2026-11-11T10:00:00.000Z');   // 11:00 Lagos
+    seedPayment({ ...WORKED, state: 'done', doneAt: '11-Nov-2026, 10:50', proof: PROOF_FILE });
+    setClock('2026-11-11T10:10:00.000Z');   // 11:10 Lagos
     step('Krishna', 'Krishna (admin) types "menu"', 'Context card: the admin menu.');
     await type(KRISHNA, 'menu');
     if (findButton(KRISHNA, 'act:approvals_inbox') == null) {
@@ -733,7 +735,7 @@ async function runChild(name) {
       () => setRow(PAY_ID, { status: 'approved', done_by: '', done_at: '', proof_file_id: '' }));
     await variant('VARIANT — the same record after finance DECLINED the payment',
       'Money line: "✖ Declined by <finance person> · <reason>". The first line still says approved — the admins did approve it. (State produced by setting the PaymentRequests row to "declined".)',
-      () => setRow(PAY_ID, { status: 'declined', done_by: FINANCE, done_at: '11-Nov-2026, 10:21', decline_reason: 'Account name does not match' }));
+      () => setRow(PAY_ID, { status: 'declined', done_by: FINANCE, done_at: '11-Nov-2026, 10:51', decline_reason: 'Account name does not match' }));
     await variant('VARIANT — the record of a payment request an ADMIN rejected (it never reached finance)',
       'Money line: "❌ Rejected by <admin>". (State produced by setting the queue row to rejected by Musa and the PaymentRequests row to "rejected".)',
       () => {
@@ -749,13 +751,13 @@ async function runChild(name) {
     seedPayment({ ...WORKED, state: 'approved' });
     const reminder = src('services/approvalReminder');
     await silently(async () => { setClock(T.approved); await firstFinanceCard(); });
-    setClock('2026-11-11T13:00:00.000Z');   // 14:00 Lagos — 3 h 55 min after the first card
+    setClock('2026-11-11T13:39:00.000Z');   // 14:39 Lagos — 3 h 55 min after the first card
     const before = raw.length;
     await silently(async () => { await reminder.sweep(bot); });
-    checks.push({ what: 'bot calls made by the hourly sweep at 14:00 Lagos, 3 h 55 min after the first card (not yet due)', value: raw.length - before, expect: 0 });
+    checks.push({ what: 'bot calls made by the hourly sweep at 14:39 Lagos, 3 h 55 min after the first card (not yet due)', value: raw.length - before, expect: 0 });
     reminder._resetForTests();   // forgets only this process's "last pass" memory; the finance clock is the event trail
-    setClock('2026-11-11T14:00:00.000Z');   // 15:00 Lagos — 4 h 55 min after the first card
-    step('Bot (hourly reminder sweep)', 'Nobody has paid or declined for more than 4 hours — the hourly reminder sweep runs at 15:00',
+    setClock('2026-11-11T14:39:00.000Z');   // 15:39 Lagos — 4 h 55 min after the first card
+    step('Bot (hourly reminder sweep)', 'Nobody has paid or declined for more than 4 hours — the hourly reminder sweep runs at 15:39',
       'Driven: approvalReminder.sweep(bot) — the function server.js schedules 60 s after boot and then every hour; its finance pass is approvalReminder.sweepFinance, which calls paymentCards.sendFinanceCard(bot, id, { kind: "reminder_sent" }). THE RE-SENT CARD IS BYTE-IDENTICAL TO THE FIRST ONE — it carries no "reminder" wording. Due once Settings PAYMENT_FINANCE_REMINDER_HOURS (default 4; 0 = off) have passed since the later of the approval and the last finance card / reminder; it repeats every such interval until the payment is paid or declined. The earlier copy stays on screen with its buttons. A seat that approved the payment gets its locked copy again.');
     await reminder.sweep(bot);
     const copies = [...chatScreen(FINANCE).entries()].filter(([, m]) => m.kb.some((r) => r.some((b) => b.callback_data === `pay:done:${PAY_ID}`))).map(([id]) => Number(id));
