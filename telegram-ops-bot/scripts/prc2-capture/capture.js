@@ -11,8 +11,9 @@
  * Scenes (each in its own process, on the same seeded workbook):
  *   A  Abdul knows the amount and asks Musa; Musa approves, Krishna approves.
  *   B  Abdul does not know the amount; Musa types it; Krishna checks it.
- *   C  Musa does not answer: reminders, 🔔 Remind approvers, the widen hour,
- *      Krishna approves first from 🛂 Approvals.
+ *   C  Musa does not answer: the timer every hour 11:00–23:00 (reminder
+ *      rounds, the widen card at four hours, a later round with two notes),
+ *      🔔 Remind approvers, Krishna approves first from 🛂 Approvals.
  *   D  Abdul taps 👥 Any admin: both admins get the ordinary card.
  *
  * Prints ONE JSON document on stdout. Every log line goes to stderr.
@@ -374,22 +375,23 @@ async function sceneC() {
   FACTS.nudge = { musa: sentIn('c_nudge', MUSA).length, krishna: sentIn('c_nudge', KRISHNA).length };
   // The timer runs every hour: it checks the asked admin's wait every time
   // (the widen card, PRC-2b) and re-sends reminders every
-  // APPROVAL_REMINDER_HOURS (6). Each hour is run, so the guide shows when
-  // each really arrives.
+  // APPROVAL_REMINDER_HOURS (6) on its own clock (11:00, 17:00, 23:00 here).
+  // Each hour up to 23:00 is run, so the guide shows when each really
+  // arrives, including a round after the widen card (two notes).
   const hourly = [];
-  for (const h of [12, 13, 14, 15, 16, 17]) {
+  for (let h = 12; h <= 23; h += 1) {
     at(`${h}:00:00`);
     await timer(`c_hour${h}`, `The bot's reminder timer runs at ${h}:00`);
     hourly.push({ at: `${h}:00`, musa: sentIn(`c_hour${h}`, MUSA).length, krishna: sentIn(`c_hour${h}`, KRISHNA).length });
   }
   FACTS.hourly_timer = hourly;
-  at('17:10:00');
+  at('23:10:00');
   await types('c_kmenu', KRISHNA, 'menu', 'Krishna types: menu');
   await taps('c_more', KRISHNA, /^📋 More Options/);
   await taps('c_inbox', KRISHNA, /^🛂 Approvals/);
   await taps('c_cat', KRISHNA, findCategory(KRISHNA));
   await tapRow('c_item', KRISHNA, REQ);
-  at('17:11:00');
+  at('23:11:00');
   await taps('c_kok', KRISHNA, '✅ Approve', 'Krishna taps ✅ Approve on the 🛂 Approvals card');
   FACTS.after_krishna = { approvals: jsonOf(queueRows()[0]).approvals, status: queueRows()[0][4] };
 }

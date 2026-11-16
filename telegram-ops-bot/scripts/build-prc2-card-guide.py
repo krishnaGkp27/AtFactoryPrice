@@ -237,30 +237,34 @@ def parts():
     ])
 
     p3 = Part("Part 3", "Musa does not answer",
-              "Abdul asks Musa (as in Part 1), and Musa does not answer. The bot re-sends waiting cards by itself, in "
-              "rounds; a round reaches Musa only. Separately, the bot checks every hour how long the request has "
-              "waited: once the wait time is over (4 hours, unless Krishna changed it) Krishna gets the full card, "
-              "once, whether reminder rounds are on or off. Musa is never told about himself. <b>In this run</b> "
-              "Abdul submits at 10:00, Musa's rounds come at 11:00 and 17:00, and Krishna's card at 14:00. "
+              "Abdul asks Musa (as in Part 1), and Musa does not answer. Four hours after the request (the bot checks "
+              "once an hour) every other admin gets the card. Musa is never told about himself. The bot also re-sends "
+              "waiting cards in reminder rounds, on its own clock. <b>In this run</b> Abdul submits at 10:00, Musa's "
+              "reminder comes at 11:00, Krishna's card at 14:00, and later rounds at 17:00 and 23:00. "
               "Start Part 3 early in the day.", [
         Step("Abdul", f"Record 50,000 from ABBA, tap {b('🛂 Musa')}, tap {end('✅ Submit for approval')}",
              [Card(S("C", "c_submit", to="Abdul"))], "Same as steps §a1–§a3."),
-        Step("Bot", "Nothing to tap. Musa does not answer. Wait for the bot's first reminder round.",
+        Step("Bot", "Nothing to tap. Musa does not answer.",
              [Card(S("C", "c_rem1", to="Musa"), new=True, wide=True)],
-             "In this run it came at 11:00, to Musa only; Krishna got nothing. If the first round comes after the "
-             "wait time, it already goes to every admin: then go on to step §c4.",
+             "A reminder round. In this run it came at 11:00, to Musa only; Krishna got nothing. "
+             "Rounds come on the bot's own clock: on your phones the first one can come later, or after step §c4.",
              who_label="Bot · 11:00 in this run"),
-        Step("Abdul", f"Before the wait time is over, tap {b('🔔 Remind approvers')} on the receipt.",
+        Step("Abdul", f"Before four hours have passed, tap {b('🔔 Remind approvers')} on the receipt.",
              [Pop(S("C", "c_nudge", kind="popup")), Card(S("C", "c_nudge", to="Abdul", kind="message")),
               Card(S("C", "c_nudge", to="Musa"), wide=True)],
              "Still Musa only. “You can remind again in 24h.”"),
-        Step("Bot", "Nothing to tap. Wait. In the hour after the wait time, Krishna gets the full card.",
-             [Card(S("C", "c_hour14", to="Krishna"), new=True, wide=True),
-              Card(S("C", "c_hour17", to="Musa"), new=True, wide=True)],
-             "Krishna's card came at 14:00 in this run, 4 hours after the request, with “no answer for 4h — any "
-             "admin may approve”. It comes once. Musa gets nothing at 14:00; his next reminder round (17:00 in this "
-             "run) still reads “Abdul asked YOU to approve this”.",
-             who_label="Bot · 14:00 and 17:00 in this run"),
+        Step("Bot", "Nothing to tap. Wait four hours from the request.",
+             [Card(S("C", "c_hour14", to="Krishna"), new=True, wide=True)],
+             "Krishna gets the full card, once, with “no answer for 4h — any admin may approve”. "
+             "In this run it came at 14:00. Musa gets nothing at 14:00.",
+             who_label="Bot · 14:00 in this run"),
+        Step("Bot", "Nothing to tap. If nobody approves, the reminder rounds go on.",
+             [Card(S("C", "c_hour23", to="Musa"), new=True, wide=True),
+              Card(S("C", "c_hour23", to="Krishna"), new=True, wide=True)],
+             "One card for each admin. Musa's still says “Abdul asked YOU to approve this”. Krishna's says "
+             "“asked: Musa · no answer for 13h”. In this run the 17:00 round went to Musa only (Krishna had his "
+             "card at 14:00) and the 23:00 round to both. Krishna does not need to wait for these rounds.",
+             who_label="Bot · 23:00 in this run"),
         Step("Krishna", inbox_path(),
              [Card(S("C", "c_cat")), Card(S("C", "c_item"), new=True)],
              f"The card says Musa has not answered and any admin may approve. {COUNTS_NOTE}"),
@@ -297,7 +301,7 @@ def cover():
    <p>1. After “How was it paid?”, a new screen: <b>“Who should approve it?”</b> Abdul taps one admin, or 👥 Any admin.</p>
    <p>2. Only the admin he picks gets the card first. The other admins still find it in 🛂 Approvals.</p>
    <p>3. If Abdul does not know the amount, he taps <b>⏭ Amount not known</b>. The first admin types it; the second admin checks it.</p>
-   <p>4. If the admin does not answer within the wait time (4 hours unless Krishna changed it), the next reminder goes to every admin.</p></div>
+   <p>4. If that admin does not answer, four hours after the request (the bot checks once an hour) every other admin gets the card.</p></div>
   <div class="box"><div class="btitle">Who is who</div>{cast}
    <p class="small">In this guide customer <b>ABBA</b> owes 120,000. She pays <b>50,000</b> into Zenith. Two admin approvals are
    needed before her balance moves — this does not change.</p>
@@ -364,22 +368,19 @@ def owner_box():
  <p><b>2. Clean-up.</b> At the end, Musa approves or rejects the Part 3 request, and an admin rejects the request from
  the Note (👥 Any admin) in 🛂 Approvals.</p>
  <p><b>3. Remind approvers</b> works once per 24 hours for one request (Settings REQUEST_NUDGE_HOURS).</p></div>
- <div><p><b>4. Part 3 timing.</b> The bot re-sends waiting cards in rounds every <code>APPROVAL_REMINDER_HOURS</code> (6)
- hours — counted from the bot's last round since it started, not from the request (<code>REMINDER_HOURS_ADMIN</code> wins
- when that row has a value). A request asked of one admin waits on that admin alone for
- <code>ASKED_ADMIN_WIDEN_HOURS</code> (4); the bot checks that wait every hour, so Krishna's card (step §c4) comes in the
- hour after 4 hours. If the first reminder round falls after 4 hours there is no Musa-only reminder (step §c2).</p>
- <p><b>To finish Part 3 in about 3 hours:</b> set <code>APPROVAL_REMINDER_HOURS</code> = 1 (and
- <code>REMINDER_HOURS_ADMIN</code> = 1 if that row has a value) and <code>ASKED_ADMIN_WIDEN_HOURS</code> = 2. Set them
- back after the test. While the reminder is 1, every waiting request younger than 14 days is re-sent each hour.
- If the reminder value is 0, no reminder round comes and step §c2 cannot be tested; Krishna's card in step §c4 still
- comes after the wait time.</p></div>
+ <div><p><b>4. Part 3 timing.</b> A request asked of one admin waits on that admin alone for
+ <code>ASKED_ADMIN_WIDEN_HOURS</code> (4) hours. The bot checks once an hour, so the other admins get the card four to
+ five hours after the request (step §c4), with reminder rounds on or off. Reminder rounds come every
+ <code>APPROVAL_REMINDER_HOURS</code> (6) hours on the bot's own clock, not counted from the request, so steps §c2 and §c5
+ can come at other times (or never, if the value is 0).</p>
+ <p><b>Quick way to test Part 3:</b> set <code>ASKED_ADMIN_WIDEN_HOURS</code> = 1 before Abdul submits. Krishna then
+ gets the card one to two hours after the request (the note says 1h or 2h, not 4h). Set it back to 4 after the test.</p></div>
 </div></div>"""
 
 
 # No · Who · Do this · You should see. “…” quotes are checked against the captures.
 KEYS = ["a0", "a1", "a2", "a3", "a5", "a6", "a7", "b1", "b2", "b3", "b4", "b5", "b6", "b7",
-        "c1", "c2", "c3", "c4", "c5", "c6", "d1"]
+        "c1", "c2", "c3", "c4", "c5", "c6", "c7", "d1"]
 INBOX = "📋 More Options → 🛂 Approvals → 💵 Finance → the row from Abdul"
 CHECKS = [
     ("a0", "Krishna", "Before Abdul starts: type Balance ABBA. Write down the figure.",
@@ -400,15 +401,17 @@ CHECKS = [
     ("b4", "Musa", "Type abc, then 50000", "“That is not an amount.” then the check card with “✅ Approve with 50,000”."),
     ("b5", "Musa", "Tap ✅ Approve with 50,000", "“You entered 50,000 and gave approval 1 of 2.” Abdul: “Amount entered by Musa: 50,000”."),
     ("b6–b7", "Krishna", "Tap ✅ Approve, then ✅ Approve 50,000", "Pop-up “Check the amount first.”, then “50,000 from ABBA is recorded.”"),
-    ("c1", "Abdul", "Early in the day: 💰 Finance → 💵 Payment Received → 👤 ABBA → type 50000 → 🏦 Zenith → 🛂 Musa → "
-     "✅ Submit for approval", "“Sent to Musa for approval”."),
-    ("c2", "Musa", "Do not answer. Wait for the first reminder round.",
-     "Before the wait time is over: Musa only, “Abdul asked YOU to approve this”. Krishna: nothing."),
-    ("c3", "Abdul", "Before the wait time is over: tap 🔔 Remind approvers", "“Reminder sent to Musa.” and “You can remind again in 24h.”"),
-    ("c4", ("Krishna", "Musa"), "Wait. In the hour after the wait time, Krishna's card comes.",
-     "Krishna, once: “no answer for 4h — any admin may approve” (the hours can differ). Musa: nothing then; "
-     "his next reminder still reads “Abdul asked YOU to approve this”."),
-    ("c5–c6", "Krishna", INBOX + " → ✅ Approve", "Musa gets one line: “has its first admin approval and needs a SECOND”."),
+    ("c1", "Abdul", "Early in the day: as in rows 2–3, ask 🛂 Musa, ✅ Submit for approval",
+     "“Sent to Musa for approval”."),
+    ("c2", "Musa", "Do not answer. Wait for a reminder round.",
+     "If a round comes before four hours: Musa only, “Abdul asked YOU to approve this”. Krishna: nothing."),
+    ("c3", "Abdul", "Before four hours have passed: tap 🔔 Remind approvers",
+     "“Reminder sent to Musa.” and “You can remind again in 24h.”"),
+    ("c4", ("Krishna", "Musa"), "Wait four hours from the request (the bot checks once an hour).",
+     "Krishna, once, the full card: “no answer for 4h — any admin may approve” (the hours can differ). Musa: nothing."),
+    ("c5", ("Musa", "Krishna"), "If nobody approves: wait for a later reminder round.",
+     "Musa: “Abdul asked YOU to approve this”. Krishna: “asked: Musa · no answer for” and the hours."),
+    ("c6–c7", "Krishna", INBOX + " → ✅ Approve", "Musa gets one line: “has its first admin approval and needs a SECOND”."),
     ("d1", "Abdul", "Tap 👥 Any admin → ✅ Submit for approval", "Both admins get the card at once; no “Asked” line. “Sent for approval”."),
 ]
 
@@ -477,13 +480,21 @@ def check_facts(data):
     if fc.get("nudge") != {"musa": 1, "krishna": 0}:
         die("scene C: 🔔 Remind approvers did not go to Musa only")
     hourly = fc.get("hourly_timer") or []
-    want = {h: {"musa": 0, "krishna": 0} for h in ("12:00", "13:00", "14:00", "15:00", "16:00", "17:00")}
+    want = {f"{h}:00": {"musa": 0, "krishna": 0} for h in range(12, 24)}
     want["14:00"]["krishna"] = 1
     want["17:00"]["musa"] = 1
+    want["23:00"] = {"musa": 1, "krishna": 1}
     got = {h["at"]: {"musa": h["musa"], "krishna": h["krishna"]} for h in hourly}
     if got != want:
-        die("scene C: the guide says Krishna's card at 14:00 (once), Musa's reminder at 17:00 and nothing else "
-            "between 12:00 and 17:00 — the capture disagrees: " + json.dumps(got))
+        die("scene C: the guide says Krishna's card at 14:00 (once), Musa's round at 17:00, both at 23:00 and nothing "
+            "else between 12:00 and 23:00 — the capture disagrees: " + json.dumps(got))
+    notes = {c["recipient"]: c["text"].split("\n", 1)[0] for c in G.CARDS["C"] if c["step"].startswith("c_hour23 |")}
+    if "asked YOU" not in notes.get("Musa", "") or "asked: Musa · no answer for 13h" not in notes.get("Krishna", ""):
+        die("scene C: the 23:00 round does not split the notes (Musa asked YOU, Krishna no answer): " + json.dumps(notes))
+    if not G.CARDS["C"] or not any(c["step"].startswith("c_hour14 |") and c["recipient"] == "Krishna"
+                                   and c["text"].startswith("🙋 Asked: Musa · no answer for 4h — any admin may approve")
+                                   for c in G.CARDS["C"]):
+        die("scene C: Krishna's 14:00 card does not open with the widen note")
     if data["D"]["facts"].get("asked_admin_on_row") is not None:
         die("scene D: 👥 Any admin recorded an asked admin")
 
@@ -543,6 +554,8 @@ EXTRA_CSS = """
 .flow .pintro { margin:1.6mm 0 2mm; }
 .flow .part { margin-top:3mm; }
 .nw { white-space:nowrap; }
+.golden { break-inside:avoid; }
+.cklist td:nth-child(3) { width:36mm; white-space:nowrap; } .cklist td:nth-child(3) .badge { display:inline-block; margin:0 .6mm .3mm 0; }
 .owner { break-inside:avoid; margin-top:4mm; padding-top:2mm; padding-bottom:2mm; border:2px solid #0e2a47; background:#f4f7fb; }
 .owner .ocols { display:grid; grid-template-columns:1fr 1fr; gap:5mm; }
 .owner p { font-size:8.3pt; line-height:1.35; margin:0 0 1.2mm; }
