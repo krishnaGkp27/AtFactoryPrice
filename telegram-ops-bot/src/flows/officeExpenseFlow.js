@@ -18,7 +18,8 @@
  *   [➕ Add another] [✅ Submit batch] [❌ Cancel]
  *
  * `✅ Submit batch` queues ONE approval row (action=record_office_expense)
- * carrying all items. Single-admin sign-off (WRITE_ACTIONS); the admin
+ * carrying all items. Two-admin sign-off for an employee's batch (DUAL_ADMIN_ACTIONS;
+ * owner ruling 15-Nov-2026 keeps it at two); the admin
  * card lists every item so a typo is visible and can be corrected on the
  * BranchOpsLog sheet before approving (approval only flips status, never
  * rewrites subject/amount). After approval, branchOpsService.applyExpenseBatch
@@ -53,7 +54,7 @@
  *      zero day are never confused; refused once outflows exist.
  *
  * Outflow items still ride ONE approval batch (record_office_expense,
- * single-admin sign-off — unchanged policy).
+ * two-admin sign-off — unchanged policy).
  *
  * Callback namespace `ofex:*`:
  *   ofex:cancel
@@ -614,7 +615,7 @@ async function submit(bot, chatId, userId) {
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId,
       await require('../services/approvalCards').resolveUserLabel(userId, bot),
       cardSummary,
-      'record_office_expense single-admin sign-off', excludeId);
+      'All office expense operations require two-admin approval.', excludeId);
 
     await render(bot, chatId, userId,
       '⏳ *Submitted for sign-off*\n\n'

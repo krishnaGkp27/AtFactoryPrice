@@ -18,7 +18,7 @@
  *   getDailySummary({ branch, date })          → roll-up for the manager's "today" card + weekly finance read
  *
  * Approval policy:
- *   record_office_expense ∈ WRITE_ACTIONS (single-admin sign-off — you for
+ *   record_office_expense ∈ DUAL_ADMIN_ACTIONS (two-admin sign-off — you for
  *   now). Flip to ALWAYS_APPROVAL_ACTIONS when finance joins.
  *
  * Branch resolution rule (Q1 default):
@@ -243,7 +243,7 @@ function validateExpenseItems(items) {
 }
 
 /**
- * Queue the expense batch for single-admin approval and stamp pending
+ * Queue the expense batch for two-admin approval and stamp pending
  * rows on BranchOpsLog so the manager sees them in their "today" card
  * immediately (with a status=pending_approval pill).
  */

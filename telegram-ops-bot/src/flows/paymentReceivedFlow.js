@@ -181,7 +181,9 @@ async function renderConfirm(bot, chatId, userId, note = '') {
   if (!session.requestId) session.requestId = idGenerator.requestId();
   sessionStore.set(userId, session);
   await render(bot, chatId, userId,
-    `${TITLE}\n\n${summaryLines(session)}\n\nAn admin approves it before the customer's balance moves.${note ? `\n\n${note}` : ''}`,
+    // Owner ruling 15-Nov-2026: a customer's payment needs TWO admins (an
+    // admin's own entry: one OTHER admin) — the card says what really happens.
+    `${TITLE}\n\n${summaryLines(session)}\n\n${auth.isAdmin(userId) ? 'Another admin approves it' : 'Two admins approve it'} before the customer's balance moves.${note ? `\n\n${note}` : ''}`,
     [[{ text: '✅ Submit for approval', callback_data: `${NS}:submit` }],
       [{ text: '⬅ Back', callback_data: `${NS}:back` }, ...cancelRow()]]);
 }

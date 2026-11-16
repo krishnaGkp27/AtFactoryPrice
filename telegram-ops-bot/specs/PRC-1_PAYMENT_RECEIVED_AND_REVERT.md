@@ -42,9 +42,11 @@ action code, sheet or column was added.
 - **No balance on the entry screens.** Customer outstanding is admins-only
   (FIN-V2). The admin's approval card shows `Outstanding today` and
   `After this payment`, and warns when the payment exceeds the balance.
-- **Approval:** one admin, never the requester (`record_payment` is in
-  ALWAYS_APPROVAL_ACTIONS). On approval the ledger is credited and the
-  customer's outstanding falls.
+- **Approval:** TWO admins, never the requester (owner ruling 15-Nov-2026: "Two";
+  `record_payment` is in ALWAYS_APPROVAL_ACTIONS and DUAL_ADMIN_ACTIONS). An admin's
+  own entry needs one OTHER admin. The confirm card says so (`Two admins approve it
+  before the customer's balance moves.`). On the last approval the ledger is credited
+  and the customer's outstanding falls.
 - **Who sees the tile:** departments whose `allowed_activities` include
   `payment_received`; admins always.
 
@@ -83,9 +85,9 @@ census (`npm run insights -- typed`).
 1. 💰 Finance → 💵 Payment Received → type part of a test customer's name →
    tap them → `5000` → `🏦 <a bank>` → the confirm card reads
    `Paid by: Bank — <bank>` → ✅ Submit.
-2. An admin's phone gets `Record Payment Request` with the outstanding
-   before and after. Approve it. The customer's statement shows the credit
-   under Bank.
+2. Every admin's phone gets `Record Payment Request` with the outstanding
+   before and after. Two admins approve it. The customer's statement shows the
+   credit under Bank.
 3. Tap ✅ Submit twice quickly on a second payment: one card reaches the
    admins.
 4. 🛂 Approvals → ✅❌ Decided → open an approved test sale →

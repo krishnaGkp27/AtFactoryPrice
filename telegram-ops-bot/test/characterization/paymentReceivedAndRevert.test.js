@@ -126,7 +126,7 @@ test('PRC-1: customer → amount → bank → confirm → ONE record_payment req
   await controller.handleCallbackQuery(bot, cq('4242', 'prc:m:1'));
   const confirm = lastText(bot);
   assert.match(confirm, /Customer: \*ABBA\*\nAmount: \*50,000\*\nPaid by: Bank — Zenith\nDate: \d{2}-[A-Z][a-z]{2}-\d{4}/);
-  assert.match(confirm, /An admin approves it before the customer's balance moves\./);
+  assert.match(confirm, /Two admins approve it before the customer's balance moves\./);
   assert.equal(QUEUE.length, 0, 'nothing is raised before Submit');
 
   await controller.handleCallbackQuery(bot, cq('4242', 'prc:submit'));

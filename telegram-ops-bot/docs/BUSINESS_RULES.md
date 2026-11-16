@@ -1116,6 +1116,12 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
   the revert of a sale is 🛂 Approvals → ✅❌ Decided → the sale →
   ↩️ Revert this sale (admins, dual approval, one revert per sale). Both
   raise the same request types the typed lines raised.
+- **A customer's payment received takes TWO admin approvals** (owner
+  ruling 15-Nov-2026: *"Two"*): an employee's entry needs two admins, an
+  admin's own entry one OTHER admin. The same holds for an office-expense
+  batch. The confirm card says which (`Two admins approve it …` /
+  `Another admin approves it …`); nothing moves the customer's balance
+  before the last signature.
 - **A request type states its own rule in one place**
   (`approvalRegistry`): what makes two of it the same, and whether a twin is
   refused, flagged or ignored. **The default is flag**: admins see
@@ -1190,5 +1196,6 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
 | 31-Oct-2026 | Abdul's typed transfer line bounced four times as "Need more info" — the intent parser's OFFLINE fallback, OpenAI had stopped answering, the failure swallowed with no log; the typed transfer line was the one typed door still riding the provider (TRF-23 read it locally the same day). Owner, 01-Nov: no sheet read or write through the AI model at all — script lines or the chips card | §20 (TXT-1: `src/utils/typedRouter.js`; `specs/TXT-1_NO_AI_TEXT.md`) |
 | 04-Nov-2026 | The bill check on a sale card no longer needs a paid vision API: `OCR_PROVIDER=local` (or `auto`, which tries it first) reads the bill in-process — a PDF's text layer exactly, a photo-per-page PDF or a photo through Tesseract. Printed numbers read well; HANDWRITING reads poorly and is reported as unreadable or marked off, never guessed (the 75% marks-off rule stands). The card says which reader marked it (`🔬 Bill check (local):`). No sheet, no knob — two Railway variables, no deploy. Owner: "Since I am not integrating the OpenAI API for now … what other different permanent solution"; "Final go". | VRF-6 (`src/services/vision/local.js`; `specs/VRF-6_LOCAL_BILL_READER.md`) |
 | 10-Nov-2026 | Two identical ₦70,000 salary requests from one employee reached the admins a second apart: the payment door's Submit stayed tappable while the sheet was written, and the duplicate warning could not see payments (each carries its own payment id). Owner: one foundation under every approval, the same payment not raised twice, salary by month, a daily reminder instead of a re-raise, the requester told at every signature | §21 (APG-1 + PAY-5: `src/services/approvalGate.js`, `approvalRegistry.js`, `approvalProgress.js`; `specs/APG-1_APPROVAL_GATE.md`) |
+| 15-Nov-2026 | The Payment Received confirm card and the PRC-1 / EXP-1 notes said ONE admin approves while the gate (`risk/evaluate.js`) has always asked for two — the card promised less than the bot did. Owner asked "one or two?" and ruled *"Two"*: a customer's payment received and an office-expense batch each take two admin approvals (an admin's own entry: one other admin). The code was right; the words were corrected | §APG (`specs/PRC-1_PAYMENT_RECEIVED_AND_REVERT.md` Approval) |
 | 04-Nov-2026 | On a sale card a bale the seller loaded WHOLE (a bare typed number, 📦 Take whole bale) and still whole at submit is ONE line and one B (`481 · 150 yd`, `10B · 1,500 yd`), whichever door raised it; a than dropped from it un-wholes the bale (its thans print one per line, `9B + 4t`); a bale typed as `6189/5` stays a than line; a flagged than keeps its bale than by than. The request still carries every than; nothing in execution changes. Owner, on Abdul's 50-line card: "It is not the same way it was coming before"; layout shown; "Go". | SELL-T3e (`approvalCards.foldWholeBales`; `specs/SELL-T3_TYPED_THAN_LIST.md`) |
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

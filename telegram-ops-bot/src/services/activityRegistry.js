@@ -305,7 +305,7 @@ const ACTIVITIES = [
   // Departments.allowed_activities CSV.
   // * daily_branch_ops opens the morning card (camera + opening cash) and
   //   collapses to the status panel for the rest of the day (idempotent).
-  // * office_expense queues a batch of expenses for single-admin sign-off.
+  // * office_expense queues a batch of expenses for two-admin sign-off.
   // * upload_receipt captures a payment/expense receipt photo.
   // APR-2 — one screen rules every nudge (admin + per-department toggles,
   // changes approval-gated). Managers + admins; gating enforced in-flow.

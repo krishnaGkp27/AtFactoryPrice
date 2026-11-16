@@ -771,8 +771,8 @@ registers an account (Part A, step 2) or records a customer payment (Part H).</p
         Step("Krishna", f"Tap {b('✅ Approve')}.",
              [Pop(S("received", step="Krishna taps ✅ Approve on his approval card", kind="popup")),
               Card(S("received", step="Krishna taps ✅ Approve on his approval card", to="Abdul"))],
-             "Today the bot asks for <b>two</b> admin approvals when an employee records a customer payment "
-             "(one when an admin records it). The Payment Received specification says one — your ruling is still owed."),
+             "The bot asks for <b>two</b> admin approvals when an employee records a customer payment "
+             "(one other admin when an admin records it) — your ruling of 15-Nov-2026."),
         Step("Musa", f"Tap {b('✅ Approve')}.",
              [Pop(S("received", step="Musa taps ✅ Approve on his approval card", kind="popup")),
               Card(S("received", step="Musa taps ✅ Approve on his approval card", to="Musa", text="Changes applied")),
@@ -925,7 +925,7 @@ def abdul_parts():
         Step("Abdul", "Wait for the approvals.",
              [Card(S("received", step="Krishna taps ✅ Approve on his approval card", to="Abdul")),
               Card(S("received", step="Musa taps ✅ Approve on his approval card", to="Abdul"))],
-             "Two approvals today (the card above says “An admin”; Krishna is deciding which is right). "
+             "Two admins approve it, as the card above says. "
              "💵 Record another starts the next one.", who_label="You wait"),
     ])
     return [one, two, three, four, five, six, seven, eight]
