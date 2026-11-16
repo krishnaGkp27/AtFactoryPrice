@@ -714,6 +714,15 @@ added through railway variables."*
     refused, nothing is approved and the admin is told to tap again. A
     signature that cannot be recorded can therefore never leave its owner
     free to pay.
+  - **"Who approved it" has one answer (16-Nov-2026, PAY-4c).** The pay
+    gate, the finance card, the 🔒 mark in the queue, the "Nobody can pay"
+    warning and the Paid / Declined notice all read the same list — the
+    request's own row merged with the event trail. The notice used to ask
+    the trail first and then only the first signature, so with Postgres
+    off the second approver was never told. The rule is pinned by a test
+    that makes the real two approvals
+    (`test/characterization/paymentFourEyesTwoTap.test.js`), never by rows
+    written by hand.
 - **THE PAYING ACCOUNT IS NAMED BY THE LAST APPROVER, AND FINANCE SEES
   BOTH ACCOUNTS (owner ruling, 11-Nov-2026: "the account through which the
   payment will go through shall also be mentioned with the bank name, so

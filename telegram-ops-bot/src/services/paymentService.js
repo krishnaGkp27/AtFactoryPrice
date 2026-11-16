@@ -189,9 +189,13 @@ async function canExecute(telegramId, pay = null) {
  *
  * The PaymentRequests `approved_by` cell holds the pair LABEL ("Musa ‖
  * Abdul"), not ids, so it cannot answer this. The ids live on the
- * ApprovalQueue row (`actionJSON.approvals`, where DUAL-1 parks the first
- * signature and the executor adds the second); the Postgres event trail is
- * the fallback for a row that has since been archived.
+ * ApprovalQueue row: `approvals` (where DUAL-1 parks the FIRST signature
+ * only), `approverIds` (the whole pair, saved by the executor before the
+ * payment is approved — PAY-4b), `signoffs` and `payFrom.by`. The Postgres
+ * event trail is read as well, ALWAYS — never as a fallback — so a payment
+ * approved before the row held the pair is covered too. This is the one
+ * answer to "who approved it": the gate, the finance card, the stuck-payment
+ * warning and the Paid / Declined audience all call it.
  *
  * Fails CLOSED on nothing found — an empty list means "nobody is known to
  * have approved it", which correctly blocks nobody; but a THROW must never

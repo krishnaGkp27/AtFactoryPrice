@@ -562,6 +562,19 @@ test('PAY-2: without an approved event the signers come from the queue row itsel
   assert.equal(dmsTo(bot, ABDUL).length, 1, 'the requester always hears — at the tap');
   assert.equal(dmsTo(bot, AJEET).length, 1, 'the first signature parked on actionJSON.approvals');
   assert.match(dmsTo(bot, ABDUL)[0].args.text, /📝 Transport to Idumota/, 'the reason read from the payload');
+  assert.equal(dmsTo(bot, JOHN).length, 0, 'a row from before PAY-4b never recorded its second signer');
+});
+
+test('PAY-4b: with no trail the SECOND signer hears too — the pair the executor parks on the row names both', async () => {
+  reset();
+  seedApproved();            // no seedApprovedEvent(): Postgres knows nothing
+  QUEUED[0].actionJSON.approverIds = [AJEET, JOHN];   // the row as the executor leaves it since PAY-4b
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('pay:done:PAY-9', OFFICE, 4321));
+  const expected = PAID_NOTICE(REQUESTS[0].done_at);
+  for (const id of [ABDUL, AJEET, JOHN]) {
+    assert.deepEqual(dmsTo(bot, id).map((c) => c.args.text), [expected], `exactly one Paid notice to ${id}`);
+  }
 });
 
 test('PAY-1: Mark Done refuses anything not currently approved', async () => {

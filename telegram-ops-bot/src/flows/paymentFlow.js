@@ -93,7 +93,6 @@ const auditLogRepository = require('../repositories/auditLogRepository');
 const approvalEvents = require('../events/approvalEvents');
 const paymentReasonsRepository = require('../repositories/paymentReasonsRepository');
 const paymentEventsRepository = require('../repositories/paymentEventsRepository');
-const approverStamp = require('../services/approverStamp');
 const riskEvaluate = require('../risk/evaluate');
 const idGenerator = require('../utils/idGenerator');
 const fmtDate = require('../utils/formatDate');
@@ -1048,9 +1047,16 @@ async function pgSafe(fn) {
 
 /**
  * PAY-2 §2 D/E — who hears the outcome: the requester AND the two admins
- * who signed. Signers come from the 'approved' event's detail.approverIds
- * (written by the executor); when Postgres has no such row, the queue
- * row's own record (approverStamp.approverIds) is the fallback.
+ * who signed.
+ *
+ * The signers come from `paymentService.approverIdsFor` — the ONE reader
+ * the pay gate itself uses (PAY-4, BUSINESS_RULES §13), so "who approved
+ * this payment" has a single answer everywhere: the request's own row
+ * (`approvals`, the pair the executor parks as `approverIds`, `signoffs`)
+ * merged with the event trail. This used to ask the trail first and fall
+ * back to the row's `approvals` — which holds only the FIRST signature — so
+ * with Postgres off the admin who gave the second approval never heard
+ * Paid or Declined (16-Nov-2026).
  *
  * @returns {Promise<string[]>} de-duplicated Telegram ids
  */
@@ -1058,20 +1064,9 @@ async function noticeAudience(pay) {
   const ids = [];
   const push = (v) => { const id = String(v || '').trim(); if (id && !ids.includes(id)) ids.push(id); };
   push(pay.raised_by);
-  let signers = [];
   try {
-    const events = await paymentEventsRepository.forPayment(pay.payment_id);
-    const approved = (events || []).filter((e) => e.kind === 'approved').pop();
-    const d = approved && approved.detail;
-    if (d && Array.isArray(d.approverIds)) signers = d.approverIds;
-  } catch (_) { /* fail-open */ }
-  if (!signers.length && pay.approval_request_id) {
-    try {
-      const row = await approvalQueueRepository.getByRequestId(pay.approval_request_id);
-      if (row) signers = approverStamp.approverIds(row.actionJSON, null);
-    } catch (_) { /* the requester still hears */ }
-  }
-  signers.forEach(push);
+    (await paymentService.approverIdsFor(pay)).forEach(push);
+  } catch (_) { /* the requester still hears */ }
   return ids;
 }
 
