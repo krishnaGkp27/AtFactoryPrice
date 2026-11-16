@@ -38,6 +38,9 @@ const VOLATILE_KEYS = new Set([
   // APG-1 — the signature trail, the requester's reminders and the "sent
   // anyway" mark are bookkeeping about a request, never part of what it asks.
   'signoffs', 'nudges', 'twinOf', 'sentAnywayBy', 'rejectNote',
+  // PRC-2 — who was asked first, when the card went wider, and the admin who
+  // typed a blank amount are routing and bookkeeping, never what is asked.
+  'askedAdmin', 'askWidenedAt', 'amountBy', 'amountPending',
   'stage', 'dispatchedAt', 'bales', 'dispatched', 'short',
   'createdAt', 'created_at', 'timestamp', 'ts', 'updatedAt',
   'sale_doc_file_id', 'sale_doc_file_unique_id',
@@ -57,7 +60,7 @@ function canonical(value) {
   if (value === null || value === undefined) return 'null';
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (typeof value === 'object') {
-    const keys = Object.keys(value).filter((k) => !VOLATILE_KEYS.has(k)).sort();
+    const keys = Object.keys(value).filter((k) => !VOLATILE_KEYS.has(k) && value[k] !== undefined).sort();
     return `{${keys.map((k) => `${k}:${canonical(value[k])}`).join(',')}}`;
   }
   if (typeof value === 'string') return JSON.stringify(value.trim());
@@ -85,7 +88,11 @@ function fingerprintOf(row) {
   const registry = require('../services/approvalRegistry');
   const key = registry.twinKeyOf(aj);
   if (key) return `${registry.entryFor(action).twin.anyRequester ? '*' : user}|${action}|k:${key}`;
-  return `${user}|${action}|${canonical(aj)}`;
+  // PRC-2 — an amount an ADMIN typed at approval was not part of what the
+  // requester asked: that copy is compared without it, like its blank twin.
+  let body = aj;
+  if (aj.amountBy) { body = { ...aj }; delete body.amount; }
+  return `${user}|${action}|${canonical(body)}`;
 }
 
 /** APG-1 — how a row's type wants twins judged: { policy, scope }. */

@@ -2134,8 +2134,16 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
   // A refused save, or a stale chip whose request already has an amount,
   // approves nothing.
   if (action === 'approve' && item && item.actionJSON && item.actionJSON.action === 'record_payment') {
+    // PRC-2 review 1 — the amount and the signature are one decision: two
+    // admins tapping at once are taken ONE AT A TIME per request, and the
+    // second run re-reads the row (its amount, its signatures) from the top,
+    // so no admin's signature can land on another admin's figure.
+    if (!(opts && opts._prcLocked)) {
+      return require('../utils/asyncMutex').runExclusive(`prc-approve:${requestId}`,
+        () => handleApprovalCallback(bot, callbackQuery, action, { ...(opts || {}), _prcLocked: true }));
+    }
     const seam = await require('../flows/paymentReceivedFlow')
-      .amountSeam(bot, callbackQuery, requestId, item, opts && opts.amount);
+      .amountSeam(bot, callbackQuery, requestId, item, opts && opts.amount, opts && opts.amountChecked);
     if (seam.stop) return { asked: true }; // the inbox keeps its card as it is
   }
 
@@ -2201,9 +2209,14 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           // PRC-2 (owner, 16-Nov-2026) — a request ASKED of one admin whose
           // card has gone to nobody else yet: the first signature widens it,
           // stamped in the SAME write that saves the signature.
-          const askedMod = require('../services/askedApprover');
-          const askedAdm = askedMod.askedOf(item.actionJSON, config.access.adminIds);
-          const widenNow = !!askedAdm && askedAdm.id !== String(item.user) && !item.actionJSON.askWidenedAt;
+          // Keyed on the RAW asked id: an asked admin since removed from
+          // ADMIN_IDS still means the others were never sent the card.
+          const askedRaw = item.actionJSON.askedAdmin && typeof item.actionJSON.askedAdmin === 'object'
+            ? String(item.actionJSON.askedAdmin.id || '').trim() : '';
+          const widenNow = !!askedRaw && askedRaw !== String(item.user) && !item.actionJSON.askWidenedAt;
+          // An amount typed at THIS tap (PRC-2 R3): every other admin's card
+          // still says "not entered", so each of them gets the full card.
+          const amountNow = !!(item.actionJSON.amountBy && String(item.actionJSON.amountBy.id) === adminId);
           const widenedAt = widenNow ? new Date().toISOString() : '';
           try {
             await approvalQueueRepository.updateActionJSON(requestId, {
@@ -2262,16 +2275,17 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
             .filter((id) => id !== adminId && id !== String(item.user));
           // PRC-2 — the admins who hold no card yet (everyone but the asked
           // admin) get the FULL card now, with Approve / Reject; whoever
-          // already holds one keeps the one-line ping. Best-effort: the
-          // signature above is recorded whatever happens here.
+          // already holds one keeps the one-line ping — unless the amount
+          // was typed at this tap, when every card they hold is out of date.
+          // Best-effort: the signature above is recorded whatever happens here.
           let pingIds = others;
-          if (widenNow) {
-            const fullIds = others.filter((id) => id !== askedAdm.id);
-            pingIds = others.filter((id) => id === askedAdm.id);
+          if (widenNow || amountNow) {
+            const fullIds = amountNow ? others : others.filter((id) => id !== askedRaw);
+            pingIds = others.filter((id) => !fullIds.includes(id));
             if (fullIds.length) {
               try {
                 const cardsMod = require('../services/approvalCards');
-                const ajNow = { ...item.actionJSON, approvals: [...prior, adminId], signoffs: trail, askWidenedAt: widenedAt };
+                const ajNow = { ...item.actionJSON, approvals: [...prior, adminId], signoffs: trail, ...(widenNow ? { askWidenedAt: widenedAt } : {}) };
                 const card = await cardsMod.buildCardFromActionJSON(ajNow);
                 const kb = cardsMod.keyboardForRequest(requestId, ajNow);
                 const reqLabel = await cardsMod.resolveUserLabel(item.user, bot);

@@ -38,7 +38,9 @@
  * Callback namespace `prc:` — pg:<n> · c:<i> · m:<i> · noamt · ad:<i>|any ·
  * submit · back · cancel · noop; and the admin's amount step, SESSION-FREE
  * (re-checked on every tap): ay:<requestId>:<amount> ✅ Approve with ·
- * ae:<requestId> ✏️ Change amount · ax:<requestId> ✖ Not now.
+ * ae:<requestId> ✏️ Change amount / ✏️ Type the amount · ax:<requestId>
+ * ✖ Not now · ok:<requestId>:<amount> the second admin's ✅ Approve <amount>
+ * on a figure another admin typed (review 1).
  */
 
 const sessionStore = require('../utils/sessionStore');
@@ -64,6 +66,18 @@ const HIDDEN = new Set(['merged', 'rejected', 'inactive', 'pending']);
 const MAX_AMOUNT = 1e10;
 const { cancelRow } = rowsFor(NS);
 const TITLE = '💵 *Payment received*';
+
+/**
+ * A name inside a `*bold*` entity (PRC-2 review 1). Legacy Markdown honours
+ * no escape inside an entity — a backslash would show, and an escaped `*`
+ * makes Telegram refuse the whole message — so `_`, a backquote and `[`
+ * stay as they are, and
+ * a `*` closes and reopens the bold, as the Bot API prescribes (SFS-1 §7 #3).
+ */
+function bold(v) {
+  const s = String(v == null ? '' : v).trim() || '—';
+  return `*${s.replace(/\*/g, '*\\**')}*`;
+}
 
 async function render(bot, chatId, userId, text, rows) {
   const session = sessionStore.get(userId);
@@ -171,7 +185,7 @@ async function renderAmount(bot, chatId, userId, note = '') {
   if (blankOk) rows.push([{ text: '⏭ Amount not known', callback_data: `${NS}:noamt` }]);
   rows.push([{ text: '⬅ Back', callback_data: `${NS}:back` }, ...cancelRow()]);
   await render(bot, chatId, userId,
-    `${TITLE}\n\nCustomer: *${mdEscape(session.customer.name)}*\n\nHow much did they pay?\nType the amount, for example \`50000\`.`
+    `${TITLE}\n\nCustomer: ${bold(session.customer.name)}\n\nHow much did they pay?\nType the amount, for example \`50000\`.`
     + `${blankOk ? '\nIf you do not know it, tap ⏭ Amount not known — the admin enters it.' : ''}${note ? `\n\n${note}` : ''}`,
     rows);
 }
@@ -192,7 +206,7 @@ async function renderMethod(bot, chatId, userId) {
   banks.forEach((b, i) => rows.push([{ text: `🏦 ${b}`.slice(0, 60), callback_data: `${NS}:m:${i + 1}` }]));
   rows.push([{ text: '⬅ Back', callback_data: `${NS}:back` }, ...cancelRow()]);
   await render(bot, chatId, userId,
-    `${TITLE}\n\nCustomer: *${mdEscape(session.customer.name)}*\n${amountLine(session)}\n\nHow was it paid?`, rows);
+    `${TITLE}\n\nCustomer: ${bold(session.customer.name)}\n${amountLine(session)}\n\nHow was it paid?`, rows);
 }
 
 /**
@@ -234,13 +248,13 @@ async function renderApprover(bot, chatId, userId) {
   rows.push([{ text: '👥 Any admin', callback_data: `${NS}:ad:any` }]);
   rows.push([{ text: '⬅ Back', callback_data: `${NS}:back` }, ...cancelRow()]);
   await render(bot, chatId, userId,
-    `${TITLE}\n\nCustomer: *${mdEscape(session.customer.name)}*\n${amountLine(session)}\nPaid by: ${mdEscape(session.method)}\n\nWho should approve it?\nThe admin you pick is asked first.`,
+    `${TITLE}\n\nCustomer: ${bold(session.customer.name)}\n${amountLine(session)}\nPaid by: ${mdEscape(session.method)}\n\nWho should approve it?\nThe admin you pick is asked first.`,
     rows);
 }
 
 function summaryLines(session) {
   return [
-    `Customer: *${mdEscape(session.customer.name)}*`,
+    `Customer: ${bold(session.customer.name)}`,
     amountLine(session),
     `Paid by: ${mdEscape(session.method)}`,
     ...(session.asked ? [`Ask: ${mdEscape(session.asked.name)}`] : []),
@@ -290,19 +304,30 @@ async function submit(bot, chatId, userId) {
     method: session.method, source: 'payment_received_door',
     ...(asked ? { askedAdmin: asked } : {}),
   };
+  const gate = require('../services/approvalGate');
+  let raised;
+  let risk;
   try {
-    const risk = await riskEvaluate.evaluate({ action: 'record_payment', userId });
-    const gate = require('../services/approvalGate');
-    const raised = await gate.raise({
+    risk = await riskEvaluate.evaluate({ action: 'record_payment', userId });
+    raised = await gate.raise({
       requestId: session.requestId, userId, action: 'record_payment', payload,
       riskReason: risk.reason || 'Admin approval required',
       auditMeta: { reason: 'record_payment', via: 'payment_received_door', amount: session.noAmount ? null : session.amount,
         asked: asked ? asked.id : '', amountPending: !!session.noAmount },
     });
-    const requestId = raised.requestId;
-    let sent = 1;
-    let unreachable = false;
-    if (raised.created) {
+  } catch (e) {
+    logger.error(`paymentReceivedFlow.submit failed: ${e.message}`);
+    endSubmit(session, userId);
+    await renderConfirm(bot, chatId, userId, `⚠️ Could not send: ${mdEscape(e.message)}. Tap Submit again.`);
+    return;
+  }
+  // From here the request EXISTS: nothing below may tell the employee it
+  // failed (PRC-2 review 1) — a notify or receipt failure only degrades.
+  const requestId = raised.requestId;
+  let sent = 1;
+  let unreachable = false;
+  if (raised.created) {
+    try {
       const card = await approvalCards.buildPaymentCard(payload);
       const label = await approvalCards.resolveUserLabel(userId, bot);
       const approvalEvents = require('../events/approvalEvents');
@@ -331,19 +356,28 @@ async function submit(bot, chatId, userId) {
         const res = await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, label, card, reason, excludeAdmin);
         sent = (res && res.sent) || 0;
       }
+    } catch (e) {
+      logger.error(`paymentReceivedFlow: admin card for ${requestId} not sent: ${e.message}`);
+      sent = 0;
     }
-    const warn = sent === 0 ? '\n\n⚠️ The admins could not be notified just now. Ask an admin to open 🛂 Approvals.'
-      : unreachable ? `\n\n⚠️ ${mdEscape(asked.name)} could not be reached — sent to the other admins.` : '';
-    const head = asked ? `⏳ *Sent to ${mdEscape(asked.name)} for approval*` : '⏳ *Sent for approval*';
-    await render(bot, chatId, userId,
-      `${head}\n\n${summaryLines(session)}\nRef ${approvalCards.shortRequestRef(requestId)}${warn}`,
-      [gate.receiptRow(requestId), [{ text: '💵 Record another', callback_data: 'act:payment_received' }, { text: '🏠 Menu', callback_data: 'act:__back__' }]]);
-    sessionStore.clear(userId);
-  } catch (e) {
-    logger.error(`paymentReceivedFlow.submit failed: ${e.message}`);
-    endSubmit(session, userId);
-    await renderConfirm(bot, chatId, userId, `⚠️ Could not send: ${mdEscape(e.message)}. Tap Submit again.`);
   }
+  const warn = sent === 0 ? '⚠️ The admins could not be notified just now. Ask an admin to open 🛂 Approvals.'
+    : unreachable ? `⚠️ ${asked.name} could not be reached — sent to the other admins.` : '';
+  const headPlain = asked ? `Sent to ${asked.name} for approval` : 'Sent for approval';
+  const ref = approvalCards.shortRequestRef(requestId);
+  const rows = [gate.receiptRow(requestId), [{ text: '💵 Record another', callback_data: 'act:payment_received' }, { text: '🏠 Menu', callback_data: 'act:__back__' }]];
+  try {
+    await render(bot, chatId, userId,
+      `⏳ ${bold(headPlain)}\n\n${summaryLines(session)}\nRef ${ref}${warn ? `\n\n${mdEscape(warn)}` : ''}`, rows);
+  } catch (e) {
+    // The receipt could not be drawn as Markdown: the same facts, plain.
+    logger.warn(`paymentReceivedFlow: receipt for ${requestId} fell back to plain text: ${e.message}`);
+    try {
+      await bot.sendMessage(chatId, `⏳ ${headPlain}\n\nCustomer: ${session.customer.name}\nRef ${ref}${warn ? `\n\n${warn}` : ''}`,
+        { reply_markup: { inline_keyboard: rows } });
+    } catch (_) { /* chat unreachable — the request stands */ }
+  }
+  sessionStore.clear(userId);
 }
 
 /* ── PRC-2: the admin's amount step ──────────────────────────────────── */
@@ -391,13 +425,14 @@ async function adminPromptText(bot, row) {
   const raisedBy = await nameOf(row.user, bot);
   return [
     ADMIN_TITLE_ASK, '',
-    `Customer: *${mdEscape(aj.customer)}*`,
+    `Customer: ${bold(aj.customer)}`,
     `Paid by: ${mdEscape(aj.method || '—')}`,
     `Raised by: ${mdEscape(raisedBy)}`,
     ...(await balanceLines(aj.customer, 0)),
     '',
     `${mdEscape(raisedBy)} did not know the amount. Type what ${mdEscape(aj.customer)} paid, for example \`50000\`.`,
     'Nothing is approved until you confirm.',
+    'If your number gets no answer, tap ✏️ Type the amount and send it again.',
   ].join('\n');
 }
 
@@ -407,7 +442,7 @@ async function adminCheckText(row, amount) {
   const completes = signed + 1 >= required;
   return [
     ADMIN_TITLE_CHECK, '',
-    `Customer: *${mdEscape(aj.customer)}*`,
+    `Customer: ${bold(aj.customer)}`,
     `Amount: *${money.sale(amount)}* · entered by you`,
     `Paid by: ${mdEscape(aj.method || '—')}`,
     ...(await balanceLines(aj.customer, amount)),
@@ -418,6 +453,43 @@ async function adminCheckText(row, amount) {
 }
 
 const notNowRow = (requestId) => [{ text: '✖ Not now', callback_data: `${NS}:ax:${requestId}` }];
+
+/**
+ * The typed prompt's buttons. ✏️ Type the amount re-opens the step without
+ * a session (PRC-2 review 1): after a restart the typed number reaches no
+ * step, and this is the way back to one.
+ */
+const promptKeyboard = (requestId) => [[{ text: '✏️ Type the amount', callback_data: `${NS}:ae:${requestId}` }, ...notNowRow(requestId)]];
+
+/**
+ * PRC-2 review 1 (R3) — the SECOND admin checks an amount another admin
+ * typed. Their plain ✅ Approve may come from a card drawn before the amount
+ * existed ("not entered"), so it records nothing until they have seen the
+ * figure here and tapped it.
+ */
+async function secondCheckText(row) {
+  const aj = row.actionJSON || {};
+  const amount = rowAmount(aj);
+  const by = (aj.amountBy && (aj.amountBy.name || aj.amountBy.id)) || 'An admin';
+  const { required, signed } = approvalCount(row);
+  return [
+    ADMIN_TITLE_CHECK, '',
+    `Customer: ${bold(aj.customer)}`,
+    `Amount: *${money.sale(amount)}* · entered by ${mdEscape(by)}`,
+    `Paid by: ${mdEscape(aj.method || '—')}`,
+    ...(await balanceLines(aj.customer, amount)),
+    '',
+    `${mdEscape(by)} typed this amount. Check it before you approve.`,
+    signed + 1 >= required ? 'Your approval records the payment.' : 'Your approval is recorded; another admin still signs.',
+  ].join('\n');
+}
+
+function secondCheckKeyboard(requestId, amount) {
+  return [
+    [{ text: `✅ Approve ${money.sale(amount)}`, callback_data: `${NS}:ok:${requestId}:${amount}` }],
+    notNowRow(requestId),
+  ];
+}
 
 function checkKeyboard(requestId, amount) {
   return [
@@ -436,7 +508,7 @@ async function openAdminAmount(bot, chatId, adminId, row, { cardMessageId = null
     try { await require('../services/sessionJanitor').leaveFlow(bot, adminId, cardMessageId || editMessageId); } catch (_) { /* best-effort */ }
   }
   const text = await adminPromptText(bot, row);
-  const kb = { inline_keyboard: [notNowRow(row.requestId)] };
+  const kb = { inline_keyboard: promptKeyboard(row.requestId) };
   let messageId = editMessageId;
   if (editMessageId) {
     try {
@@ -474,10 +546,18 @@ async function openAdminAmount(bot, chatId, adminId, row, { cardMessageId = null
  *   row has one, a typed amount          → a stale chip: approves nothing,
  *                                          `{ stop:true }` (unless it is this
  *                                          admin's own same figure — a retry)
+ *   row has one ANOTHER admin typed,     → the check card opens with the
+ *     no checked figure                    figure; nothing is recorded;
+ *                                          `{ stop:true }` (review 1, R3)
+ *   row has one another admin typed,     → `{ stop:false }`: this admin saw
+ *     `checked` equal to it                the figure and approves it
+ *
+ * The caller holds the per-request lock (approvalEvents), so `item` is the
+ * row as it stands, not as another admin's tap left it half-way.
  *
  * @returns {Promise<{stop:boolean}>}
  */
-async function amountSeam(bot, callbackQuery, requestId, item, typed) {
+async function amountSeam(bot, callbackQuery, requestId, item, typed, checked) {
   const adminId = String(callbackQuery.from.id);
   const aj = (item && item.actionJSON) || {};
   const toast = async (text, alert) => {
@@ -486,8 +566,21 @@ async function amountSeam(bot, callbackQuery, requestId, item, typed) {
   const want = typed === undefined || typed === null ? 0 : (parseAmount(String(typed)) || 0);
   const have = rowAmount(aj);
   if (have) {
-    if (!want) return { stop: false };
     const by = aj.amountBy || {};
+    if (!want) {
+      const byOther = by.id && String(by.id) !== adminId;
+      const seen = checked === undefined || checked === null ? 0 : (parseAmount(String(checked)) || 0);
+      if (!byOther || Math.abs(seen - have) < 0.005) return { stop: false };
+      await toast('Check the amount first.');
+      try {
+        const row = { ...item, requestId };
+        await bot.sendMessage(callbackQuery.message.chat.id, await secondCheckText(row), {
+          parse_mode: 'Markdown', reply_markup: { inline_keyboard: secondCheckKeyboard(requestId, have) },
+          reply_to_message_id: callbackQuery.message.message_id, allow_sending_without_reply: true,
+        });
+      } catch (e) { logger.warn(`PRC-2: amount check for ${requestId} not drawn: ${e.message}`); }
+      return { stop: true };
+    }
     if (String(by.id || '') === adminId && Math.abs(have - want) < 0.005) return { stop: false }; // a retry of one's own entry
     const who = by.name || (by.id ? await nameOf(by.id, bot) : 'The requester');
     await toast(`${who} already entered ${money.sale(have)} for this payment. Open the card to approve or reject it.`, true);
@@ -580,13 +673,29 @@ async function adminCallback(bot, query, rest) {
     return;
   }
   // Request ids carry hyphens, never a colon: the amount is after the LAST one.
-  const cut = verb === 'ay' ? body.lastIndexOf(':') : -1;
+  const cut = verb === 'ay' || verb === 'ok' ? body.lastIndexOf(':') : -1;
   const requestId = cut > 0 ? body.slice(0, cut) : body;
   const row = await liveForAmount(bot, query, requestId);
   if (!row) return;
   const aj = row.actionJSON || {};
   const have = rowAmount(aj);
-  const amount = verb === 'ay' ? parseAmount(body.slice(cut + 1)) : null;
+  const amount = cut > 0 ? parseAmount(body.slice(cut + 1)) : null;
+  const cardMsg = query.message.reply_to_message || null;
+  if (verb === 'ok') {
+    // PRC-2 review 1 — the second admin approves the figure they were shown.
+    const by = aj.amountBy || {};
+    let said = '';
+    if (!have) said = 'This payment has no amount yet. Tap ✅ Approve on the card.';
+    else if (!amount || Math.abs(have - amount) >= 0.005) said = `The amount on this payment is ${money.sale(have)}. Tap ✅ Approve on the card again.`;
+    else if (!by.id || String(by.id) === uid) said = '🔏 You typed this amount — a different admin must check it.';
+    if (said) {
+      await answer(said, true);
+      try { await bot.editMessageText(said, { chat_id: chatId, message_id: query.message.message_id, reply_markup: { inline_keyboard: [] } }); } catch (_) { /* too old */ }
+      return;
+    }
+    await delegateApprove(bot, query, requestId, cardMsg, { amountChecked: amount }, amount);
+    return;
+  }
   const byMe = aj.amountBy && String(aj.amountBy.id) === uid && amount && Math.abs(have - amount) < 0.005;
   if (have && !byMe) {
     const by = aj.amountBy || {};
@@ -596,7 +705,6 @@ async function adminCallback(bot, query, rest) {
     try { await bot.editMessageText(said, { chat_id: chatId, message_id: query.message.message_id, reply_markup: { inline_keyboard: [] } }); } catch (_) { /* too old */ }
     return;
   }
-  const cardMsg = query.message.reply_to_message || null;
   if (verb === 'ae') {
     await answer();
     await openAdminAmount(bot, chatId, uid, row,
@@ -604,6 +712,17 @@ async function adminCallback(bot, query, rest) {
     return;
   }
   if (verb !== 'ay' || !amount) { await answer('That is not an amount.', true); return; }
+  await delegateApprove(bot, query, requestId, cardMsg, { amount }, amount);
+}
+
+/**
+ * Hand a step chip to the standard approval handler as THIS admin's Approve
+ * (`opts` = the typed `amount`, or the `amountChecked` figure), then rewrite
+ * the step message to what is recorded now.
+ */
+async function delegateApprove(bot, query, requestId, cardMsg, opts, amount) {
+  const uid = String(query.from.id);
+  const chatId = query.message.chat.id;
   // Hand the tap to the standard approval handler as THIS admin's Approve,
   // carrying the amount: every guard runs again before the amount is saved
   // (PAY-6 pay:from is the model). Pointed at the approval card when it still
@@ -612,7 +731,7 @@ async function adminCallback(bot, query, rest) {
   const cardLive = cardKb.flat().some((b) => b && (b.callback_data === `approve:${requestId}` || b.callback_data === `abx:ok:${requestId}`));
   const message = cardLive ? { ...cardMsg, chat: cardMsg.chat || query.message.chat } : query.message;
   const delegated = Object.assign(Object.create(Object.getPrototypeOf(query)), query, { data: `approve:${requestId}`, message });
-  await require('../events/approvalEvents').handleApprovalCallback(bot, delegated, 'approve', { amount });
+  await require('../events/approvalEvents').handleApprovalCallback(bot, delegated, 'approve', opts);
   // What is recorded now decides the closing line; nothing recorded keeps the buttons.
   let after = null;
   try { after = await approvalQueueRepository.getByRequestId(requestId); } catch (_) { /* unreadable: no closing line */ }
@@ -623,8 +742,14 @@ async function adminCallback(bot, query, rest) {
   if (st === 'approved') closing = `✅ ${money.sale(amount)} from ${aaj.customer} is recorded.`;
   else if (st === 'pending' && signedNow) {
     const { required, signed } = approvalCount(after);
-    closing = `✅ You entered ${money.sale(amount)} and gave approval ${signed} of ${required}. A second admin checks it.`;
+    closing = opts.amountChecked
+      ? `✅ You approved ${money.sale(amount)} — approval ${signed} of ${required}.`
+      : `✅ You entered ${money.sale(amount)} and gave approval ${signed} of ${required}. A second admin checks it.`;
   } else if (st === 'rejected') closing = 'Already rejected — nothing to do.';
+  else if (st === 'pending' && opts.amount && rowAmount(aaj) && aaj.amountBy && String(aaj.amountBy.id) !== uid) {
+    // Another admin's figure landed first (their tap held the request).
+    closing = `${aaj.amountBy.name || 'Another admin'} already entered ${money.sale(rowAmount(aaj))} for this payment. Open the card to approve or reject it.`;
+  }
   if (!closing) return;
   const live = sessionStore.get(uid);
   if (live && live.type === SESSION_TYPE && live.step === 'admin_amount') sessionStore.clear(uid);
@@ -657,7 +782,7 @@ async function handleText(bot, msg) {
     if (!amount) {
       await render(bot, chatId, userId,
         `${prompt}\n\n⚠️ That is not an amount. Type digits only, for example 50000.`,
-        [notNowRow(row.requestId)]);
+        promptKeyboard(row.requestId));
       return true;
     }
     session.step = 'admin_amount'; sessionStore.set(userId, session);
@@ -691,7 +816,7 @@ async function handleCallback(bot, query) {
   const answer = (text) => bot.answerCallbackQuery(query.id, text ? { text } : undefined).catch(() => {});
   if (rest === 'noop') { await answer(); return true; }
   // PRC-2 — the admin's amount step: session-free, re-checked on every tap.
-  if (/^(ay|ae|ax):/.test(rest)) { await adminCallback(bot, query, rest); return true; }
+  if (/^(ay|ae|ax|ok):/.test(rest)) { await adminCallback(bot, query, rest); return true; }
   const session = sessionStore.get(userId);
   if (!session || session.type !== SESSION_TYPE || session.step === 'admin_amount') {
     await answer('This card has expired. Open 💵 Payment Received again.');

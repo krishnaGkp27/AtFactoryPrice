@@ -138,8 +138,7 @@ async function sweepPending(bot, { now = Date.now() } = {}) {
           adminIds: config.access.adminIds, now, widenHours: widenH,
         });
         if (aud.asked) {
-          if (aud.reason === 'asked') note = `⏰ Reminder — ${userLabel} asked YOU to approve this`;
-          if (aud.reason === 'waited') note = `⏰ Reminder — asked: ${aud.asked.name} · no answer for ${aud.hours}h. Any admin may approve.`;
+          note = askedApprover.reminderNote(aud, userLabel) || note;
           askedExtra = { excludeIds: config.access.adminIds.map(String).filter((a) => !aud.targets.includes(a)) };
           if (aud.reason === 'waited' && !q.actionJSON.askWidenedAt) {
             try {

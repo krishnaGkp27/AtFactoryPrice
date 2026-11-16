@@ -110,6 +110,27 @@ function lastScreen(bot, uid) {
 const esc = (s) => String(s).replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
 
 /**
+ * PRC-2 review 1 — read a legacy-Markdown text the way Telegram does and fail
+ * on a backslash inside a *bold* entity (Telegram honours no escape there:
+ * the backslash shows, and an escaped * is refused with a 400).
+ */
+function noEscapeInBold(text) {
+  let mode = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (mode === '') {
+      if (ch === '\\') { i += 1; continue; }
+      if (ch === '*') mode = '*';
+      else if (ch === '`') mode = '`';
+      continue;
+    }
+    if (ch === mode) { mode = ''; continue; }
+    if (mode === '*' && ch === '\\') assert.fail(`a backslash inside *bold* at ${i}: ${JSON.stringify(text)}`);
+  }
+  assert.equal(mode, '', `every entity is closed: ${JSON.stringify(text)}`);
+}
+
+/**
  * Abdul (employee) or an admin raises a payment received for ABBA.
  * @param {{amount?:string|null, ask?:string, customer?:string, uid?:string}} o
  *   amount null = ⏭ Amount not known; ask = the chip text after 🛂, or 'any'
@@ -325,9 +346,10 @@ test('PRC-2 #4: ⏭ Amount not known → Musa types it at the first approval →
     '💵 *Payment received · amount needed*', '', 'Customer: *ABBA*', 'Paid by: Bank — Zenith', 'Raised by: Abdul',
     'Outstanding today: 120,000', '',
     'Abdul did not know the amount. Type what ABBA paid, for example `50000`.', 'Nothing is approved until you confirm.',
+    'If your number gets no answer, tap ✏️ Type the amount and send it again.',
   ].join('\n'));
   assert.equal(prompt.args.opts.reply_to_message_id, 71);
-  assert.deepEqual(chipsOf(prompt), [`✖ Not now|prc:ax:${id}`]);
+  assert.deepEqual(chipsOf(prompt), [`✏️ Type the amount|prc:ae:${id}`, `✖ Not now|prc:ax:${id}`]);
   const promptId = sessionStore.get(MUSA).flowMessageId;
 
   // a bad figure
@@ -368,7 +390,16 @@ test('PRC-2 #4: ⏭ Amount not known → Musa types it at the first approval →
   const second = cardsTo(bot, JOHN, from)[0];
   assert.ok(second.args.text.includes(esc('Amount: 50,000 · entered by Musa')));
 
+  // review 1 (R3) — John's plain ✅ Approve records nothing until he has
+  // seen the figure Musa typed and tapped it
+  from = bot.calls.length;
   await approveDm(bot, JOHN, id, 72);
+  assert.equal(statusOf(id), 'pending');
+  assert.deepEqual(jsonOf(id).approvals, [MUSA]);
+  const johnCheck = sentTo(bot, JOHN, from).pop();
+  assert.equal(johnCheck.args.opts.reply_to_message_id, 72);
+  assert.deepEqual(chipsOf(johnCheck), [`✅ Approve 50,000|prc:ok:${id}:50000`, `✖ Not now|prc:ax:${id}`]);
+  await controller.handleCallbackQuery(bot, stepCb(`prc:ok:${id}:50000`, JOHN, 73, 72, dmChips(id)));
   assert.equal(statusOf(id), 'approved');
   assert.equal(BOOKED.length, 1);
   assert.equal(BOOKED[0].amount, 50000);
@@ -640,21 +671,26 @@ test('PRC-2 #9: names with _ and * are escaped on every new card; every new chip
   const id = await raise(bot, { amount: null, ask: 'Mu_sa*', customer: 'A_B*BA' });
   assert.equal(id.length, 36, 'a real-length request id');
   const receipt = lastScreen(bot, ABDUL).text;
-  assert.match(receipt, /^⏳ \*Sent to Mu\\_sa\\\* for approval\*/);
-  assert.match(receipt, /Customer: \*A\\_B\\\*BA\*/);
+  // review 1 — a name inside *bold* carries no backslash escape (Telegram
+  // honours none there; an escaped * is a 400): a * closes and reopens it.
+  assert.equal(receipt.split('\n')[0], '⏳ *Sent to Mu_sa*\\** for approval*');
+  assert.match(receipt, /\nCustomer: \*A_B\*\\\*\*BA\*\n/);
   assert.match(receipt, /Ask: Mu\\_sa\\\*/);
+  noEscapeInBold(receipt);
   const card = cardsTo(bot, MUSA)[0].args.text;
   assert.ok(card.startsWith(esc('🙋 Ab_dul asks YOU to approve this.')));
   assert.ok(card.includes(esc('🙋 Asked: Mu_sa*')));
 
   await approveDm(bot, MUSA, id, 71);
   const prompt = lastScreen(bot, MUSA).text;
-  assert.match(prompt, /Customer: \*A\\_B\\\*BA\*/);
+  assert.match(prompt, /\nCustomer: \*A_B\*\\\*\*BA\*\n/);
+  noEscapeInBold(prompt);
   assert.match(prompt, /Raised by: Ab\\_dul/);
   assert.match(prompt, /Ab\\_dul did not know the amount\. Type what A\\_B\\\*BA paid/);
   await controller.handleMessage(bot, msg(MUSA, '10000000000'));
   const check = lastScreen(bot, MUSA);
-  assert.match(check.text, /Customer: \*A\\_B\\\*BA\*/);
+  assert.match(check.text, /\nCustomer: \*A_B\*\\\*\*BA\*\n/);
+  noEscapeInBold(check.text);
   for (const c of check.chips) {
     const data = c.split('|')[1];
     assert.ok(Buffer.byteLength(data) <= 64, `${data} is ${Buffer.byteLength(data)} bytes`);
@@ -668,4 +704,182 @@ test('PRC-2 #9: names with _ and * are escaped on every new card; every new chip
   await controller.handleCallbackQuery(b2, cb('prc:noamt', ABDUL));
   await controller.handleCallbackQuery(b2, cb('prc:m:0', ABDUL));
   for (const c of lastScreen(b2, ABDUL).chips) assert.ok(Buffer.byteLength(c.split('|')[1]) <= 64);
+});
+
+/* ── review 1 (16-Nov-2026) ───────────────────────────────────────────── */
+
+test('PRC-2 review 1 #10: the second admin approves a typed amount only after seeing it — a stale "not entered" card records nothing', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = await raise(bot, { amount: null, ask: 'any' });
+  assert.ok(cardsTo(bot, MUSA)[0].args.text.includes(esc('Amount: not entered — typed at the first approval')));
+  await approveDm(bot, KRISHNA, id, 71);
+  await controller.handleMessage(bot, msg(KRISHNA, '50000'));
+  const promptId = sessionStore.get(KRISHNA).flowMessageId;
+  let from = bot.calls.length;
+  await controller.handleCallbackQuery(bot, stepCb(`prc:ay:${id}:50000`, KRISHNA, promptId, 71, dmChips(id)));
+  assert.deepEqual(jsonOf(id).approvals, [KRISHNA]);
+  // every other admin's card said "not entered": each gets the FULL card now, no ping
+  for (const a of [MUSA, JOHN]) {
+    const full = cardsTo(bot, a, from);
+    assert.equal(full.length, 1, `${a} gets the full card`);
+    assert.ok(full[0].args.text.startsWith(esc('🔏 1 of 2 — signed by Krishna. Yours is the second approval.')));
+    assert.ok(full[0].args.text.includes(esc('Amount: 50,000 · entered by Krishna')));
+    assert.ok(!textsTo(bot, a, from).some((t) => /needs a SECOND/.test(t)));
+  }
+  assert.equal(jsonOf(id).askWidenedAt, undefined, 'an un-asked request is not "widened"');
+
+  // Musa taps ✅ Approve on his ORIGINAL card (the one that said "not entered")
+  from = bot.calls.length;
+  await approveDm(bot, MUSA, id, 72);
+  assert.equal(statusOf(id), 'pending', 'nothing approved');
+  assert.equal(BOOKED.length, 0);
+  assert.deepEqual(toasts(bot, from), ['Check the amount first.']);
+  const check = sentTo(bot, MUSA, from).pop();
+  assert.equal(check.args.text, [
+    '💵 *Payment received · check the amount*', '', 'Customer: *ABBA*', 'Amount: *50,000* · entered by Krishna', 'Paid by: Bank — Zenith',
+    'Outstanding today: 120,000', 'After this payment: 70,000', '',
+    'Krishna typed this amount. Check it before you approve.', 'Your approval records the payment.',
+  ].join('\n'));
+  assert.deepEqual(chipsOf(check), [`✅ Approve 50,000|prc:ok:${id}:50000`, `✖ Not now|prc:ax:${id}`]);
+  assert.ok(Buffer.byteLength(`prc:ok:${id}:10000000000`) <= 64);
+
+  // a forged figure, and the admin who typed it, are refused
+  await controller.handleCallbackQuery(bot, stepCb(`prc:ok:${id}:90000`, MUSA, 73, 72, dmChips(id)));
+  assert.equal(statusOf(id), 'pending');
+  await controller.handleCallbackQuery(bot, stepCb(`prc:ok:${id}:50000`, KRISHNA, 74, 71, dmChips(id)));
+  assert.equal(statusOf(id), 'pending');
+  assert.match(toasts(bot).pop(), /You typed this amount — a different admin must check it/);
+
+  from = bot.calls.length;
+  await controller.handleCallbackQuery(bot, stepCb(`prc:ok:${id}:50000`, MUSA, 75, 72, dmChips(id)));
+  assert.equal(statusOf(id), 'approved');
+  assert.equal(BOOKED.length, 1);
+  assert.equal(BOOKED[0].amount, 50000);
+  const closing = bot.calls.slice(from).filter((c) => c.method === 'editMessageText' && c.args.opts.message_id === 75).pop();
+  assert.equal(closing.args.text, '✅ 50,000 from ABBA is recorded.');
+  assert.ok(bot.calls.slice(from).some((c) => c.method === 'editMessageReplyMarkup' && c.args.opts.message_id === 72), 'the card is sealed');
+});
+
+test('PRC-2 review 1 #11: two admins confirm different amounts at once — one figure, its own admin\'s signature, the other told', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = await raise(bot, { amount: null, ask: 'any' });
+  await approveDm(bot, KRISHNA, id, 71);
+  await controller.handleMessage(bot, msg(KRISHNA, '50000'));
+  const pK = sessionStore.get(KRISHNA).flowMessageId;
+  await approveDm(bot, MUSA, id, 72);
+  await controller.handleMessage(bot, msg(MUSA, '90000'));
+  const pM = sessionStore.get(MUSA).flowMessageId;
+  // a slow sheet: every write yields, so both taps overlap
+  const orig = approvalQueueRepository.updateActionJSON;
+  approvalQueueRepository.updateActionJSON = async (rid, patch) => {
+    await new Promise((r) => setTimeout(r, 5));
+    return orig(rid, patch);
+  };
+  const from = bot.calls.length;
+  try {
+    await Promise.all([
+      controller.handleCallbackQuery(bot, stepCb(`prc:ay:${id}:50000`, KRISHNA, pK, 71, dmChips(id))),
+      controller.handleCallbackQuery(bot, stepCb(`prc:ay:${id}:90000`, MUSA, pM, 72, dmChips(id))),
+    ]);
+  } finally { approvalQueueRepository.updateActionJSON = orig; }
+  const aj = jsonOf(id);
+  assert.equal(aj.amount, 50000, 'the first tap\'s figure');
+  assert.equal(aj.amountBy.id, KRISHNA);
+  assert.deepEqual(aj.approvals, [KRISHNA], 'the signature belongs to the admin who typed the figure');
+  assert.deepEqual(toasts(bot, from).filter((t) => /recorded/.test(t)), ['🔏 Approval 1 of 2 recorded.']);
+  const kClose = bot.calls.slice(from).filter((c) => c.method === 'editMessageText' && c.args.opts.message_id === pK).pop();
+  assert.equal(kClose.args.text, '✅ You entered 50,000 and gave approval 1 of 2. A second admin checks it.');
+  const mClose = bot.calls.slice(from).filter((c) => c.method === 'editMessageText' && c.args.opts.message_id === pM).pop();
+  assert.equal(mClose.args.text, 'Krishna already entered 50,000 for this payment. Open the card to approve or reject it.');
+  assert.equal(statusOf(id), 'pending');
+});
+
+test('PRC-2 review 1 #12: an asked admin since removed from ADMIN_IDS — the others get the FULL card at the first signature', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = await raise(bot); // asks Musa: only Musa got the card
+  assert.equal(cardsTo(bot, KRISHNA).length + cardsTo(bot, JOHN).length, 0);
+  const saved = config.access.adminIds;
+  config.access.adminIds = [KRISHNA, JOHN];
+  try {
+    const live = await approvalQueueRepository.getByRequestId(id);
+    sessionStore.set(KRISHNA, { type: 'approvals_inbox_flow', step: 'items', category: 'finance', _items: [live], flowMessageId: 77 });
+    const from = bot.calls.length;
+    await controller.handleCallbackQuery(bot, cb(`abx:ok:${id}`, KRISHNA, 77));
+    assert.deepEqual(jsonOf(id).approvals, [KRISHNA]);
+    assert.ok(jsonOf(id).askWidenedAt);
+    assert.equal(cardsTo(bot, JOHN, from).length, 1, 'John holds no card: he gets the full one');
+    assert.ok(!textsTo(bot, JOHN, from).some((t) => /Use the approval card in your chat/.test(t)));
+    assert.equal(sentTo(bot, MUSA, from).length, 0, 'the removed admin is not messaged');
+  } finally { config.access.adminIds = saved; }
+});
+
+test('PRC-2 review 1 #13: a reminder within the first hour of a widened card never says "no answer for 0h"', async () => {
+  reset({ REMINDER_HOURS_ADMIN: 1 });
+  const bot = createFakeBot();
+  const realSend = bot.sendMessage.bind(bot);
+  bot.sendMessage = async (chatId, text, opts) => {
+    if (String(chatId) === MUSA) throw new Error('Forbidden: bot was blocked by the user');
+    return realSend(chatId, text, opts);
+  };
+  const id = await raise(bot);
+  assert.ok(jsonOf(id).askWidenedAt);
+  const NOW = Date.now();
+  setCreatedAt(id, new Date(NOW - 20 * 60 * 1000).toISOString());
+  approvalReminder._resetForTests();
+  const from = bot.calls.length;
+  await approvalReminder.sweepPending(bot, { now: NOW });
+  for (const a of [KRISHNA, JOHN]) {
+    const card = cardsTo(bot, a, from)[0];
+    assert.ok(card, `${a} reminded`);
+    assert.ok(card.args.text.startsWith(esc('⏰ Reminder — asked: Musa. Any admin may approve.')), card.args.text.split('\n')[0]);
+    assert.ok(!/0h/.test(card.args.text));
+  }
+});
+
+test('PRC-2 review 1 #14: the typed step after a restart — ✏️ Type the amount brings it back', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = await raise(bot, { amount: null });
+  await approveDm(bot, MUSA, id, 71);
+  const promptId = sessionStore.get(MUSA).flowMessageId;
+  sessionStore.clear(MUSA); // a redeploy or the session's time-out
+  await controller.handleMessage(bot, msg(MUSA, '50000'));
+  assert.equal(jsonOf(id).amount, undefined, 'a number with no step records nothing');
+  await controller.handleCallbackQuery(bot, stepCb(`prc:ae:${id}`, MUSA, promptId, 71, dmChips(id)));
+  assert.equal(sessionStore.get(MUSA).step, 'admin_amount');
+  await controller.handleMessage(bot, msg(MUSA, '50000'));
+  assert.deepEqual(lastScreen(bot, MUSA).chips[0], `✅ Approve with 50,000|prc:ay:${id}:50000`);
+});
+
+test('PRC-2 review 1 #15: a receipt Telegram refuses after the request was raised never says "Could not send"', async () => {
+  reset();
+  const bot = createFakeBot();
+  const realEdit = bot.editMessageText.bind(bot);
+  const realSend = bot.sendMessage.bind(bot);
+  const refuse = (t, o) => /Sent to/.test(String(t)) && o && o.parse_mode;
+  bot.editMessageText = async (t, o) => { if (refuse(t, o)) throw new Error("ETELEGRAM: 400 Bad Request: can't parse entities"); return realEdit(t, o); };
+  bot.sendMessage = async (c, t, o) => { if (refuse(t, o)) throw new Error("ETELEGRAM: 400 Bad Request: can't parse entities"); return realSend(c, t, o); };
+  const id = await raise(bot);
+  assert.equal(rows().length, 1);
+  assert.equal(cardsTo(bot, MUSA).length, 1);
+  const last = lastScreen(bot, ABDUL);
+  assert.ok(!/Could not send/.test(last.text));
+  assert.equal(last.text, `⏳ Sent to Musa for approval\n\nCustomer: ABBA\nRef ${approvalCards.shortRequestRef(id)}`);
+  assert.ok(last.chips.some((c) => c.startsWith('🔔 Remind approvers|')));
+  assert.ok(!sessionStore.get(ABDUL), 'the entry is over');
+});
+
+test('PRC-2 review 1 #16: the who-step tells two admins of one name apart, and names an unnamed one by the last four digits', async () => {
+  reset();
+  NAMES[KRISHNA] = 'Musa';
+  delete NAMES[JOHN];
+  const bot = createFakeBot();
+  const pf = require(path.join(SRC, 'flows/paymentReceivedFlow'));
+  const choices = await pf._internals.approverChoices(bot, ABDUL);
+  assert.deepEqual(choices, [
+    { id: KRISHNA, name: 'Musa 777' }, { id: MUSA, name: 'Musa 888' }, { id: JOHN, name: 'Admin 555' },
+  ]);
 });

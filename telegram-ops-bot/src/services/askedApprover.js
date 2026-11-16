@@ -99,4 +99,20 @@ function askedLine(asked, aud) {
   return `🙋 Asked: ${asked.name}`;
 }
 
-module.exports = { askedOf, widenHours, audience, askYouNote, askedLine, DEFAULT_WIDEN_HOURS, HOUR_MS };
+/**
+ * The hourly reminder's first line for an asked request, or '' for an
+ * un-asked / signed one (the caller keeps today's note). Like askedLine, it
+ * never says "no answer for 0h" (a card widened early, or a widen hour below 1).
+ */
+function reminderNote(aud, requesterName) {
+  if (!aud || !aud.asked) return '';
+  if (aud.reason === 'asked') return `⏰ Reminder — ${requesterName || 'The requester'} asked YOU to approve this`;
+  if (aud.reason === 'waited') {
+    return aud.hours >= 1
+      ? `⏰ Reminder — asked: ${aud.asked.name} · no answer for ${aud.hours}h. Any admin may approve.`
+      : `⏰ Reminder — asked: ${aud.asked.name}. Any admin may approve.`;
+  }
+  return '';
+}
+
+module.exports = { askedOf, widenHours, audience, askYouNote, askedLine, reminderNote, DEFAULT_WIDEN_HOURS, HOUR_MS };
