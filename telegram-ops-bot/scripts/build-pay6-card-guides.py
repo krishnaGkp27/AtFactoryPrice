@@ -934,6 +934,60 @@ def abdul_parts():
 # ══════════════════════════════════════════════════════════════════════════
 # 7. Pages
 # ══════════════════════════════════════════════════════════════════════════
+
+def abdul_short_parts():
+    """The same journey in four parts and seven steps — the copy Abdul keeps on his phone."""
+    one = Part("1", "Register your bank account (once)",
+               "Money can only be paid into an account that two admins have approved.", [
+        Step("Abdul", f"Type {ty('menu')} → {b('💰 Finance')} → {b('💳 Payments')} → {b('🏦 Register account')}. "
+                      f"Type your account number, type it once more, tap your bank, tap {b('✅ Submit for approval')}.",
+             [Card(S("register", step="(he has no registered account yet)", kind="edit", text="Payments")),
+              Card(S("register", step="Abdul types the same number once more")),
+              Card(S("register", step="=Abdul taps ✅ Submit for approval", to="Abdul", kind="message"))],
+             "Tap YOUR bank. Never pick a button ending “— BLACK PANTHER”: those are the company's own accounts. "
+             "Two admins then approve it; you get a card at each approval."),
+    ])
+    two = Part("2", "Ask for a payment",
+               "Example: ₦25,000 for “Transport to Idumota”, with a photo of the bill.", [
+        Step("Abdul", f"{b('💳 Payments')} → {b('💸 Request payment')} → tap your account. Type the amount "
+                      f"({ty('25000')}), type what it is for, send the bill photo (or {b('⏭ Skip — no bill')}), "
+                      f"tap {b('✅ Submit for approval')}.",
+             [Card(S("request", step="MAIN · Abdul gives the amount")),
+              Card(S("request", step="MAIN · Abdul attaches the bill")),
+              Card(S("request", step="MAIN · Abdul submits", to="Abdul", kind="message"))],
+             f"Figures only. For a salary tap {b('💼 Salary')} instead of typing a reason. The same account and "
+             "amount cannot be asked twice while the first one is open."),
+    ])
+    three = Part("3", "Wait — approved — paid",
+                 "Two admins approve. The second one chooses the company account you are paid from. Then finance pays.", [
+        Step("Abdul", "Nothing to tap. You get a card at each approval.",
+             [Card(S("request", step="MAIN · Krishna approves", to="Abdul")),
+              Card(S("request", step="=MAIN · Musa picks the paying account — taps “🏦 ZENITH — BLACK PANTHER”", to="Abdul"), new=True)],
+             f"If it waits too long, tap {b('🔔 Remind approvers')} (once a day). The second card names the company "
+             "account. Approved is not yet paid.", who_label="You wait"),
+        Step("Abdul", "Nothing to tap. Wait for the money.",
+             [Card(S("finance", step="Finance has made the transfer", to="Abdul"), new=True),
+              Card(S("finance", step="Finance sends a screenshot", to="Abdul"))],
+             "“From” is the company account; “To” is your account. Check your bank. The transfer screenshot "
+             "follows when finance sends one.", who_label="You wait"),
+        Step("Abdul", "If the finance person declines: read the reason, fix it, ask again.",
+             [Card(S("finance", step="Finance types the reason: \"Account name", to="Abdul"))],
+             "Nothing was paid. The line before “Ref” is the reason.", who_label="If declined", check=False),
+    ])
+    four = Part("4", "Your requests — and a customer's payment", "", [
+        Step("Abdul", f"{b('💳 Payments')} → {b('📋 My requests')} shows every request and where it stands.",
+             [Card(S("finance", step="=Abdul taps 📋 My requests"))],
+             "⏳ waiting for approval · 🏦 with finance to pay · ✅ paid · ✖ declined · ❌ rejected. "
+             "An example list — yours shows only your own requests.", check=False),
+        Step("Abdul", f"A customer paid: {b('💰 Finance')} → {b('💵 Payment Received')} → type part of the name → "
+                      f"tap the customer → type the amount → tap how it was paid → {b('✅ Submit for approval')}.",
+             [Card(S("received", step="=Abdul taps 🏦 Zenith")),
+              Card(S("received", step="=Abdul taps ✅ Submit for approval", to="Abdul"))],
+             "Two admins approve it; the customer's balance moves only after that. Which bank button to tap for "
+             "money paid into a company account is Krishna's call — ask him before your first real entry."),
+    ])
+    return [one, two, three, four]
+
 def legend_html():
     demo_toast = '<div class="toast">🔏 Approval 1 of 2 recorded.</div>'
     return f"""
@@ -1133,6 +1187,40 @@ def build_abdul():
     return page("Payments card by card — Abdul", "Abdul's copy", "".join(body))
 
 
+
+def abdul_short_cover():
+    return f"""
+<section class="cover">
+ <div class="brand">black_panther bot (formerly AtFactoryPrice) · Abdul's short copy · {DATE}</div>
+ <h1>Payments — the short guide</h1>
+ <div class="sub">Abdul — four parts, seven steps: what <b>you</b> tap and what arrives on <b>your</b> phone.</div>
+ <div class="three">
+  <div class="box"><div class="btitle">What you will do</div>
+   <p>1. Register your bank account (once). 2. Ask for a payment. 3. Wait: two admins approve, then finance pays.
+   4. See your requests, and record a payment a customer made.</p></div>
+  <div class="box"><div class="btitle">Who else is involved</div>
+   <div class="castrow">{badge("Krishna")}<span>admin — approves</span></div>
+   <div class="castrow">{badge("Musa")}<span>admin — approves, and chooses the company account that pays you</span></div>
+   <div class="castrow">{badge("Finance")}<span>the person who makes the bank transfer</span></div></div>
+  <div class="box"><div class="btitle">If a card looks different</div>
+   <p>Take a screenshot of the whole card, with its buttons, and send it to Krishna with the step number.
+   Do not tap anything else on that card until he answers.</p></div>
+ </div>
+ {legend_html()}
+</section>"""
+
+
+def build_abdul_short():
+    parts = abdul_short_parts()
+    number_steps(parts)
+    collect_prose(parts)
+    assert_abdul_only(parts)
+    PROSE.append(abdul_short_cover())
+    body = [abdul_short_cover()]
+    body.append('<section class="flow">' + "".join(render_part(p, you="Abdul") for p in parts) + "</section>")
+    return page("Payments — the short guide — Abdul", "Abdul's short copy", "".join(body))
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 8. Style (look of scripts/build-pay2-guides.py, laid out landscape)
 # ══════════════════════════════════════════════════════════════════════════
@@ -1310,7 +1398,8 @@ def main():
                 ALL_BUTTONS.update(row)
 
     outputs = [("PAY-6_CARDS_OWNER", "Payments card by card — owner", build_owner()),
-               ("PAY-6_CARDS_ABDUL", "Payments card by card — Abdul", build_abdul())]
+               ("PAY-6_CARDS_ABDUL", "Payments card by card — Abdul", build_abdul()),
+               ("PAY-6_CARDS_ABDUL_SHORT", "Payments — the short guide — Abdul", build_abdul_short())]
     check_buttons()
     PROSE.extend(x for row in LANE for x in [row[2], row[4], *row[3].values()])
     check_quotes()
