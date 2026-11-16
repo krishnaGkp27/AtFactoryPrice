@@ -101,7 +101,13 @@ const recent = new Map();
 /** Who + what + the payload as canonical text (volatile keys dropped). */
 function doubleTapKey(uid, action, payload) {
   try {
-    return `${uid}|${action}|${duplicateApprovals._internals.canonical({ ...(payload || {}), action })}`;
+    // PRC-2 review 2 — the asked admin is routing to the DUPLICATE detector
+    // (two people's requests are not twins because of whom they asked), but
+    // to a double tap it is part of the request: the same payment asked of a
+    // DIFFERENT admin seconds later is a new request, never merged into the
+    // first (whose card went to someone else).
+    const asked = payload && payload.askedAdmin && payload.askedAdmin.id;
+    return `${uid}|${action}|${duplicateApprovals._internals.canonical({ ...(payload || {}), action })}${asked ? `|asked:${asked}` : ''}`;
   } catch (_) { return null; }
 }
 

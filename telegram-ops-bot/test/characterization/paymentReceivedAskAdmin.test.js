@@ -346,7 +346,7 @@ test('PRC-2 #4: ⏭ Amount not known → Musa types it at the first approval →
     '💵 *Payment received · amount needed*', '', 'Customer: *ABBA*', 'Paid by: Bank — Zenith', 'Raised by: Abdul',
     'Outstanding today: 120,000', '',
     'Abdul did not know the amount. Type what ABBA paid, for example `50000`.', 'Nothing is approved until you confirm.',
-    'If your number gets no answer, tap ✏️ Type the amount and send it again.',
+    'If the bot answers with a bale card or "not found" instead, tap ✏️ Type the amount and send the number again.',
   ].join('\n'));
   assert.equal(prompt.args.opts.reply_to_message_id, 71);
   assert.deepEqual(chipsOf(prompt), [`✏️ Type the amount|prc:ae:${id}`, `✖ Not now|prc:ax:${id}`]);
@@ -927,4 +927,61 @@ test('PRC-2 review 1 #18: the typed amount is read back before the signature —
   } finally { approvalQueueRepository.updateActionJSON = orig; }
   assert.deepEqual(jsonOf(id).approvals || [], [], 'no signature');
   assert.ok(toasts(bot, from).includes('⚠️ The amount on this payment changed while you typed — nothing was approved. Open the card again.'));
+});
+
+/* ── PRC-2 review 2 ───────────────────────────────────────────────────── */
+
+test('PRC-2 review 2 #19: the same payment asked of a DIFFERENT admin seconds later is a new request — John gets his card, the receipt names John', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id1 = await raise(bot, { amount: '50000', ask: 'Musa' });
+  const from = bot.calls.length;
+  const id2 = await raise(bot, { amount: '50000', ask: 'John' });
+  assert.notEqual(id2, id1, 'not merged into the request Musa was asked');
+  assert.equal(rows().length, 2);
+  assert.deepEqual(jsonOf(id1).askedAdmin, { id: MUSA, name: 'Musa' });
+  assert.deepEqual(jsonOf(id2).askedAdmin, { id: JOHN, name: 'John' });
+  assert.equal(cardsTo(bot, JOHN, from).length, 1, 'John gets the card');
+  assert.match(lastScreen(bot, ABDUL).text, /^⏳ \*Sent to John for approval\*/);
+  // the SAME admin asked again within the window is still one request
+  const id3 = await raise(bot, { amount: '50000', ask: 'John' });
+  assert.equal(id3, id2);
+  assert.equal(rows().length, 2);
+});
+
+test('PRC-2 review 2 #20: a merged double tap names the admin its OWN row asked', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = await raise(bot, { amount: '50000', ask: 'Musa' });
+  const orig = approvalGate.raise;
+  // the gate hands back the first request (as a merged tap does)
+  approvalGate.raise = async () => ({ ok: true, requestId: id, created: false, duplicate: true, doubleTap: true, actionJSON: jsonOf(id) });
+  try {
+    await raise(bot, { amount: '50000', ask: 'John' });
+  } finally { approvalGate.raise = orig; }
+  assert.match(lastScreen(bot, ABDUL).text, /^⏳ \*Sent to Musa for approval\*/);
+});
+
+test('PRC-2 review 2 #21: the admin\'s amount step waits 30 minutes, not the 5-minute default', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = await raise(bot, { amount: null, ask: 'any' });
+  await approveDm(bot, MUSA, id, 71);
+  const s = sessionStore.get(MUSA);
+  assert.equal(s.step, 'admin_amount');
+  assert.equal(s.ttlMs, 30 * 60 * 1000);
+  // a bad figure keeps the long clock
+  await controller.handleMessage(bot, msg(MUSA, 'fifty'));
+  assert.equal(sessionStore.get(MUSA).ttlMs, 30 * 60 * 1000);
+});
+
+test('PRC-2 review 2 #22: a decided payment record prints no "Date:" (not the day it is opened) and no "typed at the first approval"', async () => {
+  reset();
+  const blank = { action: 'record_payment', customer: 'ABBA', amountPending: true, method: 'Cash' };
+  assert.equal(await approvalCards.buildCardFromActionJSON(blank, { decided: true }),
+    'Record Payment Request\nCustomer: ABBA\nAmount: not entered\nMethod: Cash');
+  assert.equal(await approvalCards.buildCardFromActionJSON({ ...blank, amountPending: undefined, amount: 50000, amountBy: { id: MUSA, name: 'Musa' } }, { decided: true }),
+    'Record Payment Request\nCustomer: ABBA\nAmount: 50,000 · entered by Musa\nMethod: Cash');
+  // a pending card keeps its Date line (the day the payment would be booked)
+  assert.match(await approvalCards.buildCardFromActionJSON(blank), new RegExp(`\\nDate: ${fmtDate(todayInLagos())}\\n`));
 });

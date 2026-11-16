@@ -363,7 +363,10 @@ async function submit(bot, chatId, userId) {
   }
   const warn = sent === 0 ? '⚠️ The admins could not be notified just now. Ask an admin to open 🛂 Approvals.'
     : unreachable ? `⚠️ ${asked.name} could not be reached — sent to the other admins.` : '';
-  const headPlain = asked ? `Sent to ${asked.name} for approval` : 'Sent for approval';
+  // PRC-2 review 2 — a request handed back (a retry of the same id, a
+  // merged double tap) is named by its OWN row, never by this session.
+  const rowAsked = raised.created ? asked : ((raised.actionJSON && raised.actionJSON.askedAdmin) || null);
+  const headPlain = rowAsked && rowAsked.name ? `Sent to ${rowAsked.name} for approval` : 'Sent for approval';
   const ref = approvalCards.shortRequestRef(requestId);
   const rows = [gate.receiptRow(requestId), [{ text: '💵 Record another', callback_data: 'act:payment_received' }, { text: '🏠 Menu', callback_data: 'act:__back__' }]];
   try {
@@ -381,6 +384,9 @@ async function submit(bot, chatId, userId) {
 }
 
 /* ── PRC-2: the admin's amount step ──────────────────────────────────── */
+
+/** How long the admin's typed amount step waits for the number. */
+const ADMIN_AMOUNT_TTL_MS = 30 * 60 * 1000;
 
 const ADMIN_TITLE_ASK = '💵 *Payment received · amount needed*';
 const ADMIN_TITLE_CHECK = '💵 *Payment received · check the amount*';
@@ -456,7 +462,7 @@ async function adminPromptText(bot, row) {
     '',
     `${mdEscape(raisedBy)} did not know the amount. Type what ${mdEscape(aj.customer)} paid, for example \`50000\`.`,
     'Nothing is approved until you confirm.',
-    'If your number gets no answer, tap ✏️ Type the amount and send it again.',
+    'If the bot answers with a bale card or "not found" instead, tap ✏️ Type the amount and send the number again.',
   ].join('\n');
 }
 
@@ -549,6 +555,9 @@ async function openAdminAmount(bot, chatId, adminId, row, { cardMessageId = null
     messageId = sent && sent.message_id;
   }
   sessionStore.set(adminId, {
+    // PRC-2 review 2 — an admin checks the bank app before typing: the
+    // step outlives the 5-minute default.
+    ttlMs: ADMIN_AMOUNT_TTL_MS,
     type: SESSION_TYPE, step: 'admin_amount', requestId: row.requestId,
     flowMessageId: messageId || null, cardMessageId: cardMessageId || null,
   });

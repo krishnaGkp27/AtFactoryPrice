@@ -185,7 +185,10 @@ After this payment: 70,000
   `🙋 Asked: Musa · no answer for 5h — any admin may approve`;
 - an un-asked request with an amount prints byte-for-byte as before
   (pinned by test);
-- a decided record (🛂 ✅❌ Decided) prints no live balance.
+- a decided record (🛂 ✅❌ Decided, the ↩️ revert card) prints no live balance
+  and no `Date:` line (on a pending card it is the day the payment would be
+  booked; on a record the record line carries the decision date); a blank
+  amount on a record reads `Amount: not entered`.
 
 Notes put above the card (`🔔 Approval required …`):
 
@@ -221,7 +224,7 @@ Outstanding today: 120,000
 
 Abdul did not know the amount. Type what ABBA paid, for example `50000`.
 Nothing is approved until you confirm.
-If your number gets no answer, tap ✏️ Type the amount and send it again.
+If the bot answers with a bale card or "not found" instead, tap ✏️ Type the amount and send the number again.
 [✏️ Type the amount] [✖ Not now]
 ```
 
@@ -383,13 +386,17 @@ admin types it.
 ## Known limits
 
 - **A typed amount after the admin's session is lost** (a redeploy, or the
-  session's time-out between `✅ Approve` and the typed number) reaches no
+  step's 30-minute time-out between `✅ Approve` and the typed number) reaches no
   step: the controller reads the number as an ordinary typed line (for
   example `Bale 50000 not found.`, or a bale card when the figure is a bale
   number). Nothing is recorded. Routing it would mean changing the
   controller, which this feature does not touch. The way back: tap
   `✏️ Type the amount` on the prompt (session-free) or `✅ Approve` on the
   card again, then type the number.
+- **Two raises seconds apart** (`APPROVAL_DOUBLE_TAP_SECONDS`) of the same
+  customer, amount and method are one request only when they ask the SAME
+  admin; asking a different admin is a new request with its own card. The
+  receipt names the admin its own row asked.
 - The per-request lock is in-process: it holds while the bot runs as one
   process (as today). The signature figures (`signoffs[].amount`) are the
   backstop that does not depend on it.

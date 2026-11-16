@@ -769,10 +769,16 @@ async function buildPaymentCard(req, opts = {}) {
   // so. An un-asked request with an amount prints exactly as before.
   const blank = !(Number(amount) > 0);
   const by = req && req.amountBy && (req.amountBy.name || req.amountBy.id);
+  // PRC-2 review 2 — a DECIDED record (🛂 ✅❌ Decided, the revert card)
+  // prints no "Date:": on a pending card it is the day the payment would be
+  // booked (the executor books at approval), but on a record "today" is just
+  // the day it was opened — the record line above the card carries the
+  // decision date. A blank amount on a record will never be typed.
   const amountText = blank
-    ? 'not entered — typed at the first approval'
+    ? (opts.decided ? 'not entered' : 'not entered — typed at the first approval')
     : `${money.sale(amount || 0)}${by ? ` · entered by ${by}` : ''}`;
-  let text = `Record Payment Request\nCustomer: ${customer}\nAmount: ${amountText}\nMethod: ${method || '—'}\nDate: ${fmtDate(require('../utils/dates').todayInLagos())  /* TIME-1 */}`;
+  let text = `Record Payment Request\nCustomer: ${customer}\nAmount: ${amountText}\nMethod: ${method || '—'}`;
+  if (!opts.decided) text += `\nDate: ${fmtDate(require('../utils/dates').todayInLagos())  /* TIME-1 */}`;
   try {
     const askedApprover = require('./askedApprover');
     const asked = askedApprover.askedOf(req, config.access.adminIds);
