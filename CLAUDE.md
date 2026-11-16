@@ -256,6 +256,18 @@ They are absent from `schemaMapper` so the bootstrap cannot recreate the tabs.
 The storage split that produced this (which sheets move to Railway Postgres and
 which stay) is recorded in `telegram-ops-bot/docs/SHEET_STORAGE_SPLIT.md`.
 
+**Which tabs may be deleted BY HAND (owner asked 16-Nov-2026):** the verified,
+tab-by-tab answer is `telegram-ops-bot/docs/SHEETS_SAFE_TO_DELETE_2026-11-16.md`
+— read it before answering any "can I delete this sheet?" question, and re-run
+its §5 checks if `schemaMapper.js`, a repository or `smoke.js` S26.1 changed
+since. Short form: safe now = `Stock_Ledger`, `UserPrefs`, `ShipmentEvents`,
+`BankFeed`, `Sheet62`; look inside first = `Sheet68` / `Sheet70` / `Sheet71`;
+pointless (the bot puts them back empty) = `LedgerBalanceCache`,
+`WhatsAppOutbound`, `WhatsAppTemplates`; NOT recreated and fatal if deleted =
+`Inventory`, `Transactions`, `ApprovalQueue`, `AuditLog`, `Settings`; everything
+else is a business record — never. The live workbook was not read: a tab the
+document does not name is unanalysed.
+
 Inventory column W = `design_category` (Cashmere / Chinos / Gaberdine /
 Senator / TR / …), stamped per DESIGN by the dual-admin Set Design Category
 flow (DCAT-1) — owner chose an Inventory column over a separate mapping sheet.
