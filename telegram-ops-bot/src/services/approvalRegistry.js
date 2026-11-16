@@ -80,7 +80,8 @@ const ENTRIES = Object.freeze({
   record_payment: {
     icon: '💵',
     label: 'Payment received',
-    oneLine: (aj) => [aj.customer || '', Number(aj.amount) > 0 ? money.sale(aj.amount) : '', aj.method || ''].filter(Boolean).join(' · '),
+    // PRC-2 — an employee may leave the amount for the first approving admin.
+    oneLine: (aj) => [aj.customer || '', Number(aj.amount) > 0 ? money.sale(aj.amount) : (aj.amountPending ? 'amount to be entered' : ''), aj.method || ''].filter(Boolean).join(' · '),
   },
   // The reversal of an approved sale (dual admin).
   revert_sale_bundle: {

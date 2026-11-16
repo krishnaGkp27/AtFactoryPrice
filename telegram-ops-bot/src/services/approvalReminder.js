@@ -112,6 +112,10 @@ async function sweepPending(bot, { now = Date.now() } = {}) {
       .slice(0, MAX_CARDS_PER_SWEEP);
 
     let sent = 0;
+    // PRC-2 — read once per pass: how long a request asked of one admin
+    // waits on that admin alone.
+    const askedApprover = require('./askedApprover');
+    const widenH = due.some((q) => q.actionJSON && q.actionJSON.askedAdmin) ? await askedApprover.widenHours() : 0;
     for (const q of due) {
       try {
         // APU-1: the reminder card carries the SAME detail as the original
@@ -123,9 +127,29 @@ async function sweepPending(bot, { now = Date.now() } = {}) {
         // CNET-2 — an add_contact reminder rebuild keeps its destination
         // chips; every other action keeps the standard Approve/Reject pair.
         const kb = approvalCards.keyboardForRequest(q.requestId, q.actionJSON);
+        // PRC-2 (owner, 16-Nov-2026) — a request asked of one named admin
+        // reminds that admin alone until ASKED_ADMIN_WIDEN_HOURS, then every
+        // admin; after a signature, only those who have not signed. Never
+        // the requester. Un-asked rows: today's note and recipients.
+        let note = '⏰ Reminder — this approval is still waiting';
+        let askedExtra = {};
+        const aud = askedApprover.audience({
+          aj: q.actionJSON, requesterId: q.user, createdAt: q.createdAt,
+          adminIds: config.access.adminIds, now, widenHours: widenH,
+        });
+        if (aud.asked) {
+          if (aud.reason === 'asked') note = `⏰ Reminder — ${userLabel} asked YOU to approve this`;
+          if (aud.reason === 'waited') note = `⏰ Reminder — asked: ${aud.asked.name} · no answer for ${aud.hours}h. Any admin may approve.`;
+          askedExtra = { excludeIds: config.access.adminIds.map(String).filter((a) => !aud.targets.includes(a)) };
+          if (aud.reason === 'waited' && !q.actionJSON.askWidenedAt) {
+            try {
+              await approvalQueueRepository.updateActionJSON(q.requestId, { askWidenedAt: new Date(now).toISOString() });
+            } catch (e) { logger.warn(`approvalReminder: askWidenedAt for ${q.requestId} not saved: ${e.message}`); }
+          }
+        }
         await approvalEvents.notifyAdminsApprovalRequest(
           bot, q.requestId, userLabel, card, q.riskReason || 'Pending approval', excludeId,
-          { prependNote: '⏰ Reminder — this approval is still waiting', ...(kb ? { keyboard: kb } : {}) },
+          { prependNote: note, ...(kb ? { keyboard: kb } : {}), ...askedExtra },
         );
         if (q.actionJSON && q.actionJSON.sale_doc_file_id) {
           const kind = q.actionJSON.sale_doc_type === 'document' ? 'document' : 'photo';

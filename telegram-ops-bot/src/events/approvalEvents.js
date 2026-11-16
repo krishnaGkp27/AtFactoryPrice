@@ -2125,6 +2125,20 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
     return;
   }
 
+  // PRC-2 (owner, 16-Nov-2026) — an employee may leave a customer payment's
+  // amount blank; the admin giving the FIRST approval types it. Placed after
+  // every guard above and OUTSIDE the two-admin gate's try (whose catch falls
+  // back to single approval): a blank row opens the amount step and records
+  // nothing; the step's ✅ chip re-enters here with `opts.amount`, which is
+  // saved on the row before the gate below records this admin's signature.
+  // A refused save, or a stale chip whose request already has an amount,
+  // approves nothing.
+  if (action === 'approve' && item && item.actionJSON && item.actionJSON.action === 'record_payment') {
+    const seam = await require('../flows/paymentReceivedFlow')
+      .amountSeam(bot, callbackQuery, requestId, item, opts && opts.amount);
+    if (seam.stop) return { asked: true }; // the inbox keeps its card as it is
+  }
+
   // DUAL-1 (specs/DUAL-1_TWO_ADMIN_APPROVAL.md) — inventory + finance
   // actions must involve TWO admins before execution. An admin requester
   // counts as the first (the H1 guard above already forces a different
@@ -2184,10 +2198,18 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           // stops here. The outer catch falls back to single approval (house
           // style for a gate bug); a refused sheet write is not a gate bug,
           // and falling through would execute a two-signature request on one.
+          // PRC-2 (owner, 16-Nov-2026) — a request ASKED of one admin whose
+          // card has gone to nobody else yet: the first signature widens it,
+          // stamped in the SAME write that saves the signature.
+          const askedMod = require('../services/askedApprover');
+          const askedAdm = askedMod.askedOf(item.actionJSON, config.access.adminIds);
+          const widenNow = !!askedAdm && askedAdm.id !== String(item.user) && !item.actionJSON.askWidenedAt;
+          const widenedAt = widenNow ? new Date().toISOString() : '';
           try {
             await approvalQueueRepository.updateActionJSON(requestId, {
               approvals: [...prior, adminId],
               signoffs: trail,
+              ...(widenNow ? { askWidenedAt: widenedAt } : {}),
             });
           } catch (e) {
             logger.error(`DUAL-1 first-signoff save failed for ${requestId} — nothing approved: ${e.message}`);
@@ -2238,7 +2260,30 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           const others = config.access.adminIds
             .map(String)
             .filter((id) => id !== adminId && id !== String(item.user));
-          for (const otherId of others) {
+          // PRC-2 — the admins who hold no card yet (everyone but the asked
+          // admin) get the FULL card now, with Approve / Reject; whoever
+          // already holds one keeps the one-line ping. Best-effort: the
+          // signature above is recorded whatever happens here.
+          let pingIds = others;
+          if (widenNow) {
+            const fullIds = others.filter((id) => id !== askedAdm.id);
+            pingIds = others.filter((id) => id === askedAdm.id);
+            if (fullIds.length) {
+              try {
+                const cardsMod = require('../services/approvalCards');
+                const ajNow = { ...item.actionJSON, approvals: [...prior, adminId], signoffs: trail, askWidenedAt: widenedAt };
+                const card = await cardsMod.buildCardFromActionJSON(ajNow);
+                const kb = cardsMod.keyboardForRequest(requestId, ajNow);
+                const reqLabel = await cardsMod.resolveUserLabel(item.user, bot);
+                await notifyAdminsApprovalRequest(bot, requestId, reqLabel, card, item.riskReason || 'Pending approval', undefined, {
+                  prependNote: `🔏 ${prior.length + 1} of ${required} — signed by ${signerLabel || adminId}. Yours is the second approval.`,
+                  excludeIds: config.access.adminIds.map(String).filter((id) => !fullIds.includes(id)),
+                  ...(kb ? { keyboard: kb } : {}),
+                });
+              } catch (e) { logger.warn(`PRC-2 second-approval card for ${requestId} failed: ${e.message}`); }
+            }
+          }
+          for (const otherId of pingIds) {
             try {
               await bot.sendMessage(otherId,
                 `🔔 Request ${requestId} (${require('../services/approvalCards').actionLabel(actName)}) has its first admin approval and needs a SECOND. Use the approval card in your chat.`);

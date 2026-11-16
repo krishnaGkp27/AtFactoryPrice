@@ -124,6 +124,11 @@ test('PRC-1: customer → amount → bank → confirm → ONE record_payment req
   assert.deepEqual(lastKb(bot), ['💵 Cash|prc:m:0', '🏦 Zenith|prc:m:1', '🏦 GTB — Main|prc:m:2', '⬅ Back|prc:back', '❌ Cancel|prc:cancel']);
 
   await controller.handleCallbackQuery(bot, cq('4242', 'prc:m:1'));
+  // PRC-2 — two admins can approve: the "who should approve" step; 👥 Any
+  // admin is today's behaviour (the card to every admin).
+  assert.match(lastText(bot), /Who should approve it\?\nThe admin you pick is asked first\./);
+  assert.deepEqual(lastKb(bot), ['🛂 Krishna|prc:ad:0', '🛂 Musa|prc:ad:1', '👥 Any admin|prc:ad:any', '⬅ Back|prc:back', '❌ Cancel|prc:cancel']);
+  await controller.handleCallbackQuery(bot, cq('4242', 'prc:ad:any'));
   const confirm = lastText(bot);
   assert.match(confirm, /Customer: \*ABBA\*\nAmount: \*50,000\*\nPaid by: Bank — Zenith\nDate: \d{2}-[A-Z][a-z]{2}-\d{4}/);
   assert.match(confirm, /Two admins approve it before the customer's balance moves\./);

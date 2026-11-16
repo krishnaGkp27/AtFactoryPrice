@@ -818,6 +818,9 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       { typo: aj.typoName, typoId: aj.typoId, canonical: aj.canonicalName, canonicalId: aj.canonicalId },
       approvedBy);
   } else if (aj.action === 'record_payment') {
+    // PRC-2 (owner, 16-Nov-2026) — an employee may leave the amount for the
+    // first approving admin. A row that still has none is never booked.
+    if (!(Number(aj.amount) > 0)) return { ok: false, message: 'This payment has no amount yet — nothing was recorded.' };
     const crmService = require('./crmService');
     const payRes = await crmService.recordPayment({ customer: aj.customerId || aj.customer, amount: aj.amount, method: aj.method, userId: item.user });
     if (payRes.status !== 'completed') return { ok: false, message: payRes.message || 'Payment failed.' };

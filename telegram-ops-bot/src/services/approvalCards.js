@@ -760,15 +760,41 @@ async function buildReturnBundleCard(aj) {
  * outgoing `request_payment` card is a different feature (side A, ₦) and
  * lives in paymentCards.js.
  */
-async function buildPaymentCard({ customer, amount, method }) {
-  let text = `Record Payment Request\nCustomer: ${customer}\nAmount: ${money.sale(amount || 0)}\nMethod: ${method || '—'}\nDate: ${fmtDate(require('../utils/dates').todayInLagos())  /* TIME-1 */}`;
+async function buildPaymentCard(req, opts = {}) {
+  const { customer, amount, method } = req || {};
+  // PRC-2 (owner, 16-Nov-2026) — one card for every admin surface (the DM,
+  // the 🛂 inbox, the hourly reminder, the nudge, the second admin's card).
+  // An employee may leave the amount blank: the first approving admin types
+  // it, and the card says who did. A request asked of one named admin says
+  // so. An un-asked request with an amount prints exactly as before.
+  const blank = !(Number(amount) > 0);
+  const by = req && req.amountBy && (req.amountBy.name || req.amountBy.id);
+  const amountText = blank
+    ? 'not entered — typed at the first approval'
+    : `${money.sale(amount || 0)}${by ? ` · entered by ${by}` : ''}`;
+  let text = `Record Payment Request\nCustomer: ${customer}\nAmount: ${amountText}\nMethod: ${method || '—'}\nDate: ${fmtDate(require('../utils/dates').todayInLagos())  /* TIME-1 */}`;
+  try {
+    const askedApprover = require('./askedApprover');
+    const asked = askedApprover.askedOf(req, config.access.adminIds);
+    if (asked) {
+      const aud = opts.createdAt
+        ? askedApprover.audience({ aj: req, requesterId: opts.requesterId, createdAt: opts.createdAt, adminIds: config.access.adminIds, widenHours: await askedApprover.widenHours() })
+        : null;
+      text += `\n${askedApprover.askedLine(asked, aud)}`;
+    }
+  } catch (_) { /* the asked line is a convenience; the card stands without it */ }
+  // A decided record (🛂 ✅❌ Decided) has no "after this payment": the
+  // payment is already in today's figure, so the live balance is left out.
+  if (opts.decided) return text;
   try {
     const accountingService = require('./accountingService');
     const { outstandingAsOfToday } = await accountingService.getCustomerLedger(customer);
-    const after = Number(outstandingAsOfToday) - Number(amount || 0);
-    text += `\nOutstanding today: ${money.sale(outstandingAsOfToday)}`
-      + `\nAfter this payment: ${money.sale(after)}`;
-    if (after < 0) text += `\n⚠️ Payment EXCEEDS the outstanding balance.`;
+    text += `\nOutstanding today: ${money.sale(outstandingAsOfToday)}`;
+    if (!blank) {
+      const after = Number(outstandingAsOfToday) - Number(amount || 0);
+      text += `\nAfter this payment: ${money.sale(after)}`;
+      if (after < 0) text += `\n⚠️ Payment EXCEEDS the outstanding balance.`;
+    }
   } catch (_) { text += '\n(Outstanding balance unavailable right now.)'; }
   return text;
 }
@@ -1350,6 +1376,14 @@ async function buildCardFromActionJSON(aj, opts = {}) {
     }
     if (aj.action === 'record_office_expense' && Array.isArray(aj.items) && aj.items.length) {
       return require('./branchOpsService').buildExpenseApprovalSummary(aj);
+    }
+    // PRC-2 (owner, 16-Nov-2026) — a customer's payment IN is rebuilt from
+    // the row through the card its first DM used, so the inbox, the reminder,
+    // the nudge and the second admin all read the same card (outstanding,
+    // the asked admin, who entered the amount). Every caller of this
+    // function is admin-facing (inbox, reminder, nudge, the admin API).
+    if (aj.action === 'record_payment' && aj.customer) {
+      return await buildPaymentCard(aj, { createdAt: opts.createdAt, requesterId: opts.requesterId, decided: opts.decided });
     }
   } catch (_) { /* fall through to generic */ }
   const parts = [actionLabel(aj.action)];

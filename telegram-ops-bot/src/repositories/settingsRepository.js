@@ -127,6 +127,11 @@ const DEFAULTS = {
   // again is treated as a double tap: the second tap is handed the first
   // one's request, and no second row or admin card is made. 0 = off.
   APPROVAL_DOUBLE_TAP_SECONDS: 20,
+  // PRC-2 (owner, 16-Nov-2026) — hours a request ASKED of one named admin
+  // (💵 Payment Received → "Who should approve it?") waits on that admin
+  // alone, with no signature, before reminders and 🔔 Remind approvers go
+  // to every admin. 0 = never widen by time (the first signature still does).
+  ASKED_ADMIN_WIDEN_HOURS: 4,
   // TXT-1 (owner, 01-Nov-2026) — may the AI read a typed sentence for the
   // sheet? 0 = never: the three local script lines (sell / return /
   // transfer) or the chips card, OpenAI is not called; `reads` = the AI

@@ -72,6 +72,21 @@ function trailOf(aj) {
   return (Array.isArray(a.approvals) ? a.approvals : []).map((id) => ({ id: String(id), name: '', at: '' }));
 }
 
+/** PRC-2 — `💵 Amount entered by Musa: 50,000` when an admin typed it, else ''. */
+function amountByLine(aj) {
+  const a = aj || {};
+  const by = a.amountBy && (a.amountBy.name || a.amountBy.id);
+  if (!by || !(Number(a.amount) > 0)) return '';
+  return `💵 Amount entered by ${by}: ${require('../utils/money').sale(a.amount)}`;
+}
+
+/** PRC-2 — `🙋 Asked: Musa` for a request asked of one named admin, else ''. */
+function askedLine(aj) {
+  const a = aj && aj.askedAdmin;
+  if (!a || typeof a !== 'object' || !String(a.id || '').trim()) return '';
+  return `🙋 Asked: ${String(a.name || a.id).trim()}`;
+}
+
 /**
  * @param {object} p
  * @param {'signed'|'approved'|'rejected'} p.state
@@ -99,6 +114,10 @@ function buildCard(p) {
     lines.push(`❌ Rejected${p.by ? ` by ${p.by}` : ''} · ${when(p.at)}`);
   }
   lines.push(registry.describe(p.aj));
+  // PRC-2 — who entered a blank amount, and (while it waits) which admin
+  // was asked first. No balance ever reaches a requester's card (FIN-V2).
+  if (state !== 'rejected') lines.push(amountByLine(p.aj));
+  if (state === 'signed') lines.push(askedLine(p.aj));
   for (const s of signoffs) {
     // A signature recorded before APG-1 has no time; it still counts and is named.
     lines.push(s.at ? signLine(s) : `✅ ${s.name || s.id || 'An admin'}`);
@@ -125,7 +144,9 @@ function buildStatus(p) {
   const required = Math.max(Number(p.required) || 0, trail.length, 1);
   const lines = [`📋 Request ${ref(row.requestId)}`, registry.describe(aj)];
   lines.push(`Raised by ${p.raisedByName || row.user || '—'} · ${when(row.createdAt)}${p.ageWords ? ` · ${p.ageWords}` : ''}`);
+  lines.push(amountByLine(aj));
   if (status === 'pending') {
+    lines.push(askedLine(aj));
     lines.push(`🛂 Waiting on approval · ${trail.length} of ${required} signed`);
   } else if (status === 'approved') {
     lines.push(`✅ Approved${row.approver ? ` by ${row.approver}` : ''}${row.resolvedAt ? ` · ${when(row.resolvedAt)}` : ''}`);

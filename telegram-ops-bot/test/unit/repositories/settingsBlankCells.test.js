@@ -66,6 +66,7 @@ const IN_DEFAULTS = {
   REQUEST_NUDGE_HOURS: 'number',
   APPROVAL_TWIN_GUARD: 'number',
   APPROVAL_DOUBLE_TAP_SECONDS: 'number',
+  ASKED_ADMIN_WIDEN_HOURS: 'number',       // PRC-2
   AI_TEXT_PARSER: 'number',                // default 0; `reads` is a filled cell
   PAYMENT_FINANCE_REMINDER_HOURS: 'number',
   PAYMENT_SOURCE_ACCOUNTS: 'text',         // empty = the named entries of BANK_LIST, else none (PAY-6)

@@ -978,7 +978,9 @@ async function renderItem(bot, chatId, userId, idx) {
   try {
     // CARD-6 — the footer below names the requester, so the card can leave
     // out a `🧑` salesperson line that would only repeat the same name.
-    card = await approvalCards.buildCardFromActionJSON(item.actionJSON, { requester: who }) || '';
+    // PRC-2 — the row's age and requester let a payment asked of one admin
+    // say "no answer for 5h — any admin may approve" once it has waited.
+    card = await approvalCards.buildCardFromActionJSON(item.actionJSON, { requester: who, createdAt: item.createdAt, requesterId: item.user }) || '';
   } catch (e) {
     logger.warn(`approvalsInbox: card build failed for ${item.requestId}: ${e.message}`);
   }

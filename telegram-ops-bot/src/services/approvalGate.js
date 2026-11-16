@@ -381,9 +381,17 @@ async function nudge({ bot, requestId, byUserId, now = Date.now() }) {
   if (last && now - last < hours * HOUR_MS) {
     return { ok: false, reason: 'too_soon', waitHours: Math.max(1, Math.ceil((hours * HOUR_MS - (now - last)) / HOUR_MS)), agoHours: Math.floor((now - last) / HOUR_MS) };
   }
-  const signed = new Set((Array.isArray(aj.approvals) ? aj.approvals : []).map(String));
   const admins = config.access.adminIds.map(String);
-  const targets = admins.filter((a) => a !== String(row.user) && !signed.has(a));
+  // PRC-2 (owner, 16-Nov-2026) — one audience rule (askedApprover): un-asked,
+  // every admin who has not signed (as before); asked of one admin, that
+  // admin alone until ASKED_ADMIN_WIDEN_HOURS, then everyone. Never the
+  // requester, never a signer.
+  const askedApprover = require('./askedApprover');
+  const aud = askedApprover.audience({
+    aj, requesterId: row.user, createdAt: row.createdAt, adminIds: admins, now,
+    widenHours: aj.askedAdmin ? await askedApprover.widenHours() : 0,
+  });
+  const targets = aud.targets;
   if (!targets.length) return { ok: false, reason: 'nobody' };
 
   const approvalCards = require('./approvalCards');
@@ -396,7 +404,11 @@ async function nudge({ bot, requestId, byUserId, now = Date.now() }) {
   await require('../events/approvalEvents').notifyAdminsApprovalRequest(
     bot, requestId, label, card, row.riskReason || 'Pending approval', undefined,
     { prependNote: note, excludeIds: admins.filter((a) => !targets.includes(a)), ...(kb ? { keyboard: kb } : {}) });
-  await queueRepo().updateActionJSON(requestId, { nudges: [...nudges, { by: uid, at: new Date(now).toISOString() }] });
+  await queueRepo().updateActionJSON(requestId, {
+    nudges: [...nudges, { by: uid, at: new Date(now).toISOString() }],
+    // PRC-2 — the first push past the asked admin is recorded with the nudge.
+    ...(aud.reason === 'waited' && !aj.askWidenedAt ? { askWidenedAt: new Date(now).toISOString() } : {}),
+  });
   usageTracker.track({ userId: uid, surface: 'approval', feature: aj.action || 'request', event: 'request_nudged', requestId, meta: { n: nudges.length + 1 } });
   const reminded = [];
   for (const t of targets) reminded.push(await nameOf(t, bot));
