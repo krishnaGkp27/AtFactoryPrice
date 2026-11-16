@@ -335,8 +335,13 @@ test('approved reply, Outstanding line and requester card: bare, and they never 
   assert.ok(!/×|Customer copy|1,250|1250/.test(approved), 'no factor on the approved reply');
 
   const outstanding = sends.find((t) => /Outstanding as of today/.test(t));
-  assert.equal(outstanding, '📒 *Soldier Madam* — Outstanding as of today: 944', 'bare ledger figure (positive digits)');
+  assert.equal(outstanding, '📒 Soldier Madam — Outstanding as of today: 944', 'bare ledger figure (positive digits)');
   assert.ok(!/₦|NGN|×|1,250/.test(outstanding));
+  // PRC-2b — plain text, no parse_mode: no asterisks shown on the phone, and a
+  // name with Markdown characters cannot break the send.
+  const outCall = bot.callsTo('sendMessage').find((c) => c.args.chatId === CHAT && /Outstanding as of today/.test(c.args.text));
+  assert.ok(!(outCall.args.opts && outCall.args.opts.parse_mode), 'no parse_mode on the balance line');
+  assert.ok(!/\*/.test(outstanding), 'no asterisks');
 
   const edit = bot.callsTo('editMessageText').find((c) => c.args.opts.message_id === 77);
   assert.ok(edit, 'the requester card is edited in place');

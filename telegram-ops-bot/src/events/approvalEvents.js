@@ -1446,7 +1446,7 @@ async function runApprovedSaleWithEnrichment(bot, chatId, adminId, requestId, it
           const accountingService = require('../services/accountingService');
           const { outstandingAsOfToday } = await accountingService.getCustomerLedger(customer);
           // CUR-1 R12b — a ledger figure on a sale card is bare (variable 1).
-          await bot.sendMessage(chatId, `📒 *${customer}* — Outstanding as of today: ${money.sale(outstandingAsOfToday)}`);
+          await bot.sendMessage(chatId, `📒 ${customer} — Outstanding as of today: ${money.sale(outstandingAsOfToday)}`);
         } catch (_) {}
       }
       // INV-1a — deliver the issued invoice PDF to approver + requester
@@ -2542,7 +2542,7 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
             const accountingService = require('../services/accountingService');
             const { outstandingAsOfToday } = await accountingService.getCustomerLedger(customer);
             // CUR-1 R12b — bare, like the wizard's own outstanding line.
-            await bot.sendMessage(chatIdCb, `📒 *${customer}* — Outstanding as of today: ${money.sale(outstandingAsOfToday)}`);
+            await bot.sendMessage(chatIdCb, `📒 ${customer} — Outstanding as of today: ${money.sale(outstandingAsOfToday)}`);
           } catch (_) {}
         }
       } else if (item && result.message === 'Request not found or already resolved.') {

@@ -115,4 +115,27 @@ function reminderNote(aud, requesterName) {
   return '';
 }
 
-module.exports = { askedOf, widenHours, audience, askYouNote, askedLine, reminderNote, DEFAULT_WIDEN_HOURS, HOUR_MS };
+/**
+ * PRC-2b — the reminder round split by recipient, so the asked admin is never
+ * told about himself: once widened, the asked admin keeps
+ * `⏰ Reminder — Abdul asked YOU to approve this` and only the OTHER admins
+ * get the `asked: Musa · no answer for …` form. Every other audience is one
+ * group (today's note, or '' = the caller's own). Each group carries the
+ * excludeIds that confine it to its own recipients; the groups are disjoint,
+ * so every admin gets at most one card per round.
+ * @returns {{note:string, excludeIds:string[]}[]}
+ */
+function reminderGroups(aud, requesterName, adminIds) {
+  const admins = (Array.isArray(adminIds) ? adminIds : []).map(String);
+  const targets = (aud && Array.isArray(aud.targets) ? aud.targets : []).map(String);
+  const only = (ids) => admins.filter((a) => !ids.includes(a));
+  if (aud && aud.asked && aud.reason === 'waited' && targets.includes(aud.asked.id)) {
+    const others = targets.filter((t) => t !== aud.asked.id);
+    const groups = [{ note: reminderNote({ ...aud, reason: 'asked' }, requesterName), excludeIds: only([aud.asked.id]) }];
+    if (others.length) groups.push({ note: reminderNote(aud, requesterName), excludeIds: only(others) });
+    return groups;
+  }
+  return [{ note: reminderNote(aud, requesterName), excludeIds: only(targets) }];
+}
+
+module.exports = { askedOf, widenHours, audience, askYouNote, askedLine, reminderNote, reminderGroups, DEFAULT_WIDEN_HOURS, HOUR_MS };

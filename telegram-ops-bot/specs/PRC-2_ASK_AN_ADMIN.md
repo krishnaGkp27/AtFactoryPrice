@@ -40,6 +40,17 @@ Then, on the recommendation: *"Go with the recommendation."*
   the hourly reminder and the requester's 🔔 Remind approvers go to the
   asked admin ONLY. After it they go to every admin, saying the asked admin
   has not answered.
+- **D4b** (PRC-2b, 16-Nov-2026 — the owner was told "if the asked admin has
+  not answered after 4 hours, every admin is told"; make it true.) The wait
+  is checked on EVERY hourly sweep, independent of the reminder cadence
+  (`REMINDER_HOURS_ADMIN` / `APPROVAL_REMINDER_HOURS`, 6 by default, counted
+  from the bot's last round — so it used to mean 4 to about 10 hours, and
+  never with reminders at 0). At the first sweep past the wait, the admins
+  who hold no card — every admin but the requester and the asked admin —
+  get the FULL card ONCE, then the row is stamped `askWidenedAt`. The asked
+  admin gets nothing from this pass (he holds the card). From then on the
+  ordinary reminder, when on, goes to every admin; the asked admin's own
+  copy keeps `⏰ Reminder — Abdul asked YOU to approve this`.
 - **D5** The amount is frozen once it is on the request. To change it:
   ❌ Reject and raise again.
 - **D6** The cash / bank step stays required even when the amount is blank.
@@ -199,8 +210,10 @@ Notes put above the card (`🔔 Approval required …`):
 | the first signature, to admins who held no card yet | `🔏 1 of 2 — signed by Musa. Yours is the second approval.` |
 | the first signature on a blank request (the signer typed the amount), to EVERY other admin — their card still says `not entered` | the same note, on the full card with `· entered by Musa` |
 | hourly reminder, before the widen hour (asked admin only) | `⏰ Reminder — Abdul asked YOU to approve this` |
-| hourly reminder, after it (every admin) | `⏰ Reminder — asked: Musa · no answer for 5h. Any admin may approve.` |
+| hourly reminder, after it (every admin but the asked one) | `⏰ Reminder — asked: Musa · no answer for 5h. Any admin may approve.` |
 | the same, less than an hour old (widened early — the asked admin was unreachable) | `⏰ Reminder — asked: Musa. Any admin may approve.` (never `0h`) |
+| the wait passed (`ASKED_ADMIN_WIDEN_HOURS`, checked every hour, reminders on or off) — ONCE, to every admin but the requester and the asked admin | `🙋 Asked: Musa · no answer for 4h — any admin may approve` (whole hours waited, never less than the widen hours) |
+| hourly reminder after it, to the asked admin | `⏰ Reminder — Abdul asked YOU to approve this` (never told about himself) |
 | hourly reminder after a signature (the unsigned) | `⏰ Reminder — this approval is still waiting` (as before) |
 
 An admin who already holds the card when someone else signs first (the asked
@@ -369,6 +382,18 @@ admin types it.
   the admins who had none.
 - `approvalReminder.sweepPending` and `approvalGate.nudge` use the same
   audience; neither ever messages the requester or a signer of an asked request.
+  The reminder splits a widened round in two (`askedApprover.reminderGroups`:
+  the asked admin's note, the others' note — disjoint, one card per admin).
+- `approvalReminder.sweepAskedWiden` (PRC-2b) — the on-time widening, first
+  thing in every `sweep()` call (the server runs it hourly). Pending,
+  standard-approvable, asked (raw `askedAdmin.id`, not the requester), no
+  signature, no `askWidenedAt`, waited the widen hours (an unreadable
+  CreatedAt counts as waited) and inside the reminder backlog guard
+  (`REMINDER_MAX_AGE_DAYS`); at most 10 requests a pass. The id is
+  remembered in memory before the send, so a failed `askWidenedAt` write
+  never produces a second card from the same process; the widened request
+  waits a full reminder window before its next reminder (no two cards in one
+  sweep). Never throws out of `sweep()`.
 - Executor backstop: a `record_payment` with no positive amount is refused
   (`This payment has no amount yet — nothing was recorded.`).
 
@@ -384,6 +409,10 @@ admin types it.
   Railway `ADMIN_IDS` pool, the same pool the cards go to.
 
 ## Known limits
+
+- **A redeploy between the widen card and a failed `askWidenedAt` write**
+  forgets the in-memory floor: the next sweep sends the widen card once more.
+  Both a refused sheet write and a restart in the same hour are needed.
 
 - **A typed amount after the admin's session is lost** (a redeploy, or the
   step's 30-minute time-out between `✅ Approve` and the typed number) reaches no
@@ -417,5 +446,9 @@ admin types it.
    admin's card reads `· entered by Musa`; their ✅ Approve opens the check
    card → `✅ Approve 50,000` → recorded at that figure.
 5. An admin's own entry has no `⏭ Amount not known`.
-6. Leave one asked request unanswered past 4 hours: the next hourly reminder
-   reaches every admin with `no answer for …h`.
+6. Leave one asked request unanswered past 4 hours (reminders on or off):
+   within the hour after the 4th, every admin but Abdul and Musa gets the
+   full card with `🙋 Asked: Musa · no answer for 4h — any admin may approve`,
+   once; Musa gets nothing new. With reminders on, the next reminder round
+   reaches every admin with `no answer for …h`, except Musa, whose reminder
+   still reads `⏰ Reminder — Abdul asked YOU to approve this`.

@@ -588,8 +588,10 @@ test('PRC-2 #7: reminder sweep — the asked admin alone, then everyone with the
   assert.equal(jsonOf(id).askWidenedAt, undefined);
 
   from = await sweep(5);
-  for (const a of ADMINS) {
-    assert.equal(cardsTo(bot, a, from).length, 1, `${a} reminded after the widen hour`);
+  for (const a of ADMINS) assert.equal(cardsTo(bot, a, from).length, 1, `${a} reminded once after the widen hour`);
+  // PRC-2b — the asked admin is never told about himself.
+  assert.ok(cardsTo(bot, MUSA, from)[0].args.text.startsWith(esc('⏰ Reminder — Abdul asked YOU to approve this')));
+  for (const a of [KRISHNA, JOHN]) {
     assert.ok(cardsTo(bot, a, from)[0].args.text.startsWith(esc('⏰ Reminder — asked: Musa · no answer for 5h. Any admin may approve.')));
   }
   assert.ok(jsonOf(id).askWidenedAt, 'stamped the first time');
@@ -601,6 +603,123 @@ test('PRC-2 #7: reminder sweep — the asked admin alone, then everyone with the
   assert.equal(cardsTo(bot, KRISHNA, from).length, 1);
   assert.equal(cardsTo(bot, JOHN, from).length, 1);
   assert.ok(cardsTo(bot, JOHN, from)[0].args.text.startsWith(esc('⏰ Reminder — this approval is still waiting')));
+});
+
+/* ── 7c. PRC-2b: on-time widening, every sweep ────────────────────────── */
+
+const H = 3600 * 1000;
+/** One hourly sweep() as the server runs it, `hoursAgo` after the raise. */
+async function widenAt(bot, id, hoursAgo, NOW = Date.now()) {
+  setCreatedAt(id, new Date(NOW - hoursAgo * H).toISOString());
+  const from = bot.calls.length;
+  await approvalReminder.sweep(bot, { now: NOW });
+  return from;
+}
+const WIDEN_NOTE = (h) => esc(`🙋 Asked: Musa · no answer for ${h}h — any admin may approve`);
+
+test('PRC-2b #7c: reminders OFF — 3h59 nothing; 4h ONE full card to each other admin with the note, stamped; then nothing more', async () => {
+  reset({ REMINDER_HOURS_ADMIN: 0 });
+  const bot = createFakeBot();
+  const id = await raise(bot);
+  const NOW = Date.now();
+  let from = await widenAt(bot, id, 3 + 59 / 60, NOW);
+  assert.equal(bot.calls.slice(from).filter((c) => c.method === 'sendMessage').length, 0, '3h59: nothing');
+  assert.equal(jsonOf(id).askWidenedAt, undefined);
+
+  from = await widenAt(bot, id, 4, NOW);
+  for (const a of [KRISHNA, JOHN]) {
+    const c = cardsTo(bot, a, from);
+    assert.equal(c.length, 1, `${a} gets the card`);
+    assert.ok(c[0].args.text.startsWith(WIDEN_NOTE(4)), c[0].args.text.split('\n')[0]);
+    assert.ok(c[0].args.text.includes(esc('Amount: 50,000')), 'the FULL card');
+    assert.ok(chipsOf(c[0]).some((x) => x === `✅ Approve|approve:${id}`));
+  }
+  assert.equal(sentTo(bot, MUSA, from).length, 0, 'the asked admin gets nothing from the widen pass');
+  assert.equal(sentTo(bot, ABDUL, from).length, 0, 'never the requester');
+  assert.ok(jsonOf(id).askWidenedAt, 'stamped');
+
+  from = await widenAt(bot, id, 5, NOW);
+  assert.equal(bot.calls.slice(from).filter((c) => c.method === 'sendMessage').length, 0, 'once only');
+});
+
+test('PRC-2b #7d: reminders ON — the widened request gets no second card in the same sweep; the note counts whole hours', async () => {
+  reset({ REMINDER_HOURS_ADMIN: 6 });
+  const bot = createFakeBot();
+  const id = await raise(bot);
+  const from = await widenAt(bot, id, 7.5);
+  for (const a of [KRISHNA, JOHN]) {
+    assert.equal(cardsTo(bot, a, from).length, 1, `${a}: one card this round`);
+    assert.ok(cardsTo(bot, a, from)[0].args.text.startsWith(WIDEN_NOTE(7)));
+  }
+  assert.equal(cardsTo(bot, MUSA, from).length, 0);
+});
+
+test('PRC-2b #7e: ASKED_ADMIN_WIDEN_HOURS 0 never widens by time', async () => {
+  reset({ REMINDER_HOURS_ADMIN: 0, ASKED_ADMIN_WIDEN_HOURS: 0 });
+  const bot = createFakeBot();
+  const id = await raise(bot);
+  const from = await widenAt(bot, id, 48);
+  assert.equal(bot.calls.slice(from).filter((c) => c.method === 'sendMessage').length, 0);
+  assert.equal(jsonOf(id).askWidenedAt, undefined);
+});
+
+test('PRC-2b #7f: a signed row, an un-asked row and another action type are untouched', async () => {
+  reset({ REMINDER_HOURS_ADMIN: 0 });
+  const bot = createFakeBot();
+  const signed = await raise(bot);
+  await approveDm(bot, MUSA, signed);
+  approvalGate._internals.recent.clear();
+  const open = await raise(bot, { amount: '60000', ask: 'any' });
+  const NOW = Date.now();
+  // another action type carrying askedAdmin: not standard-approvable (a transfer)
+  fake._store.get('ApprovalQueue').push(['R-TRF1', ABDUL, JSON.stringify({ action: 'transfer_stock', askedAdmin: { id: MUSA, name: 'Musa' } }),
+    'x', 'pending', new Date(NOW - 9 * H).toISOString(), '', '']);
+  const before = { signed: rowOf(signed)[2], open: rowOf(open)[2], trf: rowOf('R-TRF1')[2] };
+  setCreatedAt(signed, new Date(NOW - 9 * H).toISOString());
+  setCreatedAt(open, new Date(NOW - 9 * H).toISOString());
+  const from = bot.calls.length;
+  await approvalReminder.sweep(bot, { now: NOW });
+  assert.equal(bot.calls.slice(from).filter((c) => c.method === 'sendMessage').length, 0);
+  assert.deepEqual({ signed: rowOf(signed)[2], open: rowOf(open)[2], trf: rowOf('R-TRF1')[2] }, before, 'no row written');
+});
+
+test('PRC-2b #7g: a failed askWidenedAt write never produces a second card in the same process', async () => {
+  reset({ REMINDER_HOURS_ADMIN: 0 });
+  const bot = createFakeBot();
+  const id = await raise(bot);
+  const realUpdate = approvalQueueRepository.updateActionJSON;
+  approvalQueueRepository.updateActionJSON = async () => { throw new Error('Quota exceeded'); };
+  try {
+    let from = await widenAt(bot, id, 4);
+    assert.equal(cardsTo(bot, KRISHNA, from).length, 1);
+    assert.equal(jsonOf(id).askWidenedAt, undefined, 'the stamp failed');
+    from = await widenAt(bot, id, 5);
+    assert.equal(bot.calls.slice(from).filter((c) => c.method === 'sendMessage').length, 0, 'remembered in memory');
+  } finally { approvalQueueRepository.updateActionJSON = realUpdate; }
+});
+
+test('PRC-2b #7h: an admin raises it asking Musa — the widen card goes to John alone, never the requester', async () => {
+  reset({ REMINDER_HOURS_ADMIN: 0 });
+  const bot = createFakeBot();
+  const id = await raise(bot, { uid: KRISHNA });
+  assert.equal(jsonOf(id).askedAdmin.id, MUSA);
+  const from = await widenAt(bot, id, 4);
+  assert.equal(cardsTo(bot, JOHN, from).length, 1);
+  assert.ok(cardsTo(bot, JOHN, from)[0].args.text.startsWith(WIDEN_NOTE(4)));
+  assert.equal(sentTo(bot, KRISHNA, from).length, 0, 'the requester-admin');
+  assert.equal(sentTo(bot, MUSA, from).length, 0);
+  assert.ok(jsonOf(id).askWidenedAt);
+});
+
+test('PRC-2b #7i: an unreadable CreatedAt counts as waited; the note says the widen hours', async () => {
+  reset({ REMINDER_HOURS_ADMIN: 0 });
+  const bot = createFakeBot();
+  const id = await raise(bot);
+  rowOf(id)[5] = 'not a date';
+  const from = bot.calls.length;
+  await approvalReminder.sweep(bot, { now: Date.now() });
+  assert.ok(cardsTo(bot, JOHN, from)[0].args.text.startsWith(WIDEN_NOTE(4)));
+  assert.equal(sentTo(bot, MUSA, from).length, 0);
 });
 
 test('PRC-2 #7b: 🔔 Remind approvers — the same audiences', async () => {

@@ -178,3 +178,23 @@ test('buildPaymentCard: asked · blank amount · entered by an admin', async () 
     assert.ok(!/Outstanding/.test(await approvalCards.buildCardFromActionJSON({ ...row, amount: 5 }, { decided: true })));
   } finally { accountingService.getCustomerLedger = real; }
 });
+
+test('PRC-2b reminderGroups: widened → the asked admin keeps "asked YOU", the others the no-answer note; disjoint', () => {
+  const a = aud({ askedAdmin: MUSA }, { createdAt: ago(5) });
+  const g = askedApprover.reminderGroups(a, 'Abdul', ADMINS);
+  assert.deepEqual(g, [
+    { note: '⏰ Reminder — Abdul asked YOU to approve this', excludeIds: ['777', '555'] },
+    { note: '⏰ Reminder — asked: Musa · no answer for 5h. Any admin may approve.', excludeIds: ['888'] },
+  ]);
+  // an admin requester: never in either group
+  const r = askedApprover.reminderGroups(aud({ askedAdmin: MUSA }, { createdAt: ago(5), requesterId: '777' }), 'Krishna', ADMINS);
+  assert.deepEqual(r.map((x) => x.excludeIds), [['777', '555'], ['777', '888']]);
+});
+
+test('PRC-2b reminderGroups: young, signed and un-asked are one group each', () => {
+  assert.deepEqual(askedApprover.reminderGroups(aud({ askedAdmin: MUSA }), 'Abdul', ADMINS),
+    [{ note: '⏰ Reminder — Abdul asked YOU to approve this', excludeIds: ['777', '555'] }]);
+  assert.deepEqual(askedApprover.reminderGroups(aud({ askedAdmin: MUSA, approvals: ['888'] }), 'Abdul', ADMINS),
+    [{ note: '', excludeIds: ['888'] }]);
+  assert.deepEqual(askedApprover.reminderGroups(aud({}), 'Abdul', ADMINS), [{ note: '', excludeIds: [] }]);
+});

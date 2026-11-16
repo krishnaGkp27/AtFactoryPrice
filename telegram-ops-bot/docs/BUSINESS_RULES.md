@@ -1128,7 +1128,9 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
   recommendation"*). On 💵 Payment Received the employee picks
   `🛂 <admin>` or `👥 Any admin`; the named admin alone gets the card, the
   others get it at the first signature or after Settings
-  `ASKED_ADMIN_WIDEN_HOURS` (4) with no answer. The number of approvals does
+  `ASKED_ADMIN_WIDEN_HOURS` (4) with no answer — checked every hour, so the
+  other admins get the full card at the wait time whether approval reminders
+  are on or off (PRC-2b, 16-Nov-2026). The number of approvals does
   not change. Every admin sees the request in 🛂 Approvals marked
   `🙋 Asked: <name>` and may approve or reject it at any time. An employee
   may leave the amount blank (`⏭ Amount not known`): the admin giving the
