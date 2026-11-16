@@ -157,7 +157,7 @@ S_STEP5 = WIZ + "\n👤 ABBA · Cash · 181,250\n\n*Step 5 — Customer-copy mul
 B_STEP5 = [["No multiplier", "Settings: 1,250"], ["✏️ Type a number"]]
 
 S_ADMIN_OK = "✅ Request R-4F72 approved. Sale and ledger updated.\n📎 View Sales Bill"
-S_ADMIN_OUT = "📒 *ABBA* — Outstanding as of today: 7,534,860"
+S_ADMIN_OUT = "📒 ABBA — Outstanding as of today: 7,534,860"  # plain text, no parse_mode (PRC-2b)
 C_INVOICE = "INV-2026-0912 · ABBA · 22-Sep-2026.pdf"
 S_SELLER_OK = "✅ *Approved — ready to dispatch*\n\n👤 Customer: *ABBA*\n📞 08031234567\nRef: R-4F72"
 B_SELLER_OK = [["🏠 Menu"]]

@@ -372,9 +372,10 @@ async function sceneC() {
   at('11:10:00');
   await taps('c_nudge', ABDUL, '🔔 Remind approvers');
   FACTS.nudge = { musa: sentIn('c_nudge', MUSA).length, krishna: sentIn('c_nudge', KRISHNA).length };
-  // The timer runs every hour; with the default reminder cadence it only
-  // re-sends cards every APPROVAL_REMINDER_HOURS (6). Each hour is run, so
-  // the guide shows when the widened reminder really arrives.
+  // The timer runs every hour: it checks the asked admin's wait every time
+  // (the widen card, PRC-2b) and re-sends reminders every
+  // APPROVAL_REMINDER_HOURS (6). Each hour is run, so the guide shows when
+  // each really arrives.
   const hourly = [];
   for (const h of [12, 13, 14, 15, 16, 17]) {
     at(`${h}:00:00`);

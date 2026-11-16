@@ -291,6 +291,12 @@ test('PRC-2 #2: Musa approves → 1 of 2, the others get the FULL card; the seco
   assert.equal(BOOKED[0].amount, 50000);
   assert.ok(textsTo(bot, ABDUL, from2).some((t) => /✅ Approved · 2 of 2/.test(t)), 'the requester is told');
   assert.ok(!textsTo(bot, ABDUL, from2).some((t) => /120,000|70,000|Outstanding/.test(t)), 'no balance reaches the requester');
+  // PRC-2b — the completing approver's balance line is PLAIN: sent with no
+  // parse_mode, so asterisks would show on the phone.
+  const bal = sentTo(bot, KRISHNA, from2).filter((c) => /Outstanding as of today/.test(c.args.text));
+  assert.equal(bal.length, 1);
+  assert.equal(bal[0].args.text, '📒 ABBA — Outstanding as of today: 120,000');
+  assert.ok(!(bal[0].args.opts && bal[0].args.opts.parse_mode), 'no parse_mode: a Markdown character in a name cannot break the send');
 });
 
 test('PRC-2 #3 (R2): another admin approves first from the inbox — allowed; Musa gets the one-line ping, John the full card', async () => {
@@ -642,16 +648,45 @@ test('PRC-2b #7c: reminders OFF — 3h59 nothing; 4h ONE full card to each other
   assert.equal(bot.calls.slice(from).filter((c) => c.method === 'sendMessage').length, 0, 'once only');
 });
 
-test('PRC-2b #7d: reminders ON — the widened request gets no second card in the same sweep; the note counts whole hours', async () => {
+test('PRC-2b #7d: reminders ON — the widen card and a due round on one tick: the others get the widen card only, the asked admin his own reminder', async () => {
   reset({ REMINDER_HOURS_ADMIN: 6 });
   const bot = createFakeBot();
   const id = await raise(bot);
   const from = await widenAt(bot, id, 7.5);
   for (const a of [KRISHNA, JOHN]) {
     assert.equal(cardsTo(bot, a, from).length, 1, `${a}: one card this round`);
-    assert.ok(cardsTo(bot, a, from)[0].args.text.startsWith(WIDEN_NOTE(7)));
+    assert.ok(cardsTo(bot, a, from)[0].args.text.startsWith(WIDEN_NOTE(7)), 'the note counts whole hours');
   }
+  // PRC-2b review — the round was due: the asked admin is not skipped.
+  assert.equal(cardsTo(bot, MUSA, from).length, 1);
+  assert.ok(cardsTo(bot, MUSA, from)[0].args.text.startsWith(esc('⏰ Reminder — Abdul asked YOU to approve this')));
+  assert.equal(sentTo(bot, ABDUL, from).length, 0);
+});
+
+test('PRC-2b review #7d2: a round inside the window after the widen card reminds the asked admin alone; the next window everyone', async () => {
+  reset({ REMINDER_HOURS_ADMIN: 6 });
+  const bot = createFakeBot();
+  const id = await raise(bot);
+  const T0 = Date.now() - 30 * H;
+  setCreatedAt(id, new Date(T0).toISOString());
+  const at = async (h) => { const from = bot.calls.length; await approvalReminder.sweep(bot, { now: T0 + h * H }); return from; };
+  let from = await at(3); // a round: Musa alone (not yet widened)
+  assert.equal(cardsTo(bot, MUSA, from).length, 1);
+  assert.equal(cardsTo(bot, KRISHNA, from).length + cardsTo(bot, JOHN, from).length, 0);
+  from = await at(4); // the widen card, no round due
+  assert.equal(cardsTo(bot, KRISHNA, from).length, 1);
+  assert.equal(cardsTo(bot, JOHN, from).length, 1);
   assert.equal(cardsTo(bot, MUSA, from).length, 0);
+  from = await at(9); // the next round, 5h after the widen card
+  assert.equal(cardsTo(bot, MUSA, from).length, 1, 'the asked admin keeps his reminder');
+  assert.ok(cardsTo(bot, MUSA, from)[0].args.text.startsWith(esc('⏰ Reminder — Abdul asked YOU to approve this')));
+  assert.equal(cardsTo(bot, KRISHNA, from).length + cardsTo(bot, JOHN, from).length, 0, 'just told: left out for one window');
+  from = await at(15); // a window later: everyone, each with his own note
+  assert.equal(cardsTo(bot, MUSA, from).length, 1);
+  for (const a of [KRISHNA, JOHN]) {
+    assert.equal(cardsTo(bot, a, from).length, 1);
+    assert.ok(cardsTo(bot, a, from)[0].args.text.startsWith(esc('⏰ Reminder — asked: Musa · no answer for 15h. Any admin may approve.')));
+  }
 });
 
 test('PRC-2b #7e: ASKED_ADMIN_WIDEN_HOURS 0 never widens by time', async () => {
@@ -674,13 +709,21 @@ test('PRC-2b #7f: a signed row, an un-asked row and another action type are unto
   // another action type carrying askedAdmin: not standard-approvable (a transfer)
   fake._store.get('ApprovalQueue').push(['R-TRF1', ABDUL, JSON.stringify({ action: 'transfer_stock', askedAdmin: { id: MUSA, name: 'Musa' } }),
     'x', 'pending', new Date(NOW - 9 * H).toISOString(), '', '']);
-  const before = { signed: rowOf(signed)[2], open: rowOf(open)[2], trf: rowOf('R-TRF1')[2] };
+  // A legacy / hand-edited row: signed, but never stamped askWidenedAt (the
+  // signature's own write stamps it today) — the signature alone must stop it.
+  approvalGate._internals.recent.clear();
+  const legacy = await raise(bot, { amount: '70000' });
+  const lj = { ...jsonOf(legacy), approvals: [JOHN], signoffs: [{ id: JOHN, name: 'John' }] };
+  delete lj.askWidenedAt;
+  rowOf(legacy)[2] = JSON.stringify(lj);
+  setCreatedAt(legacy, new Date(NOW - 9 * H).toISOString());
+  const before = { signed: rowOf(signed)[2], open: rowOf(open)[2], trf: rowOf('R-TRF1')[2], legacy: rowOf(legacy)[2] };
   setCreatedAt(signed, new Date(NOW - 9 * H).toISOString());
   setCreatedAt(open, new Date(NOW - 9 * H).toISOString());
   const from = bot.calls.length;
   await approvalReminder.sweep(bot, { now: NOW });
   assert.equal(bot.calls.slice(from).filter((c) => c.method === 'sendMessage').length, 0);
-  assert.deepEqual({ signed: rowOf(signed)[2], open: rowOf(open)[2], trf: rowOf('R-TRF1')[2] }, before, 'no row written');
+  assert.deepEqual({ signed: rowOf(signed)[2], open: rowOf(open)[2], trf: rowOf('R-TRF1')[2], legacy: rowOf(legacy)[2] }, before, 'no row written');
 });
 
 test('PRC-2b #7g: a failed askWidenedAt write never produces a second card in the same process', async () => {
@@ -696,6 +739,58 @@ test('PRC-2b #7g: a failed askWidenedAt write never produces a second card in th
     from = await widenAt(bot, id, 5);
     assert.equal(bot.calls.slice(from).filter((c) => c.method === 'sendMessage').length, 0, 'remembered in memory');
   } finally { approvalQueueRepository.updateActionJSON = realUpdate; }
+  // PRC-2b review — the sheet is back: the stamp is retried, the card is not.
+  const from = await widenAt(bot, id, 6);
+  assert.equal(bot.calls.slice(from).filter((c) => c.method === 'sendMessage').length, 0, 'no second card');
+  assert.ok(jsonOf(id).askWidenedAt, 'the stamp landed on a later pass');
+});
+
+test('PRC-2b review #7g2: a widen pass that throws, or reaches nobody, is retried on the next hourly pass', async () => {
+  reset({ REMINDER_HOURS_ADMIN: 0 });
+  const bot = createFakeBot();
+  const id = await raise(bot);
+  // (a) the card cannot be built (a Sheets hiccup)
+  const realLabel = approvalCards.resolveUserLabel;
+  approvalCards.resolveUserLabel = async () => { throw new Error('503 backend'); };
+  let from;
+  try {
+    from = await widenAt(bot, id, 4);
+  } finally { approvalCards.resolveUserLabel = realLabel; }
+  assert.equal(cardsTo(bot, KRISHNA, from).length, 0);
+  assert.equal(jsonOf(id).askWidenedAt, undefined, 'not stamped');
+  // (b) Telegram refuses every send
+  const realSend = bot.sendMessage;
+  bot.sendMessage = async () => { throw new Error('ETIMEDOUT'); };
+  try {
+    await widenAt(bot, id, 5);
+  } finally { bot.sendMessage = realSend; }
+  assert.equal(jsonOf(id).askWidenedAt, undefined, 'a card that reached nobody is not a widened request');
+  // (c) the next pass delivers it, once
+  from = await widenAt(bot, id, 6);
+  for (const a of [KRISHNA, JOHN]) {
+    assert.equal(cardsTo(bot, a, from).length, 1, `${a} told on the retry`);
+    assert.ok(cardsTo(bot, a, from)[0].args.text.startsWith(WIDEN_NOTE(6)));
+  }
+  assert.ok(jsonOf(id).askWidenedAt);
+  from = await widenAt(bot, id, 7);
+  assert.equal(bot.calls.slice(from).filter((c) => c.method === 'sendMessage').length, 0, 'once only');
+});
+
+test('PRC-2b review #7g3: the asked admin signs while the widen card is being built — no stale widen card', async () => {
+  reset({ REMINDER_HOURS_ADMIN: 0 });
+  const bot = createFakeBot();
+  const id = await raise(bot);
+  const realBuild = approvalCards.buildCardFromActionJSON;
+  approvalCards.buildCardFromActionJSON = async (aj) => {
+    await approvalQueueRepository.updateActionJSON(id, { approvals: [MUSA], signoffs: [{ id: MUSA, name: 'Musa' }] });
+    return realBuild(aj);
+  };
+  let from;
+  try {
+    from = await widenAt(bot, id, 4);
+  } finally { approvalCards.buildCardFromActionJSON = realBuild; }
+  assert.equal(cardsTo(bot, KRISHNA, from).length + cardsTo(bot, JOHN, from).length, 0, 'the fresh row says signed');
+  assert.equal(jsonOf(id).askWidenedAt, undefined);
 });
 
 test('PRC-2b #7h: an admin raises it asking Musa — the widen card goes to John alone, never the requester', async () => {
@@ -711,15 +806,44 @@ test('PRC-2b #7h: an admin raises it asking Musa — the widen card goes to John
   assert.ok(jsonOf(id).askWidenedAt);
 });
 
-test('PRC-2b #7i: an unreadable CreatedAt counts as waited; the note says the widen hours', async () => {
+test('PRC-2b review #7h2: requester-admin with only the asked admin left — no widen card, stamped, and the asked admin keeps his due reminder', async () => {
+  reset({ REMINDER_HOURS_ADMIN: 6 });
+  const bot = createFakeBot();
+  const id = await raise(bot, { uid: KRISHNA });
+  const realAdmins = config.access.adminIds.slice();
+  config.access.adminIds.splice(0, config.access.adminIds.length, KRISHNA, MUSA);
+  let from;
+  try {
+    from = await widenAt(bot, id, 5);
+  } finally { config.access.adminIds.splice(0, config.access.adminIds.length, ...realAdmins); }
+  assert.equal(sentTo(bot, KRISHNA, from).length, 0, 'never the requester');
+  assert.equal(cardsTo(bot, MUSA, from).length, 1, 'the round was due: Musa reminded');
+  assert.ok(cardsTo(bot, MUSA, from)[0].args.text.startsWith(esc('⏰ Reminder — Krishna asked YOU to approve this')));
+  assert.ok(jsonOf(id).askWidenedAt, 'nobody left to tell: widened as it is');
+});
+
+test('PRC-2b #7i: an unreadable CreatedAt counts as waited; the note claims no hours', async () => {
   reset({ REMINDER_HOURS_ADMIN: 0 });
   const bot = createFakeBot();
   const id = await raise(bot);
   rowOf(id)[5] = 'not a date';
   const from = bot.calls.length;
   await approvalReminder.sweep(bot, { now: Date.now() });
-  assert.ok(cardsTo(bot, JOHN, from)[0].args.text.startsWith(WIDEN_NOTE(4)));
+  const t = cardsTo(bot, JOHN, from)[0].args.text;
+  assert.ok(t.startsWith(`${esc('🙋 Asked: Musa')}\n\n`), t.split('\n')[0]);
+  assert.ok(!t.includes('no answer'), 'a wait it cannot read is never claimed');
   assert.equal(sentTo(bot, MUSA, from).length, 0);
+  assert.ok(jsonOf(id).askWidenedAt);
+});
+
+test('PRC-2b review #7j: a fractional ASKED_ADMIN_WIDEN_HOURS never claims an hour not yet waited', async () => {
+  reset({ REMINDER_HOURS_ADMIN: 0, ASKED_ADMIN_WIDEN_HOURS: 0.5 });
+  const bot = createFakeBot();
+  const id = await raise(bot);
+  const from = await widenAt(bot, id, 0.5);
+  const t = cardsTo(bot, JOHN, from)[0].args.text;
+  assert.ok(t.startsWith(esc('🙋 Asked: Musa')));
+  assert.ok(!t.includes('no answer'), '30 minutes is not "1h"');
 });
 
 test('PRC-2 #7b: 🔔 Remind approvers — the same audiences', async () => {

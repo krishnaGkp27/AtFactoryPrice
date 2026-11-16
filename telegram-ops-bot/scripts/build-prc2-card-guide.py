@@ -238,10 +238,11 @@ def parts():
 
     p3 = Part("Part 3", "Musa does not answer",
               "Abdul asks Musa (as in Part 1), and Musa does not answer. The bot re-sends waiting cards by itself, in "
-              "rounds. A round that comes before the wait time is over (4 hours, unless Krishna changed it) reaches "
-              "Musa only. A round after that reaches every admin. The bot's own clock decides when a round comes, "
-              "not the time of the request. <b>In this run</b> Abdul submits at 10:00 and the rounds come at 11:00 "
-              "and 17:00. Start Part 3 early in the day.", [
+              "rounds; a round reaches Musa only. Separately, the bot checks every hour how long the request has "
+              "waited: once the wait time is over (4 hours, unless Krishna changed it) Krishna gets the full card, "
+              "once, whether reminder rounds are on or off. Musa is never told about himself. <b>In this run</b> "
+              "Abdul submits at 10:00, Musa's rounds come at 11:00 and 17:00, and Krishna's card at 14:00. "
+              "Start Part 3 early in the day.", [
         Step("Abdul", f"Record 50,000 from ABBA, tap {b('🛂 Musa')}, tap {end('✅ Submit for approval')}",
              [Card(S("C", "c_submit", to="Abdul"))], "Same as steps §a1–§a3."),
         Step("Bot", "Nothing to tap. Musa does not answer. Wait for the bot's first reminder round.",
@@ -253,12 +254,13 @@ def parts():
              [Pop(S("C", "c_nudge", kind="popup")), Card(S("C", "c_nudge", to="Abdul", kind="message")),
               Card(S("C", "c_nudge", to="Musa"), wide=True)],
              "Still Musa only. “You can remind again in 24h.”"),
-        Step("Bot", "Nothing to tap. Wait. After the wait time, the next reminder round goes to Krishna and Musa.",
-             [Card(S("C", "c_hour17", to="Krishna"), new=True, wide=True,
-                   also=[S("C", "c_hour17", to="Musa")])],
-             "In this run it came at 17:00, 7 hours after the request. The hour can be different. "
-             "The words “no answer for …h. Any admin may approve.” must be there.",
-             who_label="Bot · 17:00 in this run"),
+        Step("Bot", "Nothing to tap. Wait. In the hour after the wait time, Krishna gets the full card.",
+             [Card(S("C", "c_hour14", to="Krishna"), new=True, wide=True),
+              Card(S("C", "c_hour17", to="Musa"), new=True, wide=True)],
+             "Krishna's card came at 14:00 in this run, 4 hours after the request, with “no answer for 4h — any "
+             "admin may approve”. It comes once. Musa gets nothing at 14:00; his next reminder round (17:00 in this "
+             "run) still reads “Abdul asked YOU to approve this”.",
+             who_label="Bot · 14:00 and 17:00 in this run"),
         Step("Krishna", inbox_path(),
              [Card(S("C", "c_cat")), Card(S("C", "c_item"), new=True)],
              f"The card says Musa has not answered and any admin may approve. {COUNTS_NOTE}"),
@@ -365,12 +367,13 @@ def owner_box():
  <div><p><b>4. Part 3 timing.</b> The bot re-sends waiting cards in rounds every <code>APPROVAL_REMINDER_HOURS</code> (6)
  hours — counted from the bot's last round since it started, not from the request (<code>REMINDER_HOURS_ADMIN</code> wins
  when that row has a value). A request asked of one admin waits on that admin alone for
- <code>ASKED_ADMIN_WIDEN_HOURS</code> (4). With these values Part 3 can take up to about 10 hours, and if the first round
- falls after 4 hours there is no Musa-only reminder (step §c2).</p>
+ <code>ASKED_ADMIN_WIDEN_HOURS</code> (4); the bot checks that wait every hour, so Krishna's card (step §c4) comes in the
+ hour after 4 hours. If the first reminder round falls after 4 hours there is no Musa-only reminder (step §c2).</p>
  <p><b>To finish Part 3 in about 3 hours:</b> set <code>APPROVAL_REMINDER_HOURS</code> = 1 (and
  <code>REMINDER_HOURS_ADMIN</code> = 1 if that row has a value) and <code>ASKED_ADMIN_WIDEN_HOURS</code> = 2. Set them
  back after the test. While the reminder is 1, every waiting request younger than 14 days is re-sent each hour.
- If the reminder value is 0, no reminder comes at all and steps §c2 and §c4 cannot be tested.</p></div>
+ If the reminder value is 0, no reminder round comes and step §c2 cannot be tested; Krishna's card in step §c4 still
+ comes after the wait time.</p></div>
 </div></div>"""
 
 
@@ -402,8 +405,9 @@ CHECKS = [
     ("c2", "Musa", "Do not answer. Wait for the first reminder round.",
      "Before the wait time is over: Musa only, “Abdul asked YOU to approve this”. Krishna: nothing."),
     ("c3", "Abdul", "Before the wait time is over: tap 🔔 Remind approvers", "“Reminder sent to Musa.” and “You can remind again in 24h.”"),
-    ("c4", ("Krishna", "Musa"), "Wait. After the wait time, the next reminder round comes.",
-     "On both phones: “no answer for …h. Any admin may approve.” (the hours can differ)"),
+    ("c4", ("Krishna", "Musa"), "Wait. In the hour after the wait time, Krishna's card comes.",
+     "Krishna, once: “no answer for 4h — any admin may approve” (the hours can differ). Musa: nothing then; "
+     "his next reminder still reads “Abdul asked YOU to approve this”."),
     ("c5–c6", "Krishna", INBOX + " → ✅ Approve", "Musa gets one line: “has its first admin approval and needs a SECOND”."),
     ("d1", "Abdul", "Tap 👥 Any admin → ✅ Submit for approval", "Both admins get the card at once; no “Asked” line. “Sent for approval”."),
 ]
@@ -473,9 +477,13 @@ def check_facts(data):
     if fc.get("nudge") != {"musa": 1, "krishna": 0}:
         die("scene C: 🔔 Remind approvers did not go to Musa only")
     hourly = fc.get("hourly_timer") or []
-    quiet = [h for h in hourly if h["at"] != "17:00"]
-    if any(h["musa"] or h["krishna"] for h in quiet) or not any(h["at"] == "17:00" and h["krishna"] == 1 for h in hourly):
-        die("scene C: the guide says no reminder between 12:00 and 16:00 and one to Krishna at 17:00 — the capture disagrees")
+    want = {h: {"musa": 0, "krishna": 0} for h in ("12:00", "13:00", "14:00", "15:00", "16:00", "17:00")}
+    want["14:00"]["krishna"] = 1
+    want["17:00"]["musa"] = 1
+    got = {h["at"]: {"musa": h["musa"], "krishna": h["krishna"]} for h in hourly}
+    if got != want:
+        die("scene C: the guide says Krishna's card at 14:00 (once), Musa's reminder at 17:00 and nothing else "
+            "between 12:00 and 17:00 — the capture disagrees: " + json.dumps(got))
     if data["D"]["facts"].get("asked_admin_on_row") is not None:
         die("scene D: 👥 Any admin recorded an asked admin")
 

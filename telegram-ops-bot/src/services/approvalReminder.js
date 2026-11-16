@@ -41,6 +41,10 @@ const _financeRemindedAt = new Map();
 // PRC-2b — requestIds this process already widened (the floor under a
 // failed askWidenedAt write: never a second card).
 const _widened = new Set();
+// PRC-2b review — requestId → { ids, at }: the admins the widen pass carded
+// and when. The reminder round leaves THEM out for one reminder window (they
+// were just told); the asked admin keeps his own reminder.
+const _widenCarded = new Map();
 
 /**
  * APU-1 3.3: rows whose next step is NOT a standard approve:/reject: tap
@@ -158,12 +162,27 @@ async function sweepPending(bot, { now = Date.now() } = {}) {
             } catch (e) { logger.warn(`approvalReminder: askWidenedAt for ${q.requestId} not saved: ${e.message}`); }
           }
         }
+        // PRC-2b review — admins the widen pass carded within this window
+        // are left out (they were just told); everyone else as usual.
+        const carded = _widenCarded.get(String(q.requestId));
+        const justCarded = carded && now - carded.at < windowMs ? [...carded.ids] : [];
+        let groupsSent = 0;
         for (const g of groups) {
+          const extra = justCarded.length
+            ? { ...g.extra, excludeIds: [...((g.extra && g.extra.excludeIds) || []), ...justCarded] }
+            : g.extra;
+          if (justCarded.length) {
+            const left = new Set(extra.excludeIds.map(String));
+            if (excludeId) left.add(String(excludeId));
+            if (config.access.adminIds.every((a) => left.has(String(a)))) continue;
+          }
           await approvalEvents.notifyAdminsApprovalRequest(
             bot, q.requestId, userLabel, card, q.riskReason || 'Pending approval', excludeId,
-            { prependNote: g.note, ...(kb ? { keyboard: kb } : {}), ...g.extra },
+            { prependNote: g.note, ...(kb ? { keyboard: kb } : {}), ...extra },
           );
+          groupsSent += 1;
         }
+        if (!groupsSent) { _remindedAt.set(q.requestId, now); continue; } // everyone was just carded
         if (q.actionJSON && q.actionJSON.sale_doc_file_id) {
           const kind = q.actionJSON.sale_doc_type === 'document' ? 'document' : 'photo';
           await approvalCards.forwardAttachmentsToAdmins(bot, q.requestId,
@@ -200,13 +219,21 @@ async function sweepPending(bot, { now = Date.now() } = {}) {
  * being 0. For each pending, standard-approvable row asked of one admin (raw
  * `askedAdmin.id`, not the requester) with no signature, no `askWidenedAt`,
  * and a wait of at least ASKED_ADMIN_WIDEN_HOURS (0 = never by time; an
- * unreadable CreatedAt counts as waited): the FULL card goes ONCE to every
- * admin who holds none — every admin but the requester and the asked admin —
- * with `🙋 Asked: Musa · no answer for 5h — any admin may approve`, then the
- * row is stamped. The asked admin and the requester get nothing from here.
- * Once per request per process even when the stamp write fails; the backlog
- * guard and the per-pass cap apply. Returns the number of requests widened.
- * Never throws.
+ * unreadable CreatedAt counts as waited, and its note then claims no hours):
+ * the FULL card goes ONCE to every admin who holds none — every admin but the
+ * requester and the asked admin — with
+ * `🙋 Asked: Musa · no answer for 5h — any admin may approve`, then the row
+ * is stamped. The asked admin and the requester get nothing from here.
+ *
+ * A request counts as widened only once its card REACHED an admin (or there
+ * was nobody to send it to): a throw or a send that reached nobody leaves it
+ * for the next hourly pass. The row is re-read just before the send, so a
+ * signature given meanwhile stops it. Once delivered it is remembered in this
+ * process even when the stamp write fails, and the stamp is retried on later
+ * passes without a second card. The admins carded here are left out of the
+ * reminder rounds for one reminder window (`_widenCarded`); the asked admin
+ * keeps his own reminder. The backlog guard and the per-pass cap apply.
+ * Returns the number of requests widened. Never throws.
  */
 async function sweepAskedWiden(bot, { now = Date.now() } = {}) {
   try {
@@ -215,16 +242,28 @@ async function sweepAskedWiden(bot, { now = Date.now() } = {}) {
     const pending = await approvalQueueRepository.getAllPending();
     const rawAsked = (aj) => (aj && aj.askedAdmin && typeof aj.askedAdmin === 'object'
       ? String(aj.askedAdmin.id || '').trim() : '');
-    const candidates = (pending || []).filter((q) => {
+    const isSigned = (aj) => (Array.isArray(aj.approvals) && aj.approvals.length > 0)
+      || (Array.isArray(aj.signoffs) && aj.signoffs.length > 0);
+    const isCandidate = (q) => {
       const aj = q && q.actionJSON;
       if (!aj || typeof aj !== 'object' || !isStandardApprovable(aj)) return false;
       const asked = rawAsked(aj);
       if (!asked || asked === String(q.user)) return false;
-      if (aj.askWidenedAt || _widened.has(String(q.requestId))) return false;
-      const signed = (Array.isArray(aj.approvals) && aj.approvals.length)
-        || (Array.isArray(aj.signoffs) && aj.signoffs.length);
-      return !signed;
-    });
+      if (aj.askWidenedAt || isSigned(aj)) return false;
+      return true;
+    };
+    const stamp = async (requestId) => {
+      try {
+        await approvalQueueRepository.updateActionJSON(requestId, { askWidenedAt: new Date(now).toISOString() });
+      } catch (e) { logger.warn(`approvalReminder: askWidenedAt for ${requestId} not saved: ${e.message}`); }
+    };
+    const open = (pending || []).filter(isCandidate);
+    // Delivered earlier in this process but the stamp never landed: retry the
+    // stamp alone, never the card.
+    for (const q of open.filter((r) => _widened.has(String(r.requestId))).slice(0, MAX_CARDS_PER_SWEEP)) {
+      await stamp(q.requestId);
+    }
+    const candidates = open.filter((q) => !_widened.has(String(q.requestId)));
     if (!candidates.length) return 0;
     const widenH = Number(await askedApprover.widenHours());
     if (!(widenH > 0)) return 0;
@@ -239,30 +278,42 @@ async function sweepAskedWiden(bot, { now = Date.now() } = {}) {
     let widened = 0;
     for (const { q, created } of due) {
       const id = String(q.requestId);
-      _widened.add(id); // before any send: never a second card from this process
       try {
         const aj = q.actionJSON;
         const askedId = rawAsked(aj);
         const fullIds = admins.filter((a) => a !== String(q.user) && a !== askedId);
-        if (fullIds.length) {
-          const waited = Number.isFinite(created) ? Math.floor((now - created) / HOUR_MS) : 0;
-          const hours = Math.max(waited, Math.ceil(widenH));
-          const asked = { id: askedId, name: String(aj.askedAdmin.name || '').trim() || askedId };
-          const note = askedApprover.askedLine(asked, { reason: 'waited', hours });
-          const card = await approvalCards.buildCardFromActionJSON(aj);
-          const kb = approvalCards.keyboardForRequest(q.requestId, aj);
-          const userLabel = await approvalCards.resolveUserLabel(q.user, bot);
-          await approvalEvents.notifyAdminsApprovalRequest(
-            bot, q.requestId, userLabel, card, q.riskReason || 'Pending approval', undefined,
-            { prependNote: note, excludeIds: admins.filter((a) => !fullIds.includes(a)), ...(kb ? { keyboard: kb } : {}) },
-          );
+        if (!fullIds.length) {
+          // Nobody is left to tell (the requester-admin and the asked admin
+          // are the only admins): nothing to send, the row is widened as it is.
+          _widened.add(id);
+          widened += 1;
+          await stamp(q.requestId);
+          continue;
         }
-        // The reminder pass waits a full window before this request's next card.
-        _remindedAt.set(q.requestId, now);
+        // Whole hours actually waited; an unreadable CreatedAt claims none
+        // (askedLine then prints the plain `🙋 Asked: Musa`).
+        const hours = Number.isFinite(created) ? Math.max(0, Math.floor((now - created) / HOUR_MS)) : 0;
+        const asked = { id: askedId, name: String(aj.askedAdmin.name || '').trim() || askedId };
+        const note = askedApprover.askedLine(asked, { reason: 'waited', hours });
+        const card = await approvalCards.buildCardFromActionJSON(aj);
+        const kb = approvalCards.keyboardForRequest(q.requestId, aj);
+        const userLabel = await approvalCards.resolveUserLabel(q.user, bot);
+        // The asked admin may have signed (or another pass widened it) while
+        // the card was being built: read the row again before sending.
+        const fresh = await approvalQueueRepository.getByRequestId(q.requestId);
+        if (!fresh || String(fresh.status || '').toLowerCase() !== 'pending' || !isCandidate(fresh)) continue;
+        const res = await approvalEvents.notifyAdminsApprovalRequest(
+          bot, q.requestId, userLabel, card, q.riskReason || 'Pending approval', undefined,
+          { prependNote: note, excludeIds: admins.filter((a) => !fullIds.includes(a)), ...(kb ? { keyboard: kb } : {}) },
+        );
+        if (!res || !(Number(res.sent) > 0)) {
+          logger.warn(`approvalReminder: widening ${id} reached no admin — retried next pass`);
+          continue;
+        }
+        _widened.add(id);
+        _widenCarded.set(id, { ids: new Set(fullIds), at: now });
         widened += 1;
-        try {
-          await approvalQueueRepository.updateActionJSON(q.requestId, { askWidenedAt: new Date(now).toISOString() });
-        } catch (e) { logger.warn(`approvalReminder: askWidenedAt for ${id} not saved: ${e.message}`); }
+        await stamp(q.requestId);
       } catch (e) {
         logger.warn(`approvalReminder: widening ${id} failed: ${e.message}`);
       }
@@ -349,7 +400,7 @@ async function sweepFinance(bot, { now = Date.now() } = {}) {
 }
 
 /** Test hook — reset per-process reminder memory. */
-function _resetForTests() { _remindedAt.clear(); _financeRemindedAt.clear(); _widened.clear(); _lastSweepMs = 0; }
+function _resetForTests() { _remindedAt.clear(); _financeRemindedAt.clear(); _widened.clear(); _widenCarded.clear(); _lastSweepMs = 0; }
 
 module.exports = {
   sweep, sweepPending, sweepAskedWiden, sweepFinance, financeReminderHours,
