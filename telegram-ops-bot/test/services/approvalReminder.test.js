@@ -168,3 +168,26 @@ test('FIX-INBOX: an expense batch and a payee account are reminded with their su
     'holder and kind, number, bank, and the linked Telegram user');
   assert.ok(!/\nregister payment account\n/.test(account[0]), 'the bare action words are gone');
 });
+
+test('FIX-INBOX2: a customer payment is reminded with its method and the balance before and after, not three bare fields', async () => {
+  // `record_payment` had no card builder: the copy an admin signs from read
+  // "record payment / Customer: ABBA / Amount: 50000" — cash or which bank,
+  // and what the customer owes, were on the first card only.
+  const accountingService = require(path.join(SRC, 'services/accountingService'));
+  const real = accountingService.getCustomerLedger;
+  accountingService.getCustomerLedger = async () => ({ outstandingAsOfToday: 200000 });
+  try {
+    reminder._resetForTests();
+    pendingRows = [
+      row('req-payin', OLD, { action: 'record_payment', customer: 'ABBA', customerId: 'C-1', amount: 50000, method: 'Bank — Zenith', source: 'payment_received_door' }),
+    ];
+    const bot = createFakeBot();
+    assert.equal(await reminder.sweep(bot, { now: NOW }), 1);
+    const cards = bot.calls.filter((c) => c.method === 'sendMessage').map((c) => c.args.text.replace(/\\/g, ''));
+    assert.equal(cards.length, 2, 'one copy per admin');
+    assert.match(cards[0], /\nRecord Payment Request\nCustomer: ABBA\nAmount: 50,000\nMethod: Bank — Zenith\nOutstanding today: 200,000\nAfter this payment: 150,000\n/,
+      `got: ${cards[0]}`);
+    assert.ok(!/\nrecord payment\n/.test(cards[0]), 'the bare action words are gone');
+    assert.ok(!/Date:/.test(cards[0]), 'a reminder sent days later prints no entry date of its own');
+  } finally { accountingService.getCustomerLedger = real; }
+});

@@ -311,3 +311,46 @@ test('item 4: a PENDING supply request keeps its waiting line; a completed one k
   assert.match(lastText(bot2), /✅ Accepted by Musa/, `the outcome line is a record, not a wait, got: ${lastText(bot2)}`);
   assert.match(lastText(bot2), /✅ _Already approved by Krishna/);
 });
+
+/* ──────── FIX-INBOX2 — a customer's payment IN (`record_payment`) ──────── */
+
+// The generic card read `record payment / Customer: ABBA / Amount: 50000`:
+// no method, no balance — on a request two admins sign.
+const accountingService = require(path.join(SRC, 'services/accountingService'));
+const PAYMENT_IN_AJ = { action: 'record_payment', customer: 'ABBA', customerId: 'C-1', amount: 50000, method: 'Bank — Zenith', source: 'payment_received_door' };
+
+async function withOutstanding(amount, fn) {
+  const real = accountingService.getCustomerLedger;
+  accountingService.getCustomerLedger = async () => ({ outstandingAsOfToday: amount });
+  try { await fn(); } finally { accountingService.getCustomerLedger = real; }
+}
+
+test('FIX-INBOX2: a customer payment waiting for its second signature opens with the method and the balance before and after', async () => {
+  await withOutstanding(200000, async () => {
+    reset({ pending: [{ requestId: 'P-PAYIN', user: '4242', status: 'pending', createdAt: daysAgo(1), actionJSON: { ...PAYMENT_IN_AJ, approvals: ['888'] } }] });
+    const bot = createFakeBot();
+    await openCard(bot, 'finance', 'P-PAYIN');
+    const text = lastText(bot);
+    assert.match(text, /^Record Payment Request\nCustomer: ABBA\nAmount: 50,000\nMethod: Bank — Zenith\nOutstanding today: 200,000\nAfter this payment: 150,000\n\n_Requested by Abdul/,
+      `the card the first admin got, rebuilt from the row, got: ${text}`);
+    assert.doesNotMatch(text, /Date:/, 'the footer says how long it has waited; the card prints no date of its own');
+    assert.match(text, /1 of 2 approvals already given/, 'and the admin about to sign second is told it is the second');
+    assert.ok(lastKb(bot).some((b) => b.callback_data === 'abx:ok:P-PAYIN'), 'Approve is offered on the full card');
+  });
+});
+
+test('FIX-INBOX2: the record of an approved customer payment shows what was booked — no balance, no over-payment warning', async () => {
+  // After approval the customer owes nothing: a live "After this payment"
+  // would read -50,000 and warn that the booked payment EXCEEDS the balance.
+  await withOutstanding(0, async () => {
+    reset({
+      pending: [CONTACT],
+      resolved: [{ requestId: 'PAYIN-OK', user: '4242', status: 'approved', createdAt: daysAgo(2), resolvedAt: daysAgo(1), approver: 'Krishna', actionJSON: PAYMENT_IN_AJ }],
+    });
+    const bot = createFakeBot();
+    await openCard(bot, 'decided', 'PAYIN-OK');
+    const text = lastText(bot);
+    assert.match(text, /^Record Payment Request\nCustomer: ABBA\nAmount: 50,000\nMethod: Bank — Zenith\n\n✅ _Already approved by Krishna/, `got: ${text}`);
+    assert.ok(!/Outstanding|After this payment|EXCEEDS/.test(text), `a record carries no live balance, got: ${text}`);
+  });
+});

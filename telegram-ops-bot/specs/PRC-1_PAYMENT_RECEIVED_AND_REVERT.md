@@ -42,6 +42,15 @@ action code, sheet or column was added.
 - **No balance on the entry screens.** Customer outstanding is admins-only
   (FIN-V2). The admin's approval card shows `Outstanding today` and
   `After this payment`, and warns when the payment exceeds the balance.
+- **The same card wherever the request is drawn again (FIX-INBOX2,
+  16-Nov-2026).** The 🛂 inbox, the reminder and the requester's
+  `🔔 Remind approvers` rebuild `Record Payment Request` from the queue row
+  with the method, `Outstanding today` and `After this payment` — before,
+  they read `record payment / Customer / Amount` and nothing else. A rebuilt
+  card prints no `Date:` line (the row carries no payment date; each surface
+  says how long the request has waited). The ✅❌ Decided record shows
+  customer, amount and method only: once approved, today's outstanding
+  already holds the payment, so no balance is printed there.
 - **Approval:** one admin, never the requester (`record_payment` is in
   ALWAYS_APPROVAL_ACTIONS). On approval the ledger is credited and the
   customer's outstanding falls.

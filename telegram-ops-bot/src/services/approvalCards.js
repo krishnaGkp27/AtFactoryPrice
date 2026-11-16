@@ -759,9 +759,25 @@ async function buildReturnBundleCard(aj) {
  * ledger the invoice feeds and moves no cash book: side B, bare. PAY-1's
  * outgoing `request_payment` card is a different feature (side A, ₦) and
  * lives in paymentCards.js.
+ *
+ * FIX-INBOX2 — the same card is rebuilt later from the queue row (inbox,
+ * reminder, the requester's 🔔 re-send, the Decided record):
+ *   - `opts.rebuilt`: no `Date:` line. On the first card it is the day the
+ *     payment was entered; a rebuild days later would print the day the card
+ *     was drawn, and the row carries no payment date. Each surface says how
+ *     long the request has waited.
+ *   - `opts.decided`: the record of a request already approved or rejected —
+ *     what it carried, and no balance. Once approved, today's outstanding
+ *     already holds this payment, so "After this payment" would subtract it
+ *     twice and could warn that a booked payment EXCEEDS the balance.
+ *
+ * @param {{customer: string, amount: number, method?: string}} p
+ * @param {{rebuilt?: boolean, decided?: boolean}} [opts]
  */
-async function buildPaymentCard({ customer, amount, method }) {
-  let text = `Record Payment Request\nCustomer: ${customer}\nAmount: ${money.sale(amount || 0)}\nMethod: ${method || '—'}\nDate: ${fmtDate(require('../utils/dates').todayInLagos())  /* TIME-1 */}`;
+async function buildPaymentCard({ customer, amount, method }, opts = {}) {
+  let text = `Record Payment Request\nCustomer: ${customer}\nAmount: ${money.sale(amount || 0)}\nMethod: ${method || '—'}`;
+  if (opts.decided) return text;
+  if (!opts.rebuilt) text += `\nDate: ${fmtDate(require('../utils/dates').todayInLagos())  /* TIME-1 */}`;
   try {
     const accountingService = require('./accountingService');
     const { outstandingAsOfToday } = await accountingService.getCustomerLedger(customer);
@@ -1350,6 +1366,17 @@ async function buildCardFromActionJSON(aj, opts = {}) {
     }
     if (aj.action === 'record_office_expense' && Array.isArray(aj.items) && aj.items.length) {
       return require('./branchOpsService').buildExpenseApprovalSummary(aj);
+    }
+    // FIX-INBOX2 — a customer's payment IN (💵 Payment Received, or the
+    // typed line). The generic list below knows `customer` and `amount` but
+    // no `method`, and reads no ledger: the second admin saw neither cash vs
+    // which bank nor what the customer owes before and after — on a request
+    // that moves a customer's balance. Rebuilt through the builder of its
+    // first chat card (side B, bare). A row without a customer keeps the
+    // generic card rather than a ledger lookup for nobody.
+    if (aj.action === 'record_payment' && aj.customer) {
+      return await buildPaymentCard({ customer: aj.customer, amount: aj.amount, method: aj.method },
+        { rebuilt: true, decided: Boolean(opts.decided) });
     }
   } catch (_) { /* fall through to generic */ }
   const parts = [actionLabel(aj.action)];

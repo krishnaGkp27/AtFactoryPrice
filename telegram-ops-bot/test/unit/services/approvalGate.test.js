@@ -313,6 +313,24 @@ test('🔔 the chip: a toast either way, and one line in the chat when it went o
   assert.equal(bot2.calls.filter((c) => c.method === 'sendMessage').length, 0);
 });
 
+test('🔔 FIX-INBOX2: a customer payment is re-sent with its method and the balance, to the admin who has not signed', async () => {
+  // The second signer of a `record_payment` usually signs from this copy; it
+  // read "record payment / Customer: ABBA / Amount: 50000".
+  reset();
+  const accountingService = require(path.join(SRC, 'services/accountingService'));
+  const real = accountingService.getCustomerLedger;
+  accountingService.getCustomerLedger = async () => ({ outstandingAsOfToday: 200000 });
+  try {
+    await gate.raise({ userId: '555', action: 'record_payment', requestId: 'RP-1',
+      payload: { customer: 'ABBA', customerId: 'C-1', amount: 50000, method: 'Bank — Zenith', source: 'payment_received_door' } });
+    QUEUE[0].actionJSON.approvals = ['777', '888'];
+    const r = await gate.nudge({ bot: createFakeBot(), requestId: 'RP-1', byUserId: '555', now: Date.now() });
+    assert.deepEqual(r.reminded, ['John'], 'only the admin who has not signed');
+    assert.equal(NOTIFIED[0][3],
+      'Record Payment Request\nCustomer: ABBA\nAmount: 50,000\nMethod: Bank — Zenith\nOutstanding today: 200,000\nAfter this payment: 150,000');
+  } finally { accountingService.getCustomerLedger = real; }
+});
+
 test('📋 Status: the requester (or an admin) sees where it stands; a stranger does not', async () => {
   reset();
   await gate.raise({ userId: '555', action: 'request_payment', payload: { ...PAY, reason: 'Salary · Nov-2026' }, requestId: 'REQ-1' });
