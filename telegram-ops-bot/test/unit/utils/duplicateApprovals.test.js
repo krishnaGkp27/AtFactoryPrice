@@ -156,3 +156,21 @@ test('canonical output is stable and drops volatile keys', () => {
   assert.equal(canonical({ a: 1, requestId: 'X' }), canonical({ a: 1, requestId: 'Y' }));
   assert.equal(canonical({ a: 1, approvals: ['777'] }), canonical({ a: 1 }));
 });
+
+/* PRC-2 review 1 — who was asked, when the card went wider and the admin who
+   typed a blank amount are routing, never what the payment asks: one payment
+   raised twice stays flagged through all of them. */
+test('PRC-2: a payment received raised twice stays a twin whoever was asked, after a first signature, and after an admin typed the amount', () => {
+  const base = { action: 'record_payment', customer: 'ABBA', customerId: 'C1', amount: 50000, method: 'Bank — Zenith', source: 'payment_received_door' };
+  const pr = (id, secs, extra) => ({ requestId: id, user: 'E1', createdAt: at(secs), status: 'pending', actionJSON: { ...base, ...extra } });
+  const musa = { id: '1', name: 'Musa' };
+  assert.equal(findDuplicateGroups([pr('A', 0, {}), pr('B', 180, {})]).length, 1, 'baseline');
+  assert.equal(findDuplicateGroups([pr('A', 0, { askedAdmin: musa }), pr('B', 180, { askedAdmin: { id: '2', name: 'Krishna' } })]).length, 1, 'different admins asked');
+  assert.equal(findDuplicateGroups([pr('A', 0, { askedAdmin: musa }), pr('B', 180, {})]).length, 1, 'one asked, one any admin');
+  const idx = duplicateIndex([pr('A', 0, { askedAdmin: musa, approvals: ['1'], askWidenedAt: at(200) }), pr('B', 180, { askedAdmin: musa })]);
+  assert.equal(idx.get('A').length, 2, 'a first signature (askWidenedAt) keeps the twin');
+  const blank = { amountPending: true };
+  delete base.amount;
+  const idx2 = duplicateIndex([pr('A', 0, { amount: 50000, amountPending: false, amountBy: { id: '1', name: 'Musa', at: at(200) } }), pr('B', 180, blank)]);
+  assert.equal((idx2.get('B') || []).length, 2, 'a blank copy and the copy an admin typed the amount on');
+});

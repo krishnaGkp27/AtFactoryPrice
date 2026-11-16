@@ -68,7 +68,13 @@ const signLine = (s) => `✅ ${s.name || s.id || 'An admin'} · ${when(s.at)}`;
  */
 function trailOf(aj) {
   const a = aj || {};
-  if (Array.isArray(a.signoffs) && a.signoffs.length) return a.signoffs.map((s) => ({ id: String(s.id || ''), name: String(s.name || ''), at: s.at || '' }));
+  if (Array.isArray(a.signoffs) && a.signoffs.length) {
+    // PRC-2 review 1 — a payment received's signature keeps the amount it was given for.
+    return a.signoffs.map((s) => ({
+      id: String(s.id || ''), name: String(s.name || ''), at: s.at || '',
+      ...(s.amount !== undefined && s.amount !== null && s.amount !== '' ? { amount: Number(s.amount) } : {}),
+    }));
+  }
   return (Array.isArray(a.approvals) ? a.approvals : []).map((id) => ({ id: String(id), name: '', at: '' }));
 }
 

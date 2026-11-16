@@ -2201,7 +2201,10 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
             signerLabel = await require('../services/approverStamp').labelFor({ actorId: adminId, bot });
           } catch (_) { /* id alone */ }
           const progressMod = require('../services/approvalProgress');
-          const trail = [...progressMod.trailOf(item.actionJSON), progressMod.signoff(adminId, signerLabel)];
+          const mySign = progressMod.signoff(adminId, signerLabel);
+          // PRC-2 review 1 — a payment received's signature names the amount it is given for.
+          if (actName === 'record_payment' && Number(item.actionJSON.amount) > 0) mySign.amount = Number(item.actionJSON.amount);
+          const trail = [...progressMod.trailOf(item.actionJSON), mySign];
           // DUAL-1b (11-Nov-2026) — a first signature that cannot be SAVED
           // stops here. The outer catch falls back to single approval (house
           // style for a gate bug); a refused sheet write is not a gate bug,
@@ -2311,6 +2314,24 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
       // single-approval semantics rather than blocking ALL approvals on a
       // gate bug (matches the H1 / super-admin guards above).
       logger.error(`DUAL-1 dual-approval gate error (falling back to single approval): ${e.message}`);
+    }
+  }
+
+  // PRC-2 review 1 — the completing approval of a payment received goes
+  // through only when every signature was given for the amount the row now
+  // carries. Outside the gate's try (no fallback), fail-closed: a mismatch
+  // records nothing and says what to do.
+  if (action === 'approve' && item && item.actionJSON && item.actionJSON.action === 'record_payment') {
+    const problem = require('../flows/paymentReceivedFlow').signedFigureProblem(item.actionJSON);
+    if (problem) {
+      logger.error(`PRC-2 ${requestId}: signatures disagree on the amount (${problem}) — nothing recorded`);
+      try {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: '⚠️ The approvals on this payment were given for different amounts — nothing was recorded. Reject it and raise it again.',
+          show_alert: true,
+        });
+      } catch (_) { /* stale query */ }
+      return { asked: true };
     }
   }
 

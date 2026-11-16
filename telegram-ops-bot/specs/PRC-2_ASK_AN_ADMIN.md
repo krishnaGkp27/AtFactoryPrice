@@ -144,6 +144,13 @@ Ref R-4F72
 [💵 Record another] [🏠 Menu]
 ```
 
+If Telegram refuses the Markdown receipt after the request was raised, the
+same facts are sent as plain text (`⏳ Sent to Musa for approval` · the
+customer · `Ref R-4F72`, same buttons). A request that exists is never
+reported as `Could not send`. Names inside the bold headline are not
+backslash-escaped (Telegram honours no escape there); a `*` in a name closes
+and reopens the bold.
+
 When Musa cannot be reached (the send failed), the card goes to the other
 admins at once and the receipt ends with
 `⚠️ Musa could not be reached — sent to the other admins.`
@@ -187,12 +194,16 @@ Notes put above the card (`🔔 Approval required …`):
 | first card, to the asked admin only | `🙋 Abdul asks YOU to approve this.` |
 | the asked admin could not be reached, to the others | `🙋 Asked: Musa (could not be reached)` |
 | the first signature, to admins who held no card yet | `🔏 1 of 2 — signed by Musa. Yours is the second approval.` |
+| the first signature on a blank request (the signer typed the amount), to EVERY other admin — their card still says `not entered` | the same note, on the full card with `· entered by Musa` |
 | hourly reminder, before the widen hour (asked admin only) | `⏰ Reminder — Abdul asked YOU to approve this` |
 | hourly reminder, after it (every admin) | `⏰ Reminder — asked: Musa · no answer for 5h. Any admin may approve.` |
+| the same, less than an hour old (widened early — the asked admin was unreachable) | `⏰ Reminder — asked: Musa. Any admin may approve.` (never `0h`) |
 | hourly reminder after a signature (the unsigned) | `⏰ Reminder — this approval is still waiting` (as before) |
 
 An admin who already holds the card when someone else signs first (the asked
-admin, R2) gets the one-line ping as before:
+admin, R2) gets the one-line ping as before (whether someone "holds the
+card" is read from the raw `askedAdmin` id, so an asked admin since removed
+from `ADMIN_IDS` still means the others get the full card):
 `🔔 Request <id> (record payment) has its first admin approval and needs a SECOND. Use the approval card in your chat.`
 
 ### 5b. The amount step (blank amount, first approval)
@@ -210,7 +221,8 @@ Outstanding today: 120,000
 
 Abdul did not know the amount. Type what ABBA paid, for example `50000`.
 Nothing is approved until you confirm.
-[✖ Not now]
+If your number gets no answer, tap ✏️ Type the amount and send it again.
+[✏️ Type the amount] [✖ Not now]
 ```
 
 A typed value that is not an amount adds
@@ -235,6 +247,9 @@ Your approval is the first of two. A second admin checks the amount.
 - When the figure is more than the balance, `⚠️ Payment EXCEEDS the outstanding balance.`
   under `After this payment` (a warning, never a block).
 
+The amount is saved, then read back: the signature is recorded only when
+the request still carries THIS admin's figure and still waits.
+
 After `✅ Approve with`, the message becomes one line, no buttons:
 
 - `✅ You entered 50,000 and gave approval 1 of 2. A second admin checks it.`
@@ -247,10 +262,52 @@ Refusals (alerts):
 | Case | Text |
 |---|---|
 | the amount could not be saved | `⚠️ Could not save the amount — nothing was approved. Tap again in a minute.` |
+| the saved amount did not read back as this admin's | `⚠️ The amount on this payment changed while you typed — nothing was approved. Open the card again.` |
 | another admin entered it meanwhile | `Krishna already entered 40,000 for this payment. Open the card to approve or reject it.` |
 | the request was decided meanwhile | `Already rejected — nothing to do.` (or approved) |
 | not an admin | `Only admins can approve.` |
 | the requester's own request | `🔒 You cannot enter the amount on your own request.` |
+
+Two admins confirming different figures at once are taken one at a time
+(a per-request lock in the approval handler): the first figure and its
+signature stand, the second admin's step closes with
+`Krishna already entered 50,000 for this payment. Open the card to approve or reject it.`
+
+### 5c. The second admin checks a figure another admin typed (review 1)
+
+A plain `✅ Approve` (DM card, reminder, 🛂 inbox) on a payment whose amount
+ANOTHER admin typed records nothing — the card may have been drawn before the
+amount existed. The tap answers `Check the amount first.` and, as a reply:
+
+```
+💵 Payment received · check the amount
+
+Customer: ABBA
+Amount: 50,000 · entered by Krishna
+Paid by: Bank — Zenith
+Outstanding today: 120,000
+After this payment: 70,000
+
+Krishna typed this amount. Check it before you approve.
+Your approval records the payment.
+[✅ Approve 50,000]
+[✖ Not now]
+```
+
+`✅ Approve 50,000` = `prc:ok:<requestId>:<amount>`, session-free: it goes
+through only when the request still carries exactly that figure. Closing
+line: `✅ 50,000 from ABBA is recorded.` (or `✅ You approved 50,000 —
+approval n of N.`). Refusals: `The amount on this payment is 50,000. Tap
+✅ Approve on the card again.` (a different figure on the chip) ·
+`🔏 You typed this amount — a different admin must check it.` ·
+`This payment has no amount yet. Tap ✅ Approve on the card.`
+A payment whose amount the EMPLOYEE typed keeps the one-tap ✅ Approve.
+
+Every signature on a payment received stores the amount it was given for
+(`signoffs[].amount`). The last approval is refused, recording nothing, when
+any signature names a different figure from the request (or, on an amount an
+admin typed, names none):
+`⚠️ The approvals on this payment were given for different amounts — nothing was recorded. Reject it and raise it again.`
 
 ## 6. The requester's cards
 
@@ -282,6 +339,12 @@ Everything rides the request's own ApprovalQueue `actionJSON`:
 | `amountPending: true` | the amount was left blank (set `false` once entered) |
 | `amountBy: { id, name, at }` | the admin who typed the amount |
 | `askWidenedAt` | when the card first went beyond the asked admin (first signature, the widen hour, an unreachable asked admin) |
+| `signoffs[].amount` | the figure each signature was given for (review 1) |
+
+The duplicate detector ignores `askedAdmin`, `askWidenedAt`, `amountBy` and
+`amountPending`, and compares a copy whose amount an admin typed without
+that amount: one payment raised twice stays flagged whoever was asked, after
+a first signature, and after an admin typed the figure on one copy.
 
 Audit: `approval_queued` carries `asked` and `amountPending`;
 `payment_received_amount_entered` `{ requestId, amount, customer }` when an
@@ -317,6 +380,20 @@ admin types it.
 - Sheet-promoted admins (USR-C3b) are not in the "who" list: the list is the
   Railway `ADMIN_IDS` pool, the same pool the cards go to.
 
+## Known limits
+
+- **A typed amount after the admin's session is lost** (a redeploy, or the
+  session's time-out between `✅ Approve` and the typed number) reaches no
+  step: the controller reads the number as an ordinary typed line (for
+  example `Bale 50000 not found.`, or a bale card when the figure is a bale
+  number). Nothing is recorded. Routing it would mean changing the
+  controller, which this feature does not touch. The way back: tap
+  `✏️ Type the amount` on the prompt (session-free) or `✅ Approve` on the
+  card again, then type the number.
+- The per-request lock is in-process: it holds while the bot runs as one
+  process (as today). The signature figures (`signoffs[].amount`) are the
+  backstop that does not depend on it.
+
 ## Live check
 
 1. Abdul: 💰 Finance → 💵 Payment Received → ABBA → `50000` → a bank →
@@ -330,7 +407,8 @@ admin types it.
    → recorded, Abdul gets `✅ Approved · 2 of 2`.
 4. Again with `⏭ Amount not known` → Musa's card says `not entered`; ✅
    Approve asks for the amount; type it → `✅ Approve with …` → the second
-   admin's card reads `· entered by Musa`; approve → recorded at that figure.
+   admin's card reads `· entered by Musa`; their ✅ Approve opens the check
+   card → `✅ Approve 50,000` → recorded at that figure.
 5. An admin's own entry has no `⏭ Amount not known`.
 6. Leave one asked request unanswered past 4 hours: the next hourly reminder
    reaches every admin with `no answer for …h`.

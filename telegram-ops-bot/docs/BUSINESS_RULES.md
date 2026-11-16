@@ -1134,7 +1134,13 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
   may leave the amount blank (`⏭ Amount not known`): the admin giving the
   FIRST approval types it and the second admin's approval checks it; the
   amount is then frozen (to change it, reject and raise again). An admin's
-  own entry always carries its amount.
+  own entry always carries its amount. **A signature is bound to the figure
+  its signer saw** (PRC-2 review 1, 16-Nov-2026): the second admin approves
+  an amount another admin typed only from a check card that shows it
+  (`✅ Approve 50,000`, the figure riding the chip — a card that still says
+  "not entered" records nothing); every signature stores its amount, and the
+  last approval is refused, recording nothing, when the signatures and the
+  request disagree (reject and raise again).
 - **A request type states its own rule in one place**
   (`approvalRegistry`): what makes two of it the same, and whether a twin is
   refused, flagged or ignored. **The default is flag**: admins see

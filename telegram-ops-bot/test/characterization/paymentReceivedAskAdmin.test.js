@@ -883,3 +883,48 @@ test('PRC-2 review 1 #16: the who-step tells two admins of one name apart, and n
     { id: KRISHNA, name: 'Musa 777' }, { id: MUSA, name: 'Musa 888' }, { id: JOHN, name: 'Admin 555' },
   ]);
 });
+
+test('PRC-2 review 1 #17: every signature names its amount; a completing approval whose signatures disagree with the row records nothing', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = await raise(bot, { amount: null, ask: 'any' });
+  await approveDm(bot, KRISHNA, id, 71);
+  await controller.handleMessage(bot, msg(KRISHNA, '50000'));
+  const promptId = sessionStore.get(KRISHNA).flowMessageId;
+  await controller.handleCallbackQuery(bot, stepCb(`prc:ay:${id}:50000`, KRISHNA, promptId, 71, dmChips(id)));
+  const signed = jsonOf(id).signoffs;
+  assert.equal(signed.length, 1);
+  assert.equal(signed[0].id, KRISHNA);
+  assert.equal(signed[0].amount, 50000, 'the signature carries the figure it was given for');
+
+  // the row's figure is changed behind the signature (a hand edit, a lost write)
+  const r = rowOf(id);
+  r[2] = JSON.stringify({ ...jsonOf(id), amount: 90000 });
+  const from = bot.calls.length;
+  await approveDm(bot, MUSA, id, 72);
+  await controller.handleCallbackQuery(bot, stepCb(`prc:ok:${id}:90000`, MUSA, 73, 72, dmChips(id)));
+  assert.equal(statusOf(id), 'pending', 'nothing approved');
+  assert.equal(BOOKED.length, 0);
+  assert.ok(toasts(bot, from).some((t) => t === '⚠️ The approvals on this payment were given for different amounts — nothing was recorded. Reject it and raise it again.'));
+});
+
+test('PRC-2 review 1 #18: the typed amount is read back before the signature — a row that does not carry it approves nothing', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = await raise(bot, { amount: null, ask: 'any' });
+  await approveDm(bot, KRISHNA, id, 71);
+  await controller.handleMessage(bot, msg(KRISHNA, '50000'));
+  const promptId = sessionStore.get(KRISHNA).flowMessageId;
+  // the write "succeeds" but another admin's figure is what the sheet holds
+  const orig = approvalQueueRepository.updateActionJSON;
+  approvalQueueRepository.updateActionJSON = async (rid, patch) => {
+    if (patch && patch.amountBy) return orig(rid, { ...patch, amount: 90000, amountBy: { id: MUSA, name: 'Musa', at: new Date().toISOString() } });
+    return orig(rid, patch);
+  };
+  const from = bot.calls.length;
+  try {
+    await controller.handleCallbackQuery(bot, stepCb(`prc:ay:${id}:50000`, KRISHNA, promptId, 71, dmChips(id)));
+  } finally { approvalQueueRepository.updateActionJSON = orig; }
+  assert.deepEqual(jsonOf(id).approvals || [], [], 'no signature');
+  assert.ok(toasts(bot, from).includes('⚠️ The amount on this payment changed while you typed — nothing was approved. Open the card again.'));
+});

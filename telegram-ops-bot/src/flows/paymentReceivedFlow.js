@@ -392,6 +392,30 @@ function rowAmount(aj) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/**
+ * PRC-2 review 1 — every signature on a payment received carries the amount
+ * it was given for (`signoffs[].amount`). Returns '' when they all agree with
+ * the row's amount, else why they do not. Fail-closed: when an ADMIN typed
+ * the amount, a signature that names no figure is a disagreement too (it may
+ * have come from a card that said "not entered"). Rows raised with the
+ * amount by the requester and signed before review 1 carry no figures and
+ * pass, as they always did.
+ */
+function signedFigureProblem(aj) {
+  const a = aj || {};
+  const have = rowAmount(a);
+  const trail = Array.isArray(a.signoffs) ? a.signoffs : [];
+  for (const s of trail) {
+    const has = s && s.amount !== undefined && s.amount !== null && s.amount !== '';
+    if (!has) { if (a.amountBy) return `the approval of ${(s && (s.name || s.id)) || 'an admin'} names no amount`; continue; }
+    const n = Number(s.amount);
+    if (!have || !Number.isFinite(n) || Math.abs(n - have) >= 0.005) {
+      return `${s.name || s.id || 'an admin'} approved ${Number.isFinite(n) ? money.sale(n) : '?'}, the request now says ${have ? money.sale(have) : 'no amount'}`;
+    }
+  }
+  return '';
+}
+
 /** `Outstanding today: 120,000` (+ after / exceeds when an amount is given), admins only. */
 async function balanceLines(customer, amount) {
   try {
@@ -605,7 +629,20 @@ async function amountSeam(bot, callbackQuery, requestId, item, typed, checked) {
     await toast('⚠️ Could not save the amount — nothing was approved. Tap again in a minute.', true);
     return { stop: true };
   }
-  Object.assign(aj, { amount: want, amountPending: false, amountBy });
+  // Review 1 — read the row back: the signature below is given for THIS
+  // figure only, so it must be the one the row now carries, entered by this
+  // admin, on a request still waiting. Anything else approves nothing.
+  let fresh = null;
+  try { fresh = await approvalQueueRepository.getByRequestId(requestId); } catch (_) { /* unreadable: refused below */ }
+  const fa = (fresh && fresh.actionJSON) || {};
+  const stillMine = fresh && String(fresh.status || '').toLowerCase() === 'pending'
+    && Math.abs(rowAmount(fa) - want) < 0.005 && fa.amountBy && String(fa.amountBy.id) === adminId;
+  if (!stillMine) {
+    logger.warn(`PRC-2 amount for ${requestId} did not read back as ${want} by ${adminId} — nothing approved`);
+    await toast('⚠️ The amount on this payment changed while you typed — nothing was approved. Open the card again.', true);
+    return { stop: true };
+  }
+  Object.assign(aj, fa, { amount: want, amountPending: false, amountBy: fa.amountBy });
   if (item) item.actionJSON = aj;
   try {
     await require('../repositories/auditLogRepository').append('payment_received_amount_entered',
@@ -888,4 +925,4 @@ async function handleCallback(bot, query) {
   return true;
 }
 
-module.exports = { SESSION_TYPE, NS, start, handleCallback, handleText, amountSeam, _internals: { parseAmount, approverChoices } };
+module.exports = { SESSION_TYPE, NS, start, handleCallback, handleText, amountSeam, signedFigureProblem, _internals: { parseAmount, approverChoices } };
