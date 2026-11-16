@@ -29,6 +29,7 @@ How it works
 Options
     --json-dir DIR   read A.json … D.json from DIR instead of running the captures
     --save-json DIR  also save the captures' JSON there
+    --out-dir DIR    write the HTML and PDF to DIR instead of docs/
     --no-pdf         write the HTML only
 
 Standard library only (plus Chromium to print, and pdfinfo / pdftotext for
@@ -139,99 +140,128 @@ def S(sc, key, to=None, kind=None, text=None):
 # ══════════════════════════════════════════════════════════════════════════
 # 2. The storyboard
 # ══════════════════════════════════════════════════════════════════════════
+def end(label):
+    """A button that ends a sentence: the chip and its full stop never split."""
+    return f'<span class="nw">{b(label)}.</span>'
+
+
+def bc(label, shown):
+    """A button whose label carries a count from the test data (it differs on a
+    live phone): the exact label is checked against the captures, the guide
+    shows it with the count left out."""
+    G.USED_BUTTONS.append(label)
+    return f'<span class="chip">{html.escape(shown)}</span>'
+
+
+def inbox_path():
+    return (f"Tap {bc('📋 More Options (9)', '📋 More Options (…)')} → {b('🛂 Approvals')} → "
+            f"{bc('💵 Finance — 1 ⚠️ 🟢today', '💵 Finance — …')} → the row from Abdul.")
+
+
+COUNTS_NOTE = "The numbers in the buttons can be different on your phone."
+
+
 def parts():
     p1 = Part("Part 1", "Abdul knows the amount and asks Musa",
-              "ABBA owes 120,000. She pays 50,000 into Zenith. Abdul records it and asks <b>Musa</b> first. "
-              "Musa approves, then Krishna approves. Only then does ABBA's balance move.", [
-        Step("Abdul", f"Type {ty('menu')}. Tap {b('💰 Finance')}. Tap {b('💵 Payment Received')}.",
+              "In this guide ABBA owes 120,000. She pays 50,000 into Zenith. Abdul records it and asks <b>Musa</b> first. "
+              "Musa approves, then Krishna approves. Only then does ABBA's balance go down.", [
+        Step("Krishna", f"Before Abdul starts: type {ty('Balance ABBA')}. Write down the figure.",
+             [Card(S("A", "a_bal0"), edit_note="before Abdul's request")],
+             "Here the figure is 120,000. Your figure can be different. You need it in step §a7."),
+        Step("Abdul", f"Type {ty('menu')}. Tap {b('💰 Finance')}. Tap {end('💵 Payment Received')}",
              [Card(S("A", "a_menu")), Card(S("A", "a_fin")), Card(S("A", "a_open"))],
              "The same message changes after each tap."),
-        Step("Abdul", f"Tap {b('👤 ABBA')}. Type {ty('50000')}. Tap {b('🏦 Zenith')}.",
+        Step("Abdul", f"Tap {b('👤 ABBA')}. Type {ty('50000')}. Tap the bank the money went into (here {b('🏦 Zenith')}).",
              [Card(S("A", "a_pick")), Card(S("A", "a_amount")), Card(S("A", "a_bank"), new=True)],
+             "Your bank list can be different: it is the list in 🏦 Manage Banks. "
              "The last screen is new: “Who should approve it?”. It lists the admins, never Abdul himself."),
-        Step("Abdul", f"Tap {b('🛂 Musa')}. Check the card. Tap {b('✅ Submit for approval')}.",
+        Step("Abdul", f"Tap {b('🛂 Musa')}. Check the card. Tap {end('✅ Submit for approval')}",
              [Card(S("A", "a_ask"), new=True), Card(S("A", "a_submit", to="Abdul"), new=True),
               Card(S("A", "a_submit", to="Musa"), new=True, wide=True)],
-             "The card says “Ask: Musa”. The receipt says “Sent to Musa for approval”; no balance is shown to Abdul. "
-             "The approval card arrives on <b>Musa's phone only</b> — Krishna's phone gets no message. "
-             "“Outstanding today” and “After this payment” are for admins only."),
-        Step("Krishna", f"{b('📋 More Options (9)')} → {b('🛂 Approvals')} → "
-                        f"{b('💵 Finance — 1 ⚠️ 🟢today')} → the row.",
+             "The card says “Ask: Musa”. The receipt says “Sent to Musa for approval”. Abdul's phone shows no balance. "
+             "<br>Musa's card shows the long form of the same reference: R-4F72 is 4f72a0c1-…"),
+        Step("Krishna", inbox_path(),
              [Card(S("A", "a_inbox")), Card(S("A", "a_cat")), Card(S("A", "a_item"), new=True)],
-             "Krishna can see it and decide it. Only the card says “🙋 Asked: Musa”, not the list row."),
+             f"Krishna's phone got no message in step §a3. He finds the request here and may decide it. "
+             f"The card says “🙋 Asked: Musa”. {COUNTS_NOTE}"),
         Step("Musa", f"Tap {b('✅ Approve')} on his card.",
              [Pop(S("A", "a_mok", kind="popup")), Card(S("A", "a_mok", to="Musa", kind="message")),
               Card(S("A", "a_mok", to="Abdul")), Card(S("A", "a_mok", to="Krishna"), new=True, wide=True)],
              "Approval 1 of 2. Musa's card loses its buttons. Abdul is told. Krishna now gets the FULL card: "
              "“Yours is the second approval.”"),
-        Step("Krishna", f"Tap {b('✅ Approve')} on the card he received. To check the balance yourself, "
-                        f"type {ty('Balance ABBA')}.",
+        Step("Krishna", f"Tap {b('✅ Approve')} on the card he received. Then type {ty('Balance ABBA')}.",
              [Pop(S("A", "a_kok", kind="popup")),
               Card(S("A", "a_kok", to="Krishna", text="Changes applied")),
               Card(S("A", "a_kok", to="Krishna", text="Outstanding as of today")),
               Card(S("A", "a_kok", to="Abdul", kind="message")),
-              Card(S("A", "a_bal0"), edit_note="Balance ABBA, before Abdul's request", check=False),
-              Card(S("A", "a_bal1"), edit_note="Balance ABBA, after the two approvals", check=False)],
-             "Approval 2 of 2: recorded. ABBA's balance moves from 120,000 to 70,000 — admins only. "
-             "Abdul's card has no balance."),
+              Card(S("A", "a_bal1"), edit_note="Balance ABBA, after the two approvals")],
+             "Approval 2 of 2: recorded. The balance is now 50,000 lower than the figure from step §a0 "
+             "(here 120,000 → 70,000). Only admins see it. Abdul's card has no balance."),
     ])
 
     p2 = Part("Part 2", "Abdul does not know the amount",
               "Same payment, but Abdul does not know how much ABBA paid. Musa types the amount when he approves. "
               "Krishna checks Musa's figure before he approves.", [
-        Step("Abdul", f"Open {b('💵 Payment Received')}, tap {b('👤 ABBA')}, then tap {b('⏭ Amount not known')}. "
-                      f"Tap {b('🏦 Zenith')}.",
+        Step("Abdul", f"Tap {b('💰 Finance')} → {b('💵 Payment Received')} → {b('👤 ABBA')} → "
+                      f"{b('⏭ Amount not known')} → {end('🏦 Zenith')}",
              [Card(S("B", "b_bank"), new=True)],
-             "The bank list is the same as in Part 1 (step 2). From now on the amount line reads "
+             "The bank list is the same as in step §a2. From now on the amount line reads "
              "“Amount: to be entered by the admin”."),
-        Step("Abdul", f"Tap {b('🛂 Musa')}. Check. Tap {b('✅ Submit for approval')}.",
+        Step("Abdul", f"Tap {b('🛂 Musa')}. Check. Tap {end('✅ Submit for approval')}",
              [Card(S("B", "b_ask"), new=True), Card(S("B", "b_submit", to="Abdul"), new=True)],
              "The card adds one sentence: “The admin enters the amount.”"),
-        Step("Musa", f"The card arrives (“Amount: not entered”). Tap {b('✅ Approve')}.",
+        Step("Musa", f"The card arrives (“Amount: not entered”). Tap {end('✅ Approve')}",
              [Card(S("B", "b_submit", to="Musa"), new=True, edit_note="the card that arrives"),
               Pop(S("B", "b_mok", kind="popup")), Card(S("B", "b_mok", to="Musa", kind="message"), new=True)],
-             "Nothing is approved yet. The bot asks Musa to type the amount, as a reply under the card."),
+             "Nothing is approved yet. The bot asks Musa to type the amount, as a reply under the card. "
+             "If the bot shows a bale card after you type, tap ✏️ Type the amount and type the number again. "
+             "Report it with the step number."),
         Step("Musa", f"Type {ty('abc')} (a wrong value, on purpose). Then type {ty('50000')}.",
              [Card(S("B", "b_bad"), new=True), Card(S("B", "b_amt"), new=True)],
              "A wrong value: “That is not an amount.” A good one: the same message becomes the check card."),
-        Step("Musa", f"Tap {b('✅ Approve with 50,000')}.",
+        Step("Musa", f"Tap {end('✅ Approve with 50,000')}",
              [Pop(S("B", "b_ay", kind="popup")), Card(S("B", "b_ay", to="Musa", kind="edit", text="You entered"), new=True),
               Card(S("B", "b_ay", to="Musa", kind="message")),
               Card(S("B", "b_ay", to="Abdul"), new=True), Card(S("B", "b_ay", to="Krishna"), new=True, wide=True)],
-             "Abdul reads “Amount entered by Musa: 50,000”. Krishna's card reads “50,000 · entered by Musa”."),
+             "Musa's first card loses its buttons. Abdul reads “Amount entered by Musa: 50,000”. "
+             "Krishna's card reads “50,000 · entered by Musa”."),
         Step("Krishna", f"Tap {b('✅ Approve')} on that card.",
              [Pop(S("B", "b_kok", kind="popup")), Card(S("B", "b_kok", to="Krishna", kind="message"), new=True)],
              "Nothing is recorded yet. Krishna must check the amount another admin typed."),
-        Step("Krishna", f"Tap {b('✅ Approve 50,000')}.",
+        Step("Krishna", f"Tap {end('✅ Approve 50,000')}",
              [Pop(S("B", "b_kok2", kind="popup")), Card(S("B", "b_kok2", to="Krishna", kind="edit", text="is recorded"), new=True),
               Card(S("B", "b_kok2", to="Krishna", text="Changes applied")),
+              Card(S("B", "b_kok2", to="Krishna", text="Outstanding as of today")),
               Card(S("B", "b_kok2", to="Abdul"))],
-             "Recorded. Abdul's last card keeps the line “Amount entered by Musa”."),
+             "Recorded. Krishna gets the new balance. Abdul's last card keeps the line “Amount entered by Musa”."),
     ])
 
     p3 = Part("Part 3", "Musa does not answer",
-              "Abdul asks Musa (as in Part 1), and Musa does not answer. Here Abdul submits at 10:00. "
-              "The bot re-sends waiting cards by itself; in this test it does so every 6 hours "
-              "(the Settings default, APPROVAL_REMINDER_HOURS = 6).", [
-        Step("Abdul", f"Record 50,000 from ABBA, tap {b('🛂 Musa')}, tap {b('✅ Submit for approval')} at 10:00.",
-             [Card(S("C", "c_submit", to="Abdul"))], "Same as Part 1, steps 1–3."),
-        Step("Bot", "Nothing to tap. At 11:00 the bot sends its first reminder.",
+              "Abdul asks Musa (as in Part 1), and Musa does not answer. The bot re-sends waiting cards by itself, in "
+              "rounds. A round that comes before the wait time is over (4 hours, unless Krishna changed it) reaches "
+              "Musa only. A round after that reaches every admin. The bot's own clock decides when a round comes, "
+              "not the time of the request. <b>In this run</b> Abdul submits at 10:00 and the rounds come at 11:00 "
+              "and 17:00. Start Part 3 early in the day.", [
+        Step("Abdul", f"Record 50,000 from ABBA, tap {b('🛂 Musa')}, tap {end('✅ Submit for approval')}",
+             [Card(S("C", "c_submit", to="Abdul"))], "Same as steps §a1–§a3."),
+        Step("Bot", "Nothing to tap. Musa does not answer. Wait for the bot's first reminder round.",
              [Card(S("C", "c_rem1", to="Musa"), new=True, wide=True)],
-             "Musa only. Krishna gets nothing yet.", who_label="Bot · 11:00"),
-        Step("Abdul", f"At 11:10 tap {b('🔔 Remind approvers')} on the receipt.",
+             "In this run it came at 11:00, to Musa only; Krishna got nothing. If the first round comes after the "
+             "wait time, it already goes to every admin: then go on to step §c4.",
+             who_label="Bot · 11:00 in this run"),
+        Step("Abdul", f"Before the wait time is over, tap {b('🔔 Remind approvers')} on the receipt.",
              [Pop(S("C", "c_nudge", kind="popup")), Card(S("C", "c_nudge", to="Abdul", kind="message")),
               Card(S("C", "c_nudge", to="Musa"), wide=True)],
-             "Still Musa only: the 4 hours are not over. “You can remind again in 24h.”"),
-        Step("Bot", "Nothing to tap. After 4 hours (Settings <code>ASKED_ADMIN_WIDEN_HOURS</code>) the request is open to every "
-                    "admin. The next reminder round, at 17:00, goes to Krishna too.",
+             "Still Musa only. “You can remind again in 24h.”"),
+        Step("Bot", "Nothing to tap. Wait. After the wait time, the next reminder round goes to Krishna and Musa.",
              [Card(S("C", "c_hour17", to="Krishna"), new=True, wide=True,
                    also=[S("C", "c_hour17", to="Musa")])],
-             "No reminder came between 12:00 and 16:00: the bot's timer runs every hour, but sends again only "
-             "after 6 hours. So the wider reminder came 7 hours after the request, not 4.",
-             who_label="Bot · 17:00"),
-        Step("Krishna", f"Open {b('🛂 Approvals')} → {b('💵 Finance — 1 ⚠️ 🟢today')} → the row.",
-             [Card(S("C", "c_item"), new=True)],
-             "The card says Musa has not answered and any admin may approve."),
+             "In this run it came at 17:00, 7 hours after the request. The hour can be different. "
+             "The words “no answer for …h. Any admin may approve.” must be there.",
+             who_label="Bot · 17:00 in this run"),
+        Step("Krishna", inbox_path(),
+             [Card(S("C", "c_cat")), Card(S("C", "c_item"), new=True)],
+             f"The card says Musa has not answered and any admin may approve. {COUNTS_NOTE}"),
         Step("Krishna", f"Tap {b('✅ Approve')} — without waiting for Musa.",
              [Pop(S("C", "c_kok", kind="popup")), Card(S("C", "c_kok", to="Krishna", text="still pending")),
               Card(S("C", "c_kok", to="Abdul")), Card(S("C", "c_kok", to="Musa"))],
@@ -240,7 +270,7 @@ def parts():
 
     p4 = Part("Note", "👥 Any admin — as before",
               "If Abdul taps 👥 Any admin, nothing new happens: both admins get the ordinary card at once.", [
-        Step("Abdul", f"Tap {b('👥 Any admin')} instead of a name, then {b('✅ Submit for approval')}.",
+        Step("Abdul", f"Tap {b('👥 Any admin')} instead of a name, then {end('✅ Submit for approval')}",
              [Card(S("D", "d_ask")), Card(S("D", "d_submit", to="Abdul")),
               Card(S("D", "d_submit", to="Krishna"), wide=True, also=[S("D", "d_submit", to="Musa")])],
              "No “Ask:” line, no “🙋” line. The receipt says “Sent for approval”."),
@@ -265,16 +295,20 @@ def cover():
    <p>1. After “How was it paid?”, a new screen: <b>“Who should approve it?”</b> Abdul taps one admin, or 👥 Any admin.</p>
    <p>2. Only the admin he picks gets the card first. The other admins still find it in 🛂 Approvals.</p>
    <p>3. If Abdul does not know the amount, he taps <b>⏭ Amount not known</b>. The first admin types it; the second admin checks it.</p>
-   <p>4. If the admin does not answer for 4 hours, the reminders go to every admin.</p></div>
+   <p>4. If the admin does not answer within the wait time (4 hours unless Krishna changed it), the next reminder goes to every admin.</p></div>
   <div class="box"><div class="btitle">Who is who</div>{cast}
-   <p class="small">Customer <b>ABBA</b> owes 120,000. She pays <b>50,000</b> into Zenith. Two admin approvals are
-   needed before her balance moves — this does not change.</p></div>
+   <p class="small">In this guide customer <b>ABBA</b> owes 120,000. She pays <b>50,000</b> into Zenith. Two admin approvals are
+   needed before her balance moves — this does not change.</p>
+   <p class="small"><b>Names, banks, customers and figures on your phone will differ from this guide. The words and buttons must match.</b></p></div>
   <div class="box before"><div class="btitle">Before you test</div>
    <ul>
     <li>Abdul's department must have the tile <b>payment_received</b> (Departments sheet, allowed_activities).</li>
-    <li>There must be <b>two admins besides the person who records the payment</b>. With only one, the bot skips
-    the “Who should approve it?” screen.</li>
-    <li>The bank (here Zenith) must be listed in <b>🏦 Manage Banks</b>.</li>
+    <li>At least <b>two admin ids in the Railway ADMIN_IDS list besides the person who records the payment</b>. An admin
+    made only in the Users sheet does not count. With fewer, the bot skips the “Who should approve it?” screen.</li>
+    <li>Each admin needs a name in the Users sheet (or the chip shows Admin and the last 4 digits of the id), and must
+    have opened the bot once, so the bot can send them cards.</li>
+    <li>The bank must be listed in <b>🏦 Manage Banks</b>.</li>
+    <li>Krishna: read the box <b>For Krishna — prepare before the test</b> on page 2 first.</li>
    </ul></div>
  </div>
  {G.legend_html()}
@@ -286,7 +320,7 @@ LANE = [
     ("Abdul", "Records 50,000 from ABBA · taps 🛂 Musa · submits", {"Musa": "the card: “Abdul asks YOU to approve this.”"}, "Musa"),
     ("Krishna", "Opens 🛂 Approvals (optional)", {"Krishna": "the card with “🙋 Asked: Musa”"}, "Musa (or Krishna)"),
     ("Musa", "Taps ✅ Approve — 1 of 2", {"Abdul": "“Approval 1 of 2”", "Krishna": "full card: “Yours is the second approval.”"}, "Krishna"),
-    ("Krishna", "Taps ✅ Approve — 2 of 2", {"Abdul": "“Approved · 2 of 2”", "Krishna": "“Outstanding as of today: 70,000”"}, "nobody — recorded"),
+    ("Krishna", "Taps ✅ Approve — 2 of 2", {"Abdul": "“Approved · 2 of 2”", "Krishna": "“Outstanding as of today”, 50,000 lower"}, "nobody — recorded"),
 ]
 
 
@@ -313,42 +347,64 @@ def glance():
             f'<div class="lane prc">{"".join(head)}{"".join(rows)}</div>'
             '<div class="lfoot">Read down: each row is one moment. A filled box is the person who acts; an outlined box is '
             'what arrives on that phone. Krishna\'s phone gets nothing in row 1.</div></div>'
-            + whatelse() + '</section>')
+            + owner_box() + '</section>')
 
 
-def whatelse():
+def owner_box():
+    """For the owner only: what to set up before the testers start. Step
+    numbers are §key tokens, filled in after the steps are numbered."""
     return """
-<div class="three glance2">
- <div class="box"><div class="btitle">Part 2 — amount not known</div><p>Abdul taps ⏭ Amount not known. Musa taps ✅ Approve,
- types the amount, taps “✅ Approve with 50,000”. Krishna taps ✅ Approve, checks the figure, taps “✅ Approve 50,000”.</p></div>
- <div class="box"><div class="btitle">Part 3 — Musa does not answer</div><p>The first reminder goes to Musa only.
- After 4 hours the next reminder also goes to Krishna, and Krishna approves without waiting for Musa.</p></div>
- <div class="box"><div class="btitle">Note — 👥 Any admin</div><p>Both admins get the ordinary card at once, as before this change.</p></div>
-</div>"""
+<div class="box owner"><div class="btitle">For Krishna — prepare before the test (owner only)</div>
+<div class="ocols">
+ <div><p><b>1. Real records.</b> Parts 1 and 2 each record a real customer payment (Part 3 too, if Musa gives the second
+ approval at the end). Use a test customer, or a very small amount (for example 10) in place of 50,000. The bot has no
+ button to undo a recorded customer payment: decide before the test how the ledger will be corrected.</p>
+ <p><b>2. Clean-up.</b> At the end, Musa approves or rejects the Part 3 request, and an admin rejects the request from
+ the Note (👥 Any admin) in 🛂 Approvals.</p>
+ <p><b>3. Remind approvers</b> works once per 24 hours for one request (Settings REQUEST_NUDGE_HOURS).</p></div>
+ <div><p><b>4. Part 3 timing.</b> The bot re-sends waiting cards in rounds every <code>APPROVAL_REMINDER_HOURS</code> (6)
+ hours — counted from the bot's last round since it started, not from the request (<code>REMINDER_HOURS_ADMIN</code> wins
+ when that row has a value). A request asked of one admin waits on that admin alone for
+ <code>ASKED_ADMIN_WIDEN_HOURS</code> (4). With these values Part 3 can take up to about 10 hours, and if the first round
+ falls after 4 hours there is no Musa-only reminder (step §c2).</p>
+ <p><b>To finish Part 3 in about 3 hours:</b> set <code>APPROVAL_REMINDER_HOURS</code> = 1 (and
+ <code>REMINDER_HOURS_ADMIN</code> = 1 if that row has a value) and <code>ASKED_ADMIN_WIDEN_HOURS</code> = 2. Set them
+ back after the test. While the reminder is 1, every waiting request younger than 14 days is re-sent each hour.
+ If the reminder value is 0, no reminder comes at all and steps §c2 and §c4 cannot be tested.</p></div>
+</div></div>"""
 
 
 # No · Who · Do this · You should see. “…” quotes are checked against the captures.
-KEYS = ["a1", "a2", "a3", "a5", "a6", "a7", "b1", "b2", "b3", "b4", "b5", "b6", "b7",
+KEYS = ["a0", "a1", "a2", "a3", "a5", "a6", "a7", "b1", "b2", "b3", "b4", "b5", "b6", "b7",
         "c1", "c2", "c3", "c4", "c5", "c6", "d1"]
+INBOX = "📋 More Options → 🛂 Approvals → 💵 Finance → the row from Abdul"
 CHECKS = [
+    ("a0", "Krishna", "Before Abdul starts: type Balance ABBA. Write down the figure.",
+     "ABBA's outstanding balance (here 120,000)."),
     ("a1–a2", "Abdul", "💰 Finance → 💵 Payment Received → 👤 ABBA → type 50000 → 🏦 Zenith",
-     "New screen “Who should approve it?” with 🛂 Krishna, 🛂 Musa, 👥 Any admin — never Abdul."),
-    ("a3", "Abdul", "Tap 🛂 Musa", "“Ask: Musa” and “Musa is asked first.”"),
-    ("a3", "Abdul", "Tap ✅ Submit for approval", "“Sent to Musa for approval”. No balance on Abdul's phone."),
+     "New screen “Who should approve it?”: every admin (here 🛂 Krishna, 🛂 Musa), then 👥 Any admin — never Abdul."),
+    ("a3", "Abdul", "Tap 🛂 Musa, then ✅ Submit for approval",
+     "“Ask: Musa”, then “Sent to Musa for approval”. No balance on Abdul's phone."),
     ("a3", "Musa", "Nothing — wait", "Card with “Abdul asks YOU to approve this.” Krishna's phone: no message."),
-    ("a5", "Krishna", "🛂 Approvals → 💵 Finance → the row", "The card shows “🙋 Asked: Musa” with ✅ Approve."),
+    ("a5", "Krishna", INBOX, "The card shows “🙋 Asked: Musa” with ✅ Approve."),
     ("a6", "Musa", "Tap ✅ Approve", "Abdul: “Approval 1 of 2”. Krishna: “1 of 2 — signed by Musa. Yours is the second approval.”"),
-    ("a7", "Krishna", "Tap ✅ Approve", "Abdul: “Approved · 2 of 2”. Krishna: “Outstanding as of today: 70,000”."),
-    ("b1", "Abdul", "Same door → ⏭ Amount not known → 🏦 Zenith", "“Amount: to be entered by the admin”."),
-    ("b2", "Abdul", "🛂 Musa → ✅ Submit for approval", "“The admin enters the amount.” on the card; “Sent to Musa for approval”."),
+    ("a7", "Krishna", "Tap ✅ Approve. Then type Balance ABBA.",
+     "Abdul: “Approved · 2 of 2”. Krishna: “Outstanding as of today” is 50,000 lower than in row 1."),
+    ("b1–b2", "Abdul", "💰 Finance → 💵 Payment Received → 👤 ABBA → ⏭ Amount not known → 🏦 Zenith → 🛂 Musa → "
+     "✅ Submit for approval",
+     "“Amount: to be entered by the admin” and “The admin enters the amount.”, then “Sent to Musa for approval”."),
     ("b3", "Musa", "Tap ✅ Approve on the card", "Card says “Amount: not entered”. Pop-up “Type the amount first.” and the amount question."),
     ("b4", "Musa", "Type abc, then 50000", "“That is not an amount.” then the check card with “✅ Approve with 50,000”."),
     ("b5", "Musa", "Tap ✅ Approve with 50,000", "“You entered 50,000 and gave approval 1 of 2.” Abdul: “Amount entered by Musa: 50,000”."),
     ("b6–b7", "Krishna", "Tap ✅ Approve, then ✅ Approve 50,000", "Pop-up “Check the amount first.”, then “50,000 from ABBA is recorded.”"),
-    ("c2", "Musa", "Do not answer; wait for the first reminder", "Musa only: “Abdul asked YOU to approve this”. Krishna: nothing."),
-    ("c3", "Abdul", "Tap 🔔 Remind approvers", "“Reminder sent to Musa.” and “You can remind again in 24h.”"),
-    ("c4", "Krishna", "Wait: the next reminder round after 4 hours (17:00 here)", "“no answer for 7h. Any admin may approve.” (the hours can differ)"),
-    ("c6", "Krishna", "🛂 Approvals → the row → ✅ Approve", "Musa gets one line: “has its first admin approval and needs a SECOND”."),
+    ("c1", "Abdul", "Early in the day: 💰 Finance → 💵 Payment Received → 👤 ABBA → type 50000 → 🏦 Zenith → 🛂 Musa → "
+     "✅ Submit for approval", "“Sent to Musa for approval”."),
+    ("c2", "Musa", "Do not answer. Wait for the first reminder round.",
+     "Before the wait time is over: Musa only, “Abdul asked YOU to approve this”. Krishna: nothing."),
+    ("c3", "Abdul", "Before the wait time is over: tap 🔔 Remind approvers", "“Reminder sent to Musa.” and “You can remind again in 24h.”"),
+    ("c4", ("Krishna", "Musa"), "Wait. After the wait time, the next reminder round comes.",
+     "On both phones: “no answer for …h. Any admin may approve.” (the hours can differ)"),
+    ("c5–c6", "Krishna", INBOX + " → ✅ Approve", "Musa gets one line: “has its first admin approval and needs a SECOND”."),
     ("d1", "Abdul", "Tap 👥 Any admin → ✅ Submit for approval", "Both admins get the card at once; no “Asked” line. “Sent for approval”."),
 ]
 
@@ -361,11 +417,13 @@ def checklist(nums):
     rows = []
     for k, (ref, who, do, see) in enumerate(CHECKS):
         step = step_no(ref, nums)
-        rows.append(f'<tr><td class="cn">{k + 1}</td><td class="cs">{html.escape(step)}</td><td>{badge(who)}</td>'
+        whos = " ".join(badge(w) for w in ((who,) if isinstance(who, str) else who))
+        rows.append(f'<tr><td class="cn">{k + 1}</td><td class="cs">{html.escape(step)}</td><td>{whos}</td>'
                     f'<td>{html.escape(do)}</td><td>{html.escape(see)}</td><td class="cb">☐</td></tr>')
     return f"""
 <section class="part"><div class="pband"><span class="pkey">✓</span><span class="ptitle">Test checklist</span></div>
-<div class="pintro">One line per check. “Step” is the step number in this guide. Tick the box when the phone shows it.</div>
+<div class="pintro">One line per check. “Step” is the step number in this guide. Tick the box when the phone shows it.
+<b>Counts, customer names and bank names can be different on your phone. Check the words and buttons named here.</b></div>
 <table class="cklist"><tr><th>No</th><th>Step</th><th>Who</th><th>Do this</th><th>You should see</th><th>OK</th></tr>
 {"".join(rows)}</table>
 <div class="golden"><div class="gbody">If a step does not match: send Krishna a screenshot and the step number.</div>
@@ -458,11 +516,10 @@ EXTRA_CSS = """
 .before ul { margin:0; padding-left:4.5mm; } .before li { margin-bottom:1.6mm; }
 .lane.prc { grid-template-columns: 11mm repeat(3, 1fr) 40mm; }
 .lstack { position:relative; width:100%; display:flex; flex-direction:column; gap:1.4mm; }
-.lane.prc .lc { min-height:20mm; }
-.glance2 { margin-top:5mm; }
-.cklist { width:100%; border-collapse:collapse; font-size:7.8pt; margin-top:1mm; }
+.lane.prc .lc { min-height:15mm; }
+.cklist { width:100%; border-collapse:collapse; font-size:7.4pt; line-height:1.25; margin-top:1mm; }
 .cklist th { background:#0e2a47; color:#fff; text-align:left; padding:1.2mm 2mm; font-size:8pt; }
-.cklist td { border-bottom:1px solid #d5dde5; padding:.45mm 2mm; vertical-align:top; }
+.cklist td { border-bottom:1px solid #d5dde5; padding:.3mm 2mm; vertical-align:top; }
 .cklist .cn { font-weight:800; color:#0e2a47; width:8mm; } .cklist .cs { width:13mm; color:#3d4b59; }
 .cklist .cb { font-size:13pt; color:#1c6b45; width:9mm; text-align:center; }
 .cklist .badge { font-size:8pt; }
@@ -477,6 +534,11 @@ EXTRA_CSS = """
 .flow .then { margin:1mm 0 .6mm; }
 .flow .pintro { margin:1.6mm 0 2mm; }
 .flow .part { margin-top:3mm; }
+.nw { white-space:nowrap; }
+.owner { break-inside:avoid; margin-top:4mm; padding-top:2mm; padding-bottom:2mm; border:2px solid #0e2a47; background:#f4f7fb; }
+.owner .ocols { display:grid; grid-template-columns:1fr 1fr; gap:5mm; }
+.owner p { font-size:8.3pt; line-height:1.35; margin:0 0 1.2mm; }
+.owner code { font-size:7.6pt; }
 """
 
 FOOT = f"black_panther bot (formerly AtFactoryPrice) · Payment Received — ask an admin · {DATE} · page "
@@ -488,12 +550,34 @@ def page(body):
             f"<style>{css}</style></head><body>{body}</body></html>")
 
 
+def fill_steps(text, nums):
+    """Replace each §key token with that step's number."""
+    def sub(m):
+        if m.group(1) not in nums:
+            die(f"the prose names step {m.group(1)!r}, which the guide does not have")
+        return str(nums[m.group(1)])
+    return re.sub(r"§([a-d]\d)", sub, text)
+
+
+def fixed_pdf_dates(pdf):
+    """Chromium stamps the print time into CreationDate / ModDate. Overwrite the
+    digits with the guide's date (same length, so no offset in the file moves):
+    a rebuild with no change then leaves the PDF byte for byte the same."""
+    raw = pdf.read_bytes()
+    out = re.sub(rb"(/(?:CreationDate|ModDate) ?\(D:)\d{14}", rb"\g<1>20261116000000", raw)
+    if out != raw:
+        pdf.write_bytes(out)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--json-dir")
     ap.add_argument("--save-json")
+    ap.add_argument("--out-dir", help="write the HTML and PDF here instead of docs/")
     ap.add_argument("--no-pdf", action="store_true")
     args = ap.parse_args()
+    out_dir = pathlib.Path(args.out_dir) if args.out_dir else DOCS
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     data = run_captures(args.json_dir, args.save_json)
     G.CARDS.update(normalise(data))
@@ -504,34 +588,41 @@ def main():
 
     prts = parts()
     G.number_steps(prts)
-    G.collect_prose(prts)
-    G.PROSE.append(cover())
-    G.PROSE.append(whatelse())
-    G.PROSE.extend(x for row in LANE for x in [row[1], row[3], *row[2].values()])
-    G.PROSE.extend(x for row in CHECKS for x in row[1:])
-    G.check_buttons()
-    G.check_quotes()
-    check_abdul_phone(data, prts)
-    check_facts(data)
     steps = [st for p in prts for st in p.steps]
     if len(steps) != len(KEYS):
         die(f"the storyboard has {len(steps)} steps but KEYS names {len(KEYS)}")
     nums = {k: st.num for k, st in zip(KEYS, steps)}
+    for p in prts:
+        p.intro = fill_steps(p.intro, nums)
+        for st in p.steps:
+            st.do = fill_steps(st.do, nums)
+            st.caption = fill_steps(st.caption or "", nums)
     for ref, *_ in CHECKS:
         for r in ref.split("–"):
             if r not in nums:
                 die(f"the checklist names step {r!r}, which the guide does not have")
 
-    body = [cover(), glance(),
+    G.collect_prose(prts)
+    G.PROSE.append(cover())
+    G.PROSE.append(owner_box())
+    G.PROSE.extend(x for row in LANE for x in [row[1], row[3], *row[2].values()])
+    G.PROSE.extend(x for row in CHECKS for x in row[2:])
+    G.check_buttons()
+    G.check_quotes()
+    check_abdul_phone(data, prts)
+    check_facts(data)
+
+    body = [cover(), fill_steps(glance(), nums),
             '<section class="flow">' + "".join(G.render_part(p) for p in prts) + "</section>",
             checklist(nums)]
     doc = page("".join(body))
-    hp = DOCS / f"{NAME}.html"
+    hp = out_dir / f"{NAME}.html"
     hp.write_text(doc, encoding="utf-8")
     print("wrote", hp)
     if not args.no_pdf:
-        pdf = DOCS / f"{NAME}.pdf"
+        pdf = out_dir / f"{NAME}.pdf"
         G.print_pdf(hp, pdf)
+        fixed_pdf_dates(pdf)
         check_pdf(pdf)
 
 
