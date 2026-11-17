@@ -538,6 +538,15 @@ Spec: `specs/BANK-4_ACCOUNT_CHIPS.md`.
   `Ledger_Entries.bank_account` (L), on the Bank row only. **Never a
   guess:** an account the stored payment mode does not name is left blank
   or at the bank's name. No earlier row is rewritten.
+- **The customer's copy names the bank alone** (owner, the same day, on
+  the invoice printing the account: *"No need for customer copy to show
+  bank account details. Let it be same as before, plain and simple."*).
+  Which of the company's accounts received a payment is an accounting
+  fact: it stays on the Invoices row, the ledger narration, column L, the
+  Transactions row and the staff's cards. The invoice PDF, its web copy
+  and the customer's web ledger print the bank and nothing after it
+  (`bankEntry.publicBank` / `publicMode` / `publicNarration` — the one
+  boundary; a new customer-facing surface prints through it).
 - **A typed registered bank name is a payment into it.** `Zenith` or
   `Paid to Zenith` at Step 3 opens the account chips; `GTBank` alone is
   `Paid to GTBank`. A word typed while the account chips are open that is

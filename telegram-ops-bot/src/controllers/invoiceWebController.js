@@ -76,9 +76,12 @@ function renderHtml(inv) {
   }).join('');
   // The payment row is dated like the PDF's (CUR-2 §4a) and prints in the
   // document's unit (D2: the same factor as every other cell).
+  // BANK-4 — the customer's copy names the bank alone, never the account
+  // (the same function the PDF prints through).
+  const pay = invoiceService.customerCopyPayment(inv);
   const paymentRow = fig.paid > 0 ? `
       <tr class="payment">
-        <td>Payment received ${fmtDate(inv.saleDate || inv.issueDate)}${inv.bank ? ` — ${esc(inv.bank)}` : ''}${inv.paymentMode ? ` (${esc(inv.paymentMode)})` : ''}</td>
+        <td>Payment received ${fmtDate(inv.saleDate || inv.issueDate)}${pay.bank ? ` — ${esc(pay.bank)}` : ''}${pay.mode ? ` (${esc(pay.mode)})` : ''}</td>
         <td class="num"></td><td class="num"></td>
         <td class="num">− ${esc(fig.paidText)}</td>
       </tr>` : '';

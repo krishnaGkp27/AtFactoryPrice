@@ -40,6 +40,7 @@ const usageMeter = require('./usageMeterService');
 const channelGateway = require('./channelGateway');
 const phoneUtil = require('../utils/phone');
 const logger = require('../utils/logger');
+const bankEntry = require('../utils/bankEntry');
 
 const OTP_TTL_MS = 5 * 60 * 1000;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -387,7 +388,10 @@ function _scopeLedger(ledger, customerName) {
   // that may cross the customer trust boundary.
   const withRunning = entries.map((e) => {
     running += (e.debit || 0) - (e.credit || 0);
-    return { date: e.date, narration: e.narration, debit: e.debit, credit: e.credit, running };
+    // BANK-4 (owner, 17-Nov-2026: "No need for customer copy to show bank
+    // account details") — which of the company's accounts a payment
+    // landed in stays on the internal ledger; the customer reads the bank.
+    return { date: e.date, narration: bankEntry.publicNarration(e.narration), debit: e.debit, credit: e.credit, running };
   });
   return {
     entries: withRunning,

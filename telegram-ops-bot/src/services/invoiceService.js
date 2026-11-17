@@ -28,6 +28,7 @@ const logger = require('../utils/logger');
 // no unit, anywhere on the paper. The column headers go through
 // money.saleHeader so a label could only ever be reintroduced in one seam.
 const money = require('../utils/money');
+const bankEntry = require('../utils/bankEntry');
 
 const FONT = path.join(__dirname, '../assets/fonts/DejaVuSans.ttf');
 const FONT_BOLD = path.join(__dirname, '../assets/fonts/DejaVuSans-Bold.ttf');
@@ -61,6 +62,24 @@ function bankFromPaymentMode(paymentMode) {
   const m = /paid to (.+)/i.exec(paymentMode || '');
   if (m) return m[1].trim();
   return '';
+}
+
+/**
+ * BANK-4 (owner, 17-Nov-2026: "No need for customer copy to show bank
+ * account details. Let it be same as before, plain and simple") — what the
+ * CUSTOMER'S copy prints about where a payment went: the bank alone.
+ *
+ * The invoice row keeps the full mode and receiving account
+ * (`Paid to Zenith — AFP`, `Zenith — AFP`) for the record; the PDF and the
+ * web copy both print through this one function, so the two can never
+ * disagree and neither can name the account.
+ * @returns {{bank:string, mode:string}}
+ */
+function customerCopyPayment(invoice) {
+  return {
+    bank: bankEntry.publicBank((invoice && invoice.bank) || ''),
+    mode: bankEntry.publicMode((invoice && invoice.paymentMode) || ''),
+  };
 }
 
 /**
@@ -435,7 +454,9 @@ function paint(doc, invoice) {
   // Payment row (red, with date + receiving account) — owner's sample style.
   // Printed in the document's unit (D2: the same factor as every other cell).
   if (fig.paid > 0) {
-    const payLbl = `${invoice.saleDate} paid${invoice.bank ? ` to ${invoice.bank} account` : (invoice.paymentMode ? ` (${invoice.paymentMode})` : '')}`;
+    // BANK-4 — the bank alone on the customer's copy, never the account.
+    const pay = customerCopyPayment(invoice);
+    const payLbl = `${invoice.saleDate} paid${pay.bank ? ` to ${pay.bank} account` : (pay.mode ? ` (${pay.mode})` : '')}`;
     doc.font(FONT).fontSize(8.5).fillColor(RED).text(payLbl, M, y, { width: colPay - M - 8 });
     doc.font(FONT_BOLD).fontSize(9.5).fillColor(RED).text(fig.paidText, colPay, y, { width: 70, align: 'right' });
     y += 18;
@@ -509,6 +530,7 @@ module.exports = {
   docFigures,     // CUR-2 — the one source of the document's printed numbers
   caption,        // CUR-2 — the staff caption on the delivered PDF
   factorText,     // CUR-2 — the factor at its own precision (`1,250`, `0.0004`); for the wizard's ENTRY card only — never printed after entry
+  customerCopyPayment, // BANK-4 — the bank alone on the customer's copy; shared with the web renderer
   createForSale, buildLines, mintInvoiceNo, renderPdf, deliver, bankFromPaymentMode,
   _internals: { renderText, resolveRateMultiplier, DASH },
 };

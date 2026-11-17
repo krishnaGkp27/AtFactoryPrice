@@ -164,4 +164,62 @@ function destinationOf(method, entries) {
   return stripped ? rest.replace(/\s+/g, ' ').slice(0, 60) : '';
 }
 
-module.exports = { parse, normalize, same, key, group, banksOnly, choiceFor, resolve, destinationOf, words };
+/*
+ * ── The CUSTOMER'S copy ──────────────────────────────────────────────────
+ *
+ * Owner, 17-Nov-2026, on the invoice naming the account ("paid to Zenith —
+ * AFP account"): "No need for customer copy to show bank account details.
+ * Let it be same as before, plain and simple."
+ *
+ * Which of the company's accounts received a payment is an ACCOUNTING fact
+ * (the ledger's narration and `bank_account` cell, the Transactions row,
+ * the admin's cards). Anything a customer reads — the invoice PDF, its web
+ * copy, the customer's web ledger — names the BANK alone, exactly as it did
+ * before BANK-4. These three helpers are that boundary. They read the SHAPE
+ * of the text (`BANK — ACCOUNT`), never the current bank list, so a
+ * document issued today still hides the account after the list changes.
+ */
+
+/** `Zenith — AFP` → `Zenith`; a plain bank is returned as it is. */
+function publicBank(entry) {
+  return parse(entry).bank;
+}
+
+/**
+ * A stored payment mode in the customer's words:
+ *   `Paid to Zenith — AFP` → `Paid to Zenith`
+ *   `Bank — Zenith — AFP`  → `Bank — Zenith`
+ *   `Cash`, `Not yet paid`, `Paid to GTBank`, free text → unchanged
+ */
+function publicMode(mode) {
+  const raw = String(mode == null ? '' : mode).trim();
+  const m = /^(paid\s+to\s+|bank\s*[—:-]\s*)(.+)$/i.exec(raw);
+  if (!m) return raw;
+  return `${m[1]}${publicBank(m[2])}`;
+}
+
+/**
+ * A ledger narration in the customer's words — the two templates
+ * accountingService writes, anchored on the entry type:
+ *   `Payment received from ABBA: NGN 50000 via Bank · Zenith — AFP`
+ *       → `Payment received from ABBA: NGN 50000 via Bank`
+ *   `Sale: … to ABBA | Paid to Zenith — AFP NGN 5000`
+ *       → `Sale: … to ABBA | Paid to Zenith NGN 5000`
+ * Anything else is returned untouched.
+ */
+function publicNarration(narration) {
+  const s = String(narration == null ? '' : narration);
+  if (/^Payment received from/i.test(s)) return s.replace(/(\svia\s+Bank)\s+·\s.*$/i, '$1');
+  if (/^Sale:/i.test(s)) {
+    const cut = s.lastIndexOf(' | ');
+    if (cut === -1) return s;
+    const m = /^(.*?)(\s+[A-Z]{3}\s+[\d.,]+)?$/.exec(s.slice(cut + 3));
+    return `${s.slice(0, cut)} | ${publicMode(m[1])}${m[2] || ''}`;
+  }
+  return s;
+}
+
+module.exports = {
+  parse, normalize, same, key, group, banksOnly, choiceFor, resolve, destinationOf, words,
+  publicBank, publicMode, publicNarration,
+};

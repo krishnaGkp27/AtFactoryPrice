@@ -100,6 +100,33 @@ An account the text does not name is never guessed.
 | 🏦 Manage Banks | unchanged: every entry listed, each removable |
 | Outgoing payments, "Pay from which account?" (PAY-6) | unchanged in code. See §5. |
 
+### The customer's copy (BANK-4b, the same day)
+
+The first build let the account reach the invoice ("paid to Zenith — AFP
+account"). The owner: **"No need for customer copy to show bank account
+details. Let it be same as before, plain and simple."**
+
+The account is an accounting fact. Anything a customer reads names the bank
+alone, exactly as before BANK-4.
+
+| What the customer reads | Prints | Kept for the record |
+|---|---|---|
+| Invoice PDF | `17-Nov-2026 paid to Zenith account` | the Invoices row keeps `Paid to Zenith — AFP` and `Zenith — AFP` |
+| Invoice web copy | `Payment received 17-Nov-2026 — Zenith (Paid to Zenith)` | the same row |
+| The customer's web ledger | `… \| Paid to Zenith NGN 400` and `… via Bank` | the ledger row keeps the full narration and column L |
+
+One boundary does this: `bankEntry.publicBank`, `publicMode` and
+`publicNarration`. The PDF and the web copy both print through
+`invoiceService.customerCopyPayment`, so they cannot disagree. The helpers
+read the shape of the text (`BANK — ACCOUNT`), not the current bank list, so
+an invoice issued today still hides the account after the list changes.
+An invoice issued between the two builds is covered too: the row is read
+back without its account.
+
+Staff screens are unchanged: the approval cards, the wizard, the PDF's
+Telegram caption, 📒 Customer Supplies and the typed `Ledger <name>` still
+show the account.
+
 ## 4. Where it lives
 
 | Piece | File |
@@ -109,6 +136,7 @@ An account the text does not name is never guessed.
 | Payment Received | `src/flows/paymentReceivedFlow.js` (`renderAccount`; `prc:ma:<bank>:<account>`, step `method_account`) |
 | Ledger | `src/services/accountingService.js`, `src/repositories/ledgerRepository.js`, `src/services/schemaMapper.js` |
 | Requester and payee pickers | `src/services/salesFlowService.js`, `src/flows/paymentFlow.js` |
+| The customer's copy | `src/utils/bankEntry.js` (`publicBank`, `publicMode`, `publicNarration`), `src/services/invoiceService.js` (`customerCopyPayment`), `src/controllers/invoiceWebController.js`, `src/services/extLedgerService.js` |
 
 No new Settings key. No new action code. No change to who approves.
 
@@ -141,9 +169,8 @@ No new Settings key. No new action code. No change to who approves.
    2` → the other account → submit. The approval card reads `Paid by: Bank
    — Zenith — <abbr>`.
 5. 📦 Supply Request, payment step: Zenith is one chip.
-6. Open the sale's invoice. The payment line names the account (`paid to
-   Zenith — <abbr> account`). Say if the customer copy should show the bank
-   alone.
+6. Open the sale's invoice link and its PDF. The payment line reads `paid
+   to Zenith account`. The abbreviation appears nowhere on either.
 
 ## 7. Not done
 
