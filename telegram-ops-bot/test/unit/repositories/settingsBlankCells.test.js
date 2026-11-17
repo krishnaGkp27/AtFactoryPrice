@@ -66,6 +66,7 @@ const IN_DEFAULTS = {
   REQUEST_NUDGE_HOURS: 'number',
   APPROVAL_TWIN_GUARD: 'number',
   APPROVAL_DOUBLE_TAP_SECONDS: 'number',
+  TYPED_CUSTOMER_LINE: 'number',           // CUS-4 — default 1 (on); an empty cell is still on
   ASKED_ADMIN_WIDEN_HOURS: 'number',       // PRC-2
   AI_TEXT_PARSER: 'number',                // default 0; `reads` is a filled cell
   PAYMENT_FINANCE_REMINDER_HOURS: 'number',

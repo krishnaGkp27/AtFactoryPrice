@@ -208,7 +208,10 @@ function localIntent(raw) {
     case 'receive': return intent('add');
     case 'add': {
       if (/^(stock|bales?|goods|container)\b/i.test(restLc)) return intent('add');
-      if (/^(contact|customer|person|marketer|prospect)\b/i.test(restLc)) return tile('➕ Add Contact', 'act:add_customer', '➕ Adding a person is tap-only — Add Contact asks the kind first.');
+      // CUS-4 — a customer WITH a phone number never reaches here: the typed
+      // customer line is read first. Without one, the door itself.
+      if (/^customer\b/i.test(restLc)) return tile('➕ Add Contact', 'act:add_customer', '➕ To add a customer by typing, send the name, phone number and town:\n  Customer Amib Ltd, 0806 256 2752, Kano\nOr tap below for the full form.');
+      if (/^(contact|person|marketer|prospect)\b/i.test(restLc)) return tile('➕ Add Contact', 'act:add_customer', '➕ Adding a person is tap-only — Add Contact asks the kind first.');
       if (/^(user|employee|staff)\b/i.test(restLc)) return tile('➕ Add Employee', 'act:add_user', '➕ Adding an employee is tap-only.');
       return hint('receive', 'Receive opens Add Stock; "Add contact" or "Add employee" open their doors.');
     }
@@ -274,6 +277,7 @@ function chipsCardText({ blockedWrite = null } = {}) {
     '  • Price 9006 black 1500 (admins)',
     '  • Receive · Order · Report sales (admins)',
     '  • Task · Tasks · Orders · Delivered ORD-…',
+    '  • Customer Amib Ltd, 0806 256 2752, Kano',
     '  • Contacts · Banks',
     '  • Help — this card',
     '',

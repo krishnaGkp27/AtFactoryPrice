@@ -132,6 +132,12 @@ const DEFAULTS = {
   // alone, with no signature, before reminders and 🔔 Remind approvers go
   // to every admin. 0 = never widen by time (the first signature still does).
   ASKED_ADMIN_WIDEN_HOURS: 4,
+  // CUS-4 (owner's Go, 17-Nov-2026) — 1 = a typed customer line (name,
+  // phone number and town, with or without `Customer` in front) opens the
+  // ➕ Add Contact confirm card filled in; 0 = it is not read, as before
+  // 17-Nov-2026. Nothing is saved by the line either way: Submit and the
+  // admin's approval are unchanged.
+  TYPED_CUSTOMER_LINE: 1,
   // TXT-1 (owner, 01-Nov-2026) — may the AI read a typed sentence for the
   // sheet? 0 = never: the three local script lines (sell / return /
   // transfer) or the chips card, OpenAI is not called; `reads` = the AI

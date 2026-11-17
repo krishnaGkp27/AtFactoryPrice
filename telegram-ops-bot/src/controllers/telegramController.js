@@ -1922,6 +1922,61 @@ async function startAddCustomerFlow(bot, chatId, userId, messageId = null) {
   await showAddPersonTypePicker(bot, chatId, userId);
 }
 
+/**
+ * CUS-4 (owner's Go, 17-Nov-2026) — a typed customer line opens THIS door
+ * already filled in, at its confirm card. Owner, on three typed lines
+ * answered by the chips card: "My office employees aren't able to add
+ * customer by direct typing."
+ *
+ * It is a shortcut INTO the one door (§12b), never a second one: the same
+ * session, the same confirm card, the same Submit, the same `add_contact`
+ * request and admin triage. The two protections the 29-Jul typo cleanup
+ * put on customer creation still stand in front of it — the Settings
+ * freeze and the name / alias collision check — and nothing is written
+ * until the employee taps Submit and an admin approves.
+ *
+ * The kind is Customer (that is what the line is for; the admin's chips can
+ * still re-route it). Category, credit limit and payment terms are left to
+ * the door's defaults at submit (Retail · 0 · COD); ✏️ Change details walks
+ * the full form instead.
+ *
+ * @param {{name:string, phone:string, address:string, otherPhones:string[], form:string}} parsed
+ * @returns {Promise<boolean>} true = the message was answered here
+ */
+async function startAddCustomerFromLine(bot, chatId, userId, parsed) {
+  const settings = await settingsRepo.getAll().catch(() => ({}));
+  if (Number(settings.TYPED_CUSTOMER_LINE ?? 1) === 0) return false; // switched off: as before
+  if (Number(settings.CUSTOMER_CREATION_ENABLED ?? 1) !== 1) {
+    await bot.sendMessage(chatId, '🔒 Adding customers is paused for now (list cleanup in progress). Nothing was opened.');
+    return true;
+  }
+  try {
+    const free = await require('../services/customerEntity').assertNameFree(parsed.name);
+    if (!free.ok) {
+      const ex = free.existing || {};
+      const as = ex.name && ex.name !== parsed.name ? ` as ${ex.name}` : '';
+      await bot.sendMessage(chatId,
+        `⚠️ ${parsed.name} is already on the customer list${as}${ex.customer_id ? ` (${ex.customer_id})` : ''}.\nNothing was opened. Pick them from the customer list instead.`);
+      return true;
+    }
+  } catch (e) {
+    logger.warn(`startAddCustomerFromLine: name check failed (allowing): ${e.message}`);
+  }
+  usageTracker.track({ userId, surface: 'nlp', feature: 'add_contact', event: 'nlp_intent', meta: { local: true, form: parsed.form } });
+  sessionStore.set(userId, {
+    type: 'add_customer_flow', step: 'notes', requestedBy: userId, flowMessageId: null,
+    personType: 'customer', name: parsed.name, phone: parsed.phone,
+    ...(parsed.address ? { address: parsed.address } : {}),
+    // A second number on the line is kept, never dropped.
+    ...(parsed.otherPhones && parsed.otherPhones.length ? { notes: `Other phone: ${parsed.otherPhones.join(', ')}` } : {}),
+    fromTypedLine: true,
+  });
+  // The store follows the door's own rule (CRM-R1): a one-store employee's
+  // store is stamped, anyone else picks or places later — then the confirm card.
+  await showAddCustomerStoreStepOrConfirm(bot, chatId, userId);
+  return true;
+}
+
 /** CON-1 — step 1 of the one door: what kind of person is this? */
 async function showAddPersonTypePicker(bot, chatId, userId) {
   const rows = [];
@@ -2115,12 +2170,15 @@ async function showAddCustomerStoreStepOrConfirm(bot, chatId, userId) {
   await _acRender(bot, chatId, userId, 'Which store does this customer belong to? _(provisional until their first sale)_', rows);
 }
 async function showAddCustomerConfirmation(bot, chatId, userId) {
+  // CUS-4 — a card filled from a typed line never walked the form, so its
+  // way back is the whole form from the name, not the notes step.
+  const typedLine = !!(sessionStore.get(userId) || {}).fromTypedLine;
   const rows = [
     [
       { text: '✅ Submit for Approval', callback_data: 'acconf:1' },
       { text: '❌ Cancel', callback_data: 'accanc:0' },
     ],
-    [{ text: '⬅️ Back', callback_data: 'acb:notes' }],
+    [typedLine ? { text: '✏️ Change details', callback_data: 'acb:name' } : { text: '⬅️ Back', callback_data: 'acb:notes' }],
   ];
   await _acRender(bot, chatId, userId, '*Confirm and submit for admin approval?*', rows);
 }
@@ -4331,6 +4389,20 @@ async function handleMessage(bot, msg) {
     const { looksLikeTransferLine } = require('../utils/thanListParser');
     if (looksLikeTransferLine(text)) {
       const shown = await require('../flows/transferFlow').startFromText(bot, chatId, userId, text);
+      if (shown) return;
+    }
+  }
+
+  // CUS-4 (owner's Go, 17-Nov-2026) — a typed customer line: the name, the
+  // phone number and the town on separate lines or between commas, with or
+  // without `Customer` in front. Read LOCALLY; the phone number is the
+  // signal, so a message without one is never taken for a person. It only
+  // opens the ➕ Add Contact confirm card filled in — Submit and the
+  // admin's approval are unchanged.
+  {
+    const parsedCustomer = require('../utils/customerLineParser').parseCustomerLine(text);
+    if (parsedCustomer) {
+      const shown = await startAddCustomerFromLine(bot, chatId, userId, parsedCustomer);
       if (shown) return;
     }
   }
@@ -8259,6 +8331,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         else if (f === 'notes') delete session.notes;
       }
     }
+    if (target === 'type' || target === 'name') delete session.fromTypedLine; // CUS-4 — now an ordinary form
     session.step = target;
     sessionStore.set(uid, session);
 

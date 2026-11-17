@@ -427,6 +427,17 @@ inventory sheet. but you can add in different sheet."*
 
 - Customer creation is tap-only through CRM — no free-typed customer
   names anywhere.
+  **Amended 17-Nov-2026 (owner, CUS-4):** *"My office employees aren't able
+  to add customer by direct typing. Can you propose an immediate fix."* —
+  then *"Go with all your recommendations."* A typed customer line (name,
+  phone number and town, with or without `Customer` in front) is read
+  locally and opens the ➕ Add Contact confirm card filled in. What this
+  rule protected is kept: the line saves nothing by itself; a person
+  confirms with Submit; the Settings freeze and the name / alias collision
+  check stand in front of it; an admin approves. It is a shortcut into the
+  one door (§12b), never a second door. The phone number is the signal: no
+  phone number, no customer. A sale flow still never carries a typed
+  customer name. Valve: Settings `TYPED_CUSTOMER_LINE = 0`.
 - Sale flows do not carry customer/rate/payment; the admin assigns them at
   approval time.
 

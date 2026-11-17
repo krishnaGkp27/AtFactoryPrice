@@ -87,10 +87,12 @@ test('the chips card marks EVERY admin-only line, and no open line', () => {
   const marked = lines.filter((l) => /\(admins\)$/.test(l)).join(' · ');
   const open = lines.filter((l) => !/\(admins\)$/.test(l)).join(' · ');
   for (const word of ['Balance', 'Ledger', 'Price', 'Receive', 'Order ', 'Report sales']) assert.ok(marked.includes(word), `${word} is admin-only`);
-  for (const word of ['Bale 1112', 'Sell', 'Return', 'Transfer', 'Stock', 'Task ', 'Tasks', 'Orders', 'Delivered', 'Contacts', 'Banks', 'Help']) {
+  for (const word of ['Bale 1112', 'Sell', 'Return', 'Transfer', 'Stock', 'Task ', 'Tasks', 'Orders', 'Delivered', 'Customer Amib', 'Contacts', 'Banks', 'Help']) {
     assert.ok(open.includes(word), `${word} is open to an employee`);
     assert.ok(!marked.includes(word), `${word} must not sit on an (admins) line`);
   }
-  assert.equal(lines.length, 11, 'the card stays compact — one line more than before');
+  // CUS-4 (owner's Go, 17-Nov-2026) — the typed customer line is listed, so
+  // staff can find it: twelve lines, still none wider than before.
+  assert.equal(lines.length, 12, 'the card stays compact — the customer line is the one addition');
   assert.ok(Math.max(...lines.map((l) => l.length)) <= 50, 'no line wider than the widest one before');
 });
