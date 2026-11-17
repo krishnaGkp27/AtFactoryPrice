@@ -40,7 +40,10 @@ async function getBankList() {
  * label it "⏳ Not yet paid (credit)"; what they STORE is this value.
  */
 async function getPaymentOptions() {
-  const banks = await getBankList();
+  // BANK-4 (owner's go, 17-Nov-2026) — the REQUESTER names the bank only,
+  // each bank once: which of the company's accounts under it received the
+  // money is the admin's answer at approval (the wizard's account chips).
+  const banks = require('../utils/bankEntry').banksOnly(await getBankList());
   return ['Cash', 'Not yet paid', ...banks];
 }
 

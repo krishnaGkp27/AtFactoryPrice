@@ -117,15 +117,21 @@ async function recordPaymentReceived({ customer, customerId, amount, method, use
   // of the customer's statement it lands on. The UTC day put every entry
   // made after Lagos midnight onto the previous day, permanently.
   const date = todayInLagos();
-  const cashOrBank = paymentAccountFor(method, await registeredBanks());
+  const banks = await registeredBanks();
+  const cashOrBank = paymentAccountFor(method, banks);
+  // BANK-4 (owner, 17-Nov-2026: "capture the payment in particular account
+  // for accounting") — WHICH bank account, read from the stored mode. The
+  // account code stays 1002 and the ledger name `Bank`, so every existing
+  // total still adds up; the account rides the narration and column L.
+  const bankAccount = cashOrBank === 'Bank' ? bankEntry.destinationOf(method, banks) : '';
   // A Bank payment must never fall back to the Cash code (1001).
   const debitCode = await getAccountCode(cashOrBank) || (cashOrBank === 'Bank' ? '1002' : '1001');
   const creditCode = await getAccountCode('Customer Receivable') || '1100';
-  const narration = `Payment received from ${customer || 'unknown'}: ${CURRENCY} ${amount} via ${cashOrBank}`;
+  const narration = `Payment received from ${customer || 'unknown'}: ${CURRENCY} ${amount} via ${cashOrBank}${bankAccount ? ` · ${bankAccount}` : ''}`;
   // CUS-2 — payments stamp customer_id like sales do, so the customer
   // ledger scopes by id instead of grepping narrations.
   await ledgerRepo.appendPair(
-    { entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: debitCode, ledger_name: cashOrBank, debit: amount, narration, created_by: userId || '', customer_id: customerId || '' },
+    { entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: debitCode, ledger_name: cashOrBank, debit: amount, narration, created_by: userId || '', customer_id: customerId || '', bank_account: bankAccount },
     { entry_id: idGen.ledgerEntry(), txn_id: txnId || '', date, account_code: creditCode, ledger_name: 'Customer Receivable', credit: amount, narration, created_by: userId || '', customer_id: customerId || '' },
   );
 }

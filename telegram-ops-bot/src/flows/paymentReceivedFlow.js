@@ -11,7 +11,9 @@
  *
  *   1. who paid     tap a customer (A–Z, eight a page) or type part of a name
  *   2. how much     type the amount
- *   3. paid how     💵 Cash · 🏦 one chip per bank in Settings BANK_LIST
+ *   3. paid how     💵 Cash · 🏦 one chip per bank in Settings BANK_LIST;
+ *                   a bank with two or more accounts under it (BANK-4,
+ *                   `Zenith — AFP`, `Zenith — BP`) then asks which account
  *   4. confirm      ✅ Submit for approval
  *
  * It raises the SAME `record_payment` request the typed line raised — same
@@ -35,7 +37,7 @@
  *                    giving the FIRST approval types it (the admin amount
  *                    step below); the second admin's approval checks it.
  *
- * Callback namespace `prc:` — pg:<n> · c:<i> · m:<i> · noamt · ad:<i>|any ·
+ * Callback namespace `prc:` — pg:<n> · c:<i> · m:<i> · ma:<bank>:<account> (BANK-4) · noamt · ad:<i>|any ·
  * submit · back · cancel · noop; and the admin's amount step, SESSION-FREE
  * (re-checked on every tap): ay:<requestId>:<amount> ✅ Approve with ·
  * ae:<requestId> ✏️ Change amount / ✏️ Type the amount · ax:<requestId>
@@ -58,6 +60,7 @@ const config = require('../config');
 const askedApprover = require('../services/askedApprover');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const logger = require('../utils/logger');
+const bankEntry = require('../utils/bankEntry');
 
 const SESSION_TYPE = 'payment_received_flow';
 const NS = 'prc';
@@ -121,7 +124,7 @@ function parseAmount(text) {
 async function bankList() {
   try {
     const all = (await settingsRepository.getAll()) || {};
-    return String(all.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean).slice(0, 12);
+    return String(all.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean).slice(0, 60);
   } catch (_) { return []; }
 }
 
@@ -198,15 +201,40 @@ function amountLine(session) {
 async function renderMethod(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session || !session.customer || !(session.amount || session.noAmount)) return;
-  const banks = await bankList();
+  // BANK-4 (owner, 17-Nov-2026) — ONE chip per bank, twelve banks at most.
+  // `_methods[i]` is what chip i stores: a string, or `{ ask: <group> }`
+  // for a bank that holds two or more accounts (the next screen asks which).
+  const groups = bankEntry.group(await bankList()).slice(0, 12);
   session.step = 'method';
-  session._methods = ['Cash', ...banks.map((b) => `Bank — ${b}`)];
+  session._groups = groups;
+  session._methods = ['Cash', ...groups.map((g, i) => {
+    const c = bankEntry.choiceFor(g);
+    return c.ask ? { ask: i } : `Bank — ${c.dest}`;
+  })];
   sessionStore.set(userId, session);
   const rows = [[{ text: '💵 Cash', callback_data: `${NS}:m:0` }]];
-  banks.forEach((b, i) => rows.push([{ text: `🏦 ${b}`.slice(0, 60), callback_data: `${NS}:m:${i + 1}` }]));
+  groups.forEach((g, i) => {
+    const c = bankEntry.choiceFor(g);
+    const label = c.ask ? `🏦 ${g.bank} ▾ ${g.accounts.length}` : `🏦 ${c.dest}`;
+    rows.push([{ text: label.slice(0, 60), callback_data: `${NS}:m:${i + 1}` }]);
+  });
   rows.push([{ text: '⬅ Back', callback_data: `${NS}:back` }, ...cancelRow()]);
   await render(bot, chatId, userId,
     `${TITLE}\n\nCustomer: ${bold(session.customer.name)}\n${amountLine(session)}\n\nHow was it paid?`, rows);
+}
+
+/** BANK-4 — which ACCOUNT of the bank just tapped. Nothing is stored until one is chosen. */
+async function renderAccount(bot, chatId, userId, groupIndex) {
+  const session = sessionStore.get(userId);
+  const g = session && (session._groups || [])[groupIndex];
+  if (!g || g.accounts.length < 2) { await renderMethod(bot, chatId, userId); return; }
+  session.step = 'method_account';
+  session._bankPick = groupIndex;
+  sessionStore.set(userId, session);
+  const rows = g.accounts.map((a, j) => [{ text: `🏦 ${a.account}`.slice(0, 60), callback_data: `${NS}:ma:${groupIndex}:${j}` }]);
+  rows.push([{ text: '⬅ Back', callback_data: `${NS}:back` }, ...cancelRow()]);
+  await render(bot, chatId, userId,
+    `${TITLE}\n\nCustomer: ${bold(session.customer.name)}\n${amountLine(session)}\n\n🏦 ${mdEscape(g.bank)} · which account?`, rows);
 }
 
 /**
@@ -902,7 +930,18 @@ async function handleCallback(bot, query) {
   if (rest.startsWith('m:') && session.step === 'method') {
     const method = (session._methods || [])[parseInt(rest.slice(2), 10)];
     if (!method) { await renderMethod(bot, chatId, userId); return true; }
+    // BANK-4 — a bank that holds accounts asks which one before anything is stored.
+    if (typeof method !== 'string') { await renderAccount(bot, chatId, userId, method.ask); return true; }
     session.method = method; session.requestId = null; sessionStore.set(userId, session);
+    await renderApprover(bot, chatId, userId);
+    return true;
+  }
+  if (rest.startsWith('ma:') && session.step === 'method_account') {
+    const [gi, ai] = rest.slice(3).split(':').map((n) => parseInt(n, 10));
+    const g = (session._groups || [])[gi];
+    const acc = g && g.accounts[ai];
+    if (!acc) { await renderMethod(bot, chatId, userId); return true; }
+    session.method = `Bank — ${acc.entry}`; session.requestId = null; sessionStore.set(userId, session);
     await renderApprover(bot, chatId, userId);
     return true;
   }
@@ -925,6 +964,7 @@ async function handleCallback(bot, query) {
       return true;
     }
     if (session.step === 'approver') { await renderMethod(bot, chatId, userId); return true; }
+    if (session.step === 'method_account') { await renderMethod(bot, chatId, userId); return true; }
     if (session.step === 'method') { await renderAmount(bot, chatId, userId); return true; }
     session.customer = null; sessionStore.set(userId, session);
     await renderPick(bot, chatId, userId);

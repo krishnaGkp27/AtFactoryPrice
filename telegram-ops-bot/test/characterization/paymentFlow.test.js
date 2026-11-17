@@ -209,6 +209,30 @@ test('PAY-1: the account number is typed TWICE, and a mismatch starts it over', 
   assert.match(lastText(bot), /Which bank/);
 });
 
+test('BANK-4: the payee-bank picker lists each bank ONCE — a company account under a bank is never a payee bank', async () => {
+  reset();
+  const realGetAll = settingsRepository.getAll;
+  settingsRepository.getAll = async () => ({ BANK_LIST: 'GTBank,Zenith,Zenith — AFP,Zenith — BP,Access' });
+  try {
+    const bot = createFakeBot();
+    await controller.handleCallbackQuery(bot, cb('act:payments', ABDUL));
+    await controller.handleCallbackQuery(bot, cb('pay:start:reg', ABDUL));
+    await controller.handleMessage(bot, msg(ABDUL, '0123456789'));
+    await controller.handleMessage(bot, msg(ABDUL, '0123456789'));
+    assert.match(lastText(bot), /Which bank/);
+    const kb = bot.calls.filter((c) => c.args && c.args.opts && c.args.opts.reply_markup && c.args.opts.reply_markup.inline_keyboard)
+      .at(-1).args.opts.reply_markup.inline_keyboard.flat();
+    assert.deepEqual(kb.filter((b) => b.callback_data.startsWith('pay:bank:')).map((b) => `${b.text}|${b.callback_data}`),
+      ['🏛 GTBank|pay:bank:0', '🏛 Zenith|pay:bank:1', '🏛 Access|pay:bank:2']);
+    await controller.handleCallbackQuery(bot, cb('pay:bank:1', ABDUL));
+    assert.match(lastText(bot), /Register this account\?/);
+    assert.equal(sessionStore.get(ABDUL).reg.bank, 'Zenith');
+  } finally {
+    settingsRepository.getAll = realGetAll;
+    sessionStore.clear(ABDUL);
+  }
+});
+
 test('PAY-1: a registration queues for dual admin and writes nothing live', async () => {
   reset();
   const bot = createFakeBot();

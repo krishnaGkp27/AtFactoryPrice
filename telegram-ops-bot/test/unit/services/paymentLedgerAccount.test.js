@@ -126,7 +126,49 @@ test('recordPaymentReceived: the R-9BF6 shape — `Paid to Zenith` 3,750 is debi
   assert.deepEqual([credit.ledger_name, credit.account_code, credit.credit], ['Customer Receivable', '1100', 3750]);
   assert.equal(debit.txn_id, 'R-9BF6-PAY');
   assert.equal(debit.customer_id, 'CUST-9');
-  assert.match(debit.narration, /^Payment received from Ayubal Ansari: NGN 3750 via Bank$/);
+  // BANK-4 — the narration and column L name the bank the mode carries.
+  assert.equal(debit.narration, 'Payment received from Ayubal Ansari: NGN 3750 via Bank · Zenith');
+  assert.equal(debit.bank_account, 'Zenith');
+  assert.ok(!credit.bank_account, 'only the Bank row carries it');
+});
+
+test('BANK-4: the account chip `Paid to Zenith — AFP` is booked to Bank 1002 AND names the account — narration and column L, on the Bank row only', async () => {
+  settingsRepository.getAll = async () => ({ BANK_LIST: 'Zenith,Zenith — AFP,Zenith — BP,GTB' });
+  await accountingService.recordPaymentReceived({ customer: 'ABBA', customerId: 'CUST-1', amount: 50000, method: 'Paid to Zenith — AFP', userId: '777', txnId: 'R-1-PAY' });
+  const [debit, credit] = appended;
+  assert.deepEqual([debit.ledger_name, debit.account_code, debit.debit], ['Bank', '1002', 50000], 'the code and the ledger name do not change');
+  assert.equal(debit.narration, 'Payment received from ABBA: NGN 50000 via Bank · Zenith — AFP');
+  assert.equal(debit.bank_account, 'Zenith — AFP');
+  assert.deepEqual([credit.ledger_name, credit.account_code, credit.credit], ['Customer Receivable', '1100', 50000]);
+  assert.equal(credit.narration, debit.narration, 'the pair shares one narration');
+  assert.ok(!credit.bank_account, 'the receivable row carries no bank account');
+
+  // The Payment Received door stores `Bank — <entry>`: same account, same cell.
+  appended = [];
+  await accountingService.recordPaymentReceived({ customer: 'ABBA', amount: 100, method: 'Bank — Zenith — BP' });
+  assert.equal(appended[0].bank_account, 'Zenith — BP');
+  assert.match(appended[0].narration, /via Bank · Zenith — BP$/);
+});
+
+test('BANK-4: Cash names no bank account; a bank mode that names no bank leaves the cell blank — never a guess', async () => {
+  await accountingService.recordPaymentReceived({ customer: 'ABBA', amount: 100, method: 'Cash' });
+  assert.equal(appended[0].narration, 'Payment received from ABBA: NGN 100 via Cash');
+  assert.ok(!appended[0].bank_account);
+
+  appended = [];
+  await accountingService.recordPaymentReceived({ customer: 'ABBA', amount: 100, method: 'bank transfer' });
+  assert.equal(appended[0].ledger_name, 'Bank');
+  assert.equal(appended[0].narration, 'Payment received from ABBA: NGN 100 via Bank');
+  assert.ok(!appended[0].bank_account);
+});
+
+test('BANK-4: the narration still names the customer for the statement readers (CUS-2 templates untouched)', async () => {
+  settingsRepository.getAll = async () => ({ BANK_LIST: 'Zenith — AFP,Zenith — BP' });
+  await accountingService.recordPaymentReceived({ customer: 'Alhaji Musa', amount: 100, method: 'Paid to Zenith — AFP' });
+  const n = appended[0].narration;
+  assert.match(n, /^Payment received from Alhaji Musa: /);
+  assert.equal(/^Payment received from\s+(.+?):/i.exec(n)[1], 'Alhaji Musa', 'the customer extraction the ledgers use');
+  assert.ok(!/ to /.test(n.slice(n.indexOf(' via '))), 'the suffix adds no " to <name>" fragment');
 });
 
 test('recordPaymentReceived: each bank chip on BANK_LIST reaches Bank; Cash reaches Cash (1001)', async () => {

@@ -513,6 +513,36 @@ everywhere in the business rules.").**
   check already persisted — **never a second OCR read**. Spec:
   `specs/VRF-4_BILL_CHECK_NAMES_THE_BALES.md`.
 
+## 9c · A payment into a bank names its account
+
+**Locked 17-Nov-2026 (owner: "I have 2 accounts in zenith bank whose
+abbreviation needs to be used to capture the payment in particular account
+for accounting"; on the proposal: "Go with all your recommendations").**
+Spec: `specs/BANK-4_ACCOUNT_CHIPS.md`.
+
+- **One chip per bank; the account is the second tap.** A bank with two or
+  more accounts registered under it (🏦 Manage Banks, `Zenith — AFP`,
+  `Zenith — BP`) asks which account before anything is stored. **A bank
+  that holds accounts is never saved without one** — there is no "account
+  not known" choice. One account under a bank is stamped without asking
+  (the one-option rule, §2); a bank with none is the bank, as before.
+- **The requester names the bank; the admin names the account.** The
+  supply request's payment chip lists each bank once. The account is the
+  admin's answer at approval (wizard Step 3) and on 💵 Payment Received.
+- **A payee's bank is a bank.** The Register-account picker lists each
+  bank once; one of the company's own accounts is never offered as a
+  payee's bank.
+- **Accounting keeps one Bank code.** A received bank payment stays on
+  code 1002, ledger name `Bank`. The account rides the narration
+  (`… via Bank · Zenith — AFP`) and the one trailing column
+  `Ledger_Entries.bank_account` (L), on the Bank row only. **Never a
+  guess:** an account the stored payment mode does not name is left blank
+  or at the bank's name. No earlier row is rewritten.
+- **A typed registered bank name is a payment into it.** `Zenith` or
+  `Paid to Zenith` at Step 3 opens the account chips; `GTBank` alone is
+  `Paid to GTBank`. A word typed while the account chips are open that is
+  not one of the accounts is refused — the sale is not sealed under it.
+
 ## 6e · Places have a city and a kind
 
 **Locked 14-Aug-2026 (LOC-1).**

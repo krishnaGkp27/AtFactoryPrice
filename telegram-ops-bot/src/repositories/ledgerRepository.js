@@ -22,6 +22,9 @@ function parse(r) {
     created_by: (r[8] || '').toString().trim(),
     created_at: (r[9] || '').toString().trim(),
     customer_id: (r[10] || '').toString().trim(),
+    // BANK-4 — column L: the bank account a received payment landed in
+    // (`Zenith — AFP`), on the Bank debit row only. Blank on every other row.
+    bank_account: (r[11] || '').toString().trim(),
   };
 }
 
@@ -29,7 +32,8 @@ async function getAll() {
   // CUS-2 — K holds customer_id (written by append/appendPair since Phase C);
   // the old 'A2:J' read truncated it to '' on every row, so the stamp was
   // written but unreadable.
-  const rows = await sheets.readRange(SHEET, 'A2:K');
+  // BANK-4 — L holds bank_account (the one trailing column after customer_id).
+  const rows = await sheets.readRange(SHEET, 'A2:L');
   return rows.map(parse).filter((r) => r.entry_id);
 }
 
@@ -38,7 +42,7 @@ async function append(entry) {
     entry.entry_id, entry.txn_id, entry.date, entry.account_code, entry.ledger_name,
     entry.debit || 0, entry.credit || 0, entry.narration || '',
     entry.created_by || '', entry.created_at || new Date().toISOString(),
-    entry.customer_id || '',
+    entry.customer_id || '', entry.bank_account || '',
   ]]);
 }
 
@@ -46,10 +50,10 @@ async function appendPair(debitEntry, creditEntry) {
   await sheets.appendRows(SHEET, [
     [debitEntry.entry_id, debitEntry.txn_id, debitEntry.date, debitEntry.account_code, debitEntry.ledger_name,
      debitEntry.debit || 0, 0, debitEntry.narration || '', debitEntry.created_by || '', debitEntry.created_at || new Date().toISOString(),
-     debitEntry.customer_id || ''],
+     debitEntry.customer_id || '', debitEntry.bank_account || ''],
     [creditEntry.entry_id, creditEntry.txn_id, creditEntry.date, creditEntry.account_code, creditEntry.ledger_name,
      0, creditEntry.credit || 0, creditEntry.narration || '', creditEntry.created_by || '', creditEntry.created_at || new Date().toISOString(),
-     creditEntry.customer_id || ''],
+     creditEntry.customer_id || '', creditEntry.bank_account || ''],
   ]);
 }
 

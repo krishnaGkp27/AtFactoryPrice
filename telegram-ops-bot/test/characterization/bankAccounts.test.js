@@ -73,7 +73,7 @@ test('skip at step 2 registers a bare bank; duplicate combined entries are refus
   sessionStore.clear('777');
 });
 
-test('sale-approval payment step: one chip per ACCOUNT + the Manage shortcut', async () => {
+test('sale-approval payment step: one chip per BANK (BANK-4) + the Manage shortcut', async () => {
   const approvalEvents = require(path.join(SRC, 'events/approvalEvents'));
   settings = { BANK_LIST: 'ZENITH — AFP LTD,ZENITH — MAMA KAFAYA ENT,GTB' };
   const bot = createFakeBot();
@@ -82,8 +82,12 @@ test('sale-approval payment step: one chip per ACCOUNT + the Manage shortcut', a
   const kb = bot.calls.filter((c) => c.method === 'sendMessage').pop().args.opts.reply_markup.inline_keyboard.flat();
   // APC-1 — chips carry their request: enr:q:<requestId>:pay:b:<i>.
   const bankChips = kb.filter((b) => b.text.startsWith('🏦') && b.callback_data.startsWith('enr:q:R-B1:pay:b:'));
-  assert.deepEqual(bankChips.map((b) => b.text), ['🏦 ZENITH — AFP LTD', '🏦 ZENITH — MAMA KAFAYA ENT', '🏦 GTB'],
-    'both same-bank accounts are separate chips');
+  // Until BANK-4 (17-Nov-2026) the two same-bank accounts were two flat
+  // chips; the owner asked for the bank first, then its accounts.
+  assert.deepEqual(bankChips.map((b) => b.text), ['🏦 ZENITH ▾ 2', '🏦 GTB'],
+    'two accounts at one bank are ONE bank chip that says how many');
   assert.ok(kb.some((b) => b.callback_data === 'act:manage_banks'), 'Manage accounts shortcut present');
-  assert.deepEqual(state.banks.length, 3, 'state carries the full entries for the pick handler');
+  assert.deepEqual(state.banks.length, 3, 'state carries the full entries');
+  assert.deepEqual(state.bankGroups.map((g) => g.accounts.map((a) => a.entry)),
+    [['ZENITH — AFP LTD', 'ZENITH — MAMA KAFAYA ENT'], []], 'and the accounts under each bank for the pick handler');
 });

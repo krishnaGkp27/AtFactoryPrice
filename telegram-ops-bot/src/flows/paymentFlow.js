@@ -250,7 +250,11 @@ async function askBank(bot, chatId, userId) {
   let banks = [];
   try {
     const s = await settingsRepository.getAll();
-    banks = String(s.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean);
+    // BANK-4 — a PAYEE's bank is a bank, never one of the company's own
+    // accounts: `Zenith — AFP` and `Zenith — BP` on the list are one
+    // `Zenith` chip here.
+    banks = require('../utils/bankEntry').banksOnly(
+      String(s.BANK_LIST || '').split(',').map((b) => b.trim()).filter(Boolean));
   } catch (_) { banks = []; }
   if (!banks.length) banks = ['GTBank', 'Zenith', 'FirstBank', 'Access', 'UBA'];
   session.reg.banks = banks;

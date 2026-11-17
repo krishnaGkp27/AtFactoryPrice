@@ -97,7 +97,7 @@ approvalQueueRepository.getAll = async () => Object.values(ROWS).map((r) => ({ .
 approvalQueueRepository.updateStatus = async (id, status) => { if (status === 'approved') resolved.add(id); return true; };
 approvalQueueRepository.updateActionJSON = async () => true;
 
-const LEDGER_COLS = ['entry_id', 'txn_id', 'date', 'account_code', 'ledger_name', 'debit', 'credit', 'narration', 'created_by', 'created_at', 'customer_id'];
+const LEDGER_COLS = ['entry_id', 'txn_id', 'date', 'account_code', 'ledger_name', 'debit', 'credit', 'narration', 'created_by', 'created_at', 'customer_id', 'bank_account'];
 const ledgerRows = () => fake._store.get('Ledger_Entries').slice(1)
   .map((r) => Object.fromEntries(LEDGER_COLS.map((c, i) => [c, r[i]])));
 /** The payment pairs (debit leg + receivable credit leg) booked since `from`. */
@@ -121,7 +121,10 @@ test('bundle sale, bank chip `Paid to Zenith` (the R-9BF6 shape): the 3,750 is d
   assert.deepEqual([credit.ledger_name, credit.account_code, Number(credit.credit)], ['Customer Receivable', '1100', 3750]);
   assert.equal(debit.txn_id, 'R-BUNDLE-PAY', 'still keyed to the request (QTA-2)');
   assert.equal(debit.customer_id, 'CUST-1');
-  assert.equal(debit.narration, 'Payment received from ABBA: NGN 3750 via Bank');
+  // BANK-4 — the Bank row now says WHICH bank (and account, when the mode names one).
+  assert.equal(debit.narration, 'Payment received from ABBA: NGN 3750 via Bank · Zenith');
+  assert.equal(debit.bank_account, 'Zenith', 'column L: the bank the chip named');
+  assert.ok(!credit.bank_account, 'the receivable row carries no bank account');
   assert.ok(!ledgerRows().some((r) => r.ledger_name === 'Cash'), 'nothing reached the Cash account');
   // The stored mode text is exactly what the wizard wrote.
   assert.equal(txnFor('R-BUNDLE')[13], 'Paid to Zenith');

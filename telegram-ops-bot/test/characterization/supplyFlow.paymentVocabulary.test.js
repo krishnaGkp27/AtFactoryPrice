@@ -79,6 +79,19 @@ test('picking the salesperson lands on the payment picker: Cash · Not yet paid 
   assert.ok(!rows.flat().some((b) => /^(💳 )?Credit$/.test(b.text)), 'no chip is labelled Credit');
 });
 
+test('BANK-4: two accounts under one bank are ONE bank chip for the requester — the account is the admin\'s answer at approval', async () => {
+  settings = { BANK_LIST: 'GTBank,Zenith,Zenith — AFP,Zenith — BP,UBA — MAIN' };
+  seedAtSalesperson();
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('srf_sp:Musa'));
+  await controller.handleCallbackQuery(bot, cb('srf_su:__admin__')); // SRF-6 — nobody in Dispatch here
+  assert.deepEqual(lastRows(bot).map((r) => r.map((b) => `${b.text}|${b.callback_data}`)), [
+    ['💵 Cash|srf_pm:Cash', '⏳ Not yet paid (credit)|srf_pm:Not yet paid', '🏦 GTBank|srf_pm:GTBank'],
+    ['🏦 Zenith|srf_pm:Zenith', '🏦 UBA|srf_pm:UBA'],
+    ['⬅️ Back to supplier|srf_back:supplier'],
+  ]);
+});
+
 test('no banks registered: just the two fixed chips on one row', async () => {
   settings = { BANK_LIST: '' };
   seedAtSalesperson();

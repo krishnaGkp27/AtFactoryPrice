@@ -30,6 +30,8 @@ const menuAnchor = require('../services/menuAnchor');
 // CUR-1 — sale-side figures print bare (money.sale / money.saleRate); this
 // file never spells a currency symbol or unit on a sale card.
 const money = require('../utils/money');
+// BANK-4 — one bank, several accounts: the list grouped by bank.
+const bankEntry = require('../utils/bankEntry');
 const { normaliseRateMultiplier } = require('../repositories/invoicesRepository');
 
 const SALE_ACTIONS = ['sell_than', 'sell_package', 'sale_bundle'];
@@ -668,6 +670,15 @@ function wizHeader(state) {
 
 const TYPED_NOTE = '\n✍️ _A typed reply goes to the request you touched last._';
 
+/** BANK-4 — the wizard's banks grouped by bank; rebuilt from `state.banks` when the step was not drawn by sendPaymentStep. */
+function bankGroupsOf(state) {
+  if (!Array.isArray(state.bankGroups)) state.bankGroups = bankEntry.group(state.banks || []);
+  return state.bankGroups;
+}
+
+/** BANK-4 — a registered name on a Markdown card: its control characters would break the card. */
+const mdPlain = (v) => String(v == null ? '' : v).replace(/[*_`[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+
 /**
  * CUR-1 — a rate on a wizard chip / ack, bare: `1,500/yd`; a fractional
  * entered rate keeps its decimals (`3.20/yd`), never truncated to `3/yd`.
@@ -888,10 +899,21 @@ function backRow(state, to, label) {
 async function sendPaymentStep(bot, chatId, state) {
   state.step = 'payment';
   state.banks = await getRegisteredBanks();
+  // BANK-4 (owner, 17-Nov-2026) — ONE chip per bank. A bank with two or
+  // more accounts registered under it (`Zenith — AFP`, `Zenith — BP`) says
+  // how many and opens the account chips; with one account the chip names
+  // it and stamps it at the tap; with none it is the bank, as before.
+  state.bankGroups = bankEntry.group(state.banks);
+  state.bankPick = null;
+  const bankChip = (g, i) => {
+    const c = bankEntry.choiceFor(g);
+    const label = c.ask ? `🏦 ${g.bank} ▾ ${g.accounts.length}` : `🏦 ${c.dest}`;
+    return { text: label.slice(0, 60), callback_data: wizCb(state, `pay:b:${i}`) };
+  };
   const rows = [[{ text: '💵 Cash', callback_data: wizCb(state, 'pay:cash') }, { text: '🕐 Not yet paid', callback_data: wizCb(state, 'pay:nyp') }]];
-  for (let i = 0; i < state.banks.length; i += 2) {
-    const row = [{ text: `🏦 ${state.banks[i]}`, callback_data: wizCb(state, `pay:b:${i}`) }];
-    if (state.banks[i + 1]) row.push({ text: `🏦 ${state.banks[i + 1]}`, callback_data: wizCb(state, `pay:b:${i + 1}`) });
+  for (let i = 0; i < state.bankGroups.length; i += 2) {
+    const row = [bankChip(state.bankGroups[i], i)];
+    if (state.bankGroups[i + 1]) row.push(bankChip(state.bankGroups[i + 1], i + 1));
     rows.push(row);
   }
   rows.push([{ text: '✏️ Type payment mode', callback_data: wizCb(state, 'pay:custom') }]);
@@ -911,6 +933,30 @@ async function sendPaymentStep(bot, chatId, state) {
   // "💳 Payment: <mode>"), and every live sale door queues paymentMode ''.
   await renderWizard(bot, chatId, state,
     `${wizHeader(state)}\n👤 ${state.customer || '—'}\n\n*Step 3 — Payment mode:* tap below, or reply with one of:\n• Cash\n• Paid to [Bank]\n• Not yet paid${TYPED_NOTE}`,
+    rows);
+}
+
+/**
+ * BANK-4 — Step 3, second screen: which ACCOUNT of the bank the admin
+ * tapped. The same card, redrawn; the step stays `payment`, so a typed
+ * reply is still a payment mode (and a typed account name picks the chip).
+ * Nothing is stored until an account is chosen — a bank that holds
+ * accounts is never saved without one.
+ */
+async function sendBankAccountStep(bot, chatId, state, groupIndex, note = '') {
+  const g = bankGroupsOf(state)[groupIndex];
+  if (!g || g.accounts.length < 2) { await sendPaymentStep(bot, chatId, state); return; }
+  state.step = 'payment';
+  state.bankPick = groupIndex;
+  const rows = [];
+  for (let j = 0; j < g.accounts.length; j += 2) {
+    const row = [{ text: `🏦 ${g.accounts[j].account}`.slice(0, 60), callback_data: wizCb(state, `pay:a:${groupIndex}:${j}`) }];
+    if (g.accounts[j + 1]) row.push({ text: `🏦 ${g.accounts[j + 1].account}`.slice(0, 60), callback_data: wizCb(state, `pay:a:${groupIndex}:${j + 1}`) });
+    rows.push(row);
+  }
+  rows.push([{ text: '⬅ Back to payment modes', callback_data: wizCb(state, 'pay:modes') }]);
+  await renderWizard(bot, chatId, state,
+    `${wizHeader(state)}\n👤 ${state.customer || '—'}\n\n*Step 3 — Payment mode*\n🏦 ${mdPlain(g.bank)} · which account?${note ? `\n${note}` : ''}${TYPED_NOTE}`,
     rows);
 }
 
@@ -1164,12 +1210,37 @@ async function handleEnrichmentCallback(bot, callbackQuery) {
     return true;
   }
   if (data.startsWith('enr:pay:b:') && state.step === 'payment') {
-    const bank = (state.banks || [])[parseInt(data.slice('enr:pay:b:'.length), 10)];
-    if (!bank) { await ack('Expired — pick again.'); return true; }
-    state.paymentMode = `Paid to ${bank}`;
-    await ack(bank);
+    // BANK-4 — the index is the BANK's (one chip per bank).
+    const gi = parseInt(data.slice('enr:pay:b:'.length), 10);
+    const g = bankGroupsOf(state)[gi];
+    if (!g) { await ack('Expired — pick again.'); return true; }
+    const choice = bankEntry.choiceFor(g);
+    if (choice.ask) {
+      await ack(`${g.bank} — which account?`);
+      await sendBankAccountStep(bot, chatId, state, gi);
+      return true;
+    }
+    state.paymentMode = `Paid to ${choice.dest}`;
+    await ack(choice.dest);
     await persistEnrichDraft(state);
     await sendAmountStep(bot, chatId, state);
+    return true;
+  }
+  if (data.startsWith('enr:pay:a:') && state.step === 'payment') {
+    const [gi, ai] = data.slice('enr:pay:a:'.length).split(':').map((n) => parseInt(n, 10));
+    const g = bankGroupsOf(state)[gi];
+    const acc = g && g.accounts[ai];
+    if (!acc) { await ack('Expired — pick again.'); await sendPaymentStep(bot, chatId, state); return true; }
+    state.paymentMode = `Paid to ${acc.entry}`;
+    state.bankPick = null;
+    await ack(acc.entry);
+    await persistEnrichDraft(state);
+    await sendAmountStep(bot, chatId, state);
+    return true;
+  }
+  if (data === 'enr:pay:modes' && state.step === 'payment') {
+    await ack();
+    await sendPaymentStep(bot, chatId, state);
     return true;
   }
   if (data === 'enr:pay:custom') {
@@ -1307,7 +1378,34 @@ async function applyEnrichmentText(bot, chatId, adminId, state, text) {
   const finishTyped = (amountPaid) => finishWizard(bot, chatId, adminId, state, amountPaid);
 
   if (state.step === 'payment') {
-    const mode = t;
+    let mode = t;
+    // BANK-4 — a typed bank is read against the registered list, so the
+    // typed and the tapped answer store the same words. With the account
+    // chips open, the account's own name is enough ("AFP").
+    const groups = bankGroupsOf(state);
+    const open = state.bankPick != null ? groups[state.bankPick] : null;
+    const typedAccount = open && open.accounts.find((a) => bankEntry.key(a.account) === bankEntry.key(t));
+    const paidTo = /^paid\s+to\s+(.+)$/i.exec(t);
+    if (typedAccount) mode = `Paid to ${typedAccount.entry}`;
+    else if (open && !paidTo && !/^(cash|not yet paid)$/i.test(t)) {
+      // The card asks "which account?": a reply that is none of them (a
+      // slip of the thumb) must not seal the sale as unpaid under that word.
+      await sendBankAccountStep(bot, chatId, state, state.bankPick,
+        `⚠️ “${mdPlain(t).slice(0, 40)}” is not an account at ${mdPlain(open.bank)}. Tap one, or go back.`);
+      return true;
+    } else if (!/^(cash|paid\s+to\s+cash|not yet paid)$/i.test(t)) {
+      // `Paid to Zenith`, and also the bare name of a registered bank or
+      // account (`Zenith`, `Zenith AFP`): until BANK-4 a bare bank name was
+      // stored as written and sealed the sale as UNPAID under that word.
+      const hit = bankEntry.resolve(paidTo ? paidTo[1] : t, state.banks || []);
+      if (hit.ask) {
+        // A bank that holds accounts is never saved without one.
+        await sendBankAccountStep(bot, chatId, state, groups.findIndex((g) => bankEntry.key(g.bank) === bankEntry.key(hit.group.bank)));
+        return true;
+      }
+      if (hit.entry) mode = `Paid to ${hit.entry}`;
+    }
+    state.bankPick = null;
     state.paymentMode = mode;
     const isPaid = /^paid\s+to\s+/i.test(mode) || /^cash$/i.test(mode);
     if (isPaid) {

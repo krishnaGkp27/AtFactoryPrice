@@ -23,7 +23,10 @@ const REQUIRED_SHEETS = {
   Ledger_Entries: {
     // CUS-1 Phase C — customer_id keys the entry to the customer ENTITY;
     // the narration keeps the human-readable name. End column per rules.
-    headers: ['entry_id', 'txn_id', 'date', 'account_code', 'ledger_name', 'debit', 'credit', 'narration', 'created_by', 'created_at', 'customer_id'],
+    // BANK-4 (owner's go, 17-Nov-2026) — column L `bank_account`: the bank
+    // account a received payment landed in, on the Bank debit row. One
+    // trailing header cell; the width heal below adds it to a live sheet.
+    headers: ['entry_id', 'txn_id', 'date', 'account_code', 'ledger_name', 'debit', 'credit', 'narration', 'created_by', 'created_at', 'customer_id', 'bank_account'],
   },
   // SHT-1 (owner, 31-Aug-2026) — Stock_Ledger, UserPrefs, ShipmentEvents and
   // BankFeed were RETIRED, not migrated: each had no live reader, and two had
