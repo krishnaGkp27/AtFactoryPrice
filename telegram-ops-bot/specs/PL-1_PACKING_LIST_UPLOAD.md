@@ -46,3 +46,29 @@ nothing partial is written.
 - Other suppliers' layouts (unrecognized → clear message, CSV path remains).
 - Prices (land 0; owner sets via Update Price — prior decision).
 - Multi-warehouse packing lists (single warehouse per upload, as today).
+
+## PL-2 — the hand-entry template (18-Nov-2026)
+
+Owner: "I want supplier packing list format to make manual entry."
+
+`docs/PACKING_LIST_TEMPLATE.xlsx` is an empty packing list in the layout
+above, for typing a container in by hand and uploading it through the same
+door. Built by `scripts/build-packing-list-template.js`; rebuild it if the
+reader's layout changes.
+
+- Sheet `PACKING LIST`: header on rows 5 and 6, one row per bale from row 7.
+  The S. No. column is already numbered 1 to 1,000, because the reader drops
+  a row whose S. No. is blank.
+- Sheet `HOW TO FILL`: the column guide, an example and the upload steps.
+  Every row starts one column to the right, so the reader never takes it
+  for a packing list.
+- Columns the reader uses: B Carton No. (the bale number), D INDENT, E CS
+  No., F LOT/DGN. (design), H SHADE, J No of THAN, K to Q the yards of
+  thans 1 to 7, R Net Yards. C, G and I are not read.
+- A bale of more than seven thans does not fit; it goes in the CSV form
+  (PackageNo, ThanNo, Design, Yards, optional Shade; one row per than).
+
+`test/unit/scripts/packingListTemplate.test.js` runs the template through
+`packingListImportService` itself: the empty file is recognised and adds
+nothing, typed bales become the right thans, and the committed file equals
+what the script builds.
