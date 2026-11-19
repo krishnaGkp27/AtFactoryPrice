@@ -923,6 +923,7 @@ async function handleAddCustomerFlowText(bot, chatId, userId, text) {
     } else {
       await bot.sendMessage(chatId, '❌ Add-customer flow cancelled.');
     }
+    await returnToHeldFlow(bot, chatId, userId, session); // CON-2 — back to the flow it came from
     return true;
   }
 
@@ -992,6 +993,13 @@ async function handleAddCustomerFlowText(bot, chatId, userId, text) {
       await bot.sendMessage(chatId, 'Name too short, please re-enter:');
       return true;
     }
+    // CON-2 — every CUSTOMER entry, from the CRM tile or from inside a
+    // flow, is refused HERE when creation is frozen or the name already
+    // belongs to a customer — before six more questions are answered.
+    if (personTypeIsCustomer(session)) {
+      const gate = await checkCustomerCreationGate(trimmed);
+      if (!gate.ok) { await bot.sendMessage(chatId, gate.message, { parse_mode: 'Markdown' }); return true; }
+    }
     session.name = trimmed;
     session.step = 'phone';
     sessionStore.set(userId, session);
@@ -1055,72 +1063,10 @@ async function handleSampleFlowText(bot, chatId, userId, text) {
     return true;
   }
 
-  /* ─── Button-flow text steps: new customer name / phone, custom qty ─── */
-  if (session.step === 'sample_new_cust_name') {
-    const name = text.trim();
-    if (name.length < 2) {
-      await bot.sendMessage(chatId, 'Name too short, please re-enter:');
-      return true;
-    }
-    // CUS-2 — this embedded door honors the same freeze + collision rules
-    // as the CRM door (it used to bypass both).
-    const gate = await checkCustomerCreationGate(name);
-    if (!gate.ok) { await bot.sendMessage(chatId, gate.message, { parse_mode: 'Markdown' }); return true; }
-    session.pendingCustomerName = name;
-    session.step = 'sample_new_cust_phone';
-    sessionStore.set(userId, session);
-    await bot.sendMessage(chatId, `Got it: *${name}*\n\nEnter phone number (or type "skip"):`, { parse_mode: 'Markdown' });
-    return true;
-  }
-
-  if (session.step === 'sample_new_cust_phone') {
-    const raw = text.trim();
-    const phone = raw.toLowerCase() === 'skip' ? '' : raw;
-    const name = session.pendingCustomerName;
-
-    // Queue new-customer approval and pause the sample flow.
-    const customerId = idGenerator.customer(); // CUS-2 — one id scheme everywhere
-    const customersRepo2 = require('../repositories/customersRepository');
-    await customersRepo2.append({
-      customer_id: customerId, name, phone, address: '', category: '',
-      credit_limit: 0, payment_terms: '', notes: 'Added via sample flow',
-      status: 'Pending',
-    });
-
-    const requestId = genId();
-    // APG-1 — raised through the gate: a double tap is one request.
-    const raised = await require('../services/approvalGate').raise({
-      requestId, fresh: true, audit: false, userId: userId,
-      actionJSON: {
-        // APU-1 3.1: was 'new_customer_registration' — a dead action name
-        // with no executor; 'new_customer' is what the approve/reject
-        // special-cases and the flow-resume hooks actually match.
-        action: 'new_customer',
-        customer_id: customerId, customer_name: name, phone,
-        requesterUserId: userId, from: 'sample_flow',
-      },
-      riskReason: 'New customer requires admin approval',
-    });
-    if (!raised.created) return true;
-    await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'sample_flow' }, userId);
-
-    session.pendingCustomerId = customerId;
-    session.customerApprovalId = requestId;
-    session.step = 'awaiting_customer_approval';
-    sessionStore.set(userId, session);
-
-    const userLabel = await getRequesterDisplayName(userId, null);
-    await approvalEvents.notifyAdminsApprovalRequest(
-      bot, requestId, userLabel,
-      `New Customer Registration\nName: ${name}\nPhone: ${phone || '—'}\n(from sample flow)`,
-      'New customer requires admin approval',
-    );
-    await bot.sendMessage(chatId,
-      `⏳ Customer "*${name}*" sent for admin approval.\n\nYour sample request is *paused* — it will resume automatically once an admin approves the new customer.`,
-      { parse_mode: 'Markdown' });
-    return true;
-  }
-
+  /* ─── Button-flow text step: custom qty ───
+   * CON-2 (19-Nov-2026) — the private new-customer name / phone steps that
+   * lived here are gone: ➕ Add New Customer opens the one ➕ Add Contact
+   * door (startAddCustomerHeld). */
   if (session.step === 'quantity_custom') {
     const qty = text.trim();
     if (!qty || isNaN(Number(qty)) || Number(qty) <= 0) {
@@ -1860,6 +1806,70 @@ const PERSON_TYPES = [
   { key: 'other', label: '📎 Other' },
 ];
 
+/**
+ * CON-2 (owner's go, 19-Nov-2026) — ONE door for every customer entry.
+ *
+ * Samples, Orders and the receipt upload each carried their own "➕ New
+ * customer" button with a private two-question form (name, phone) and a
+ * private request (`new_customer`): a Pending row written BEFORE approval,
+ * no network node, no category or terms, no triage chips. Each button is
+ * now a shortcut INTO the ➕ Add Contact door with the kind already set:
+ * the live flow is put on hold inside the door's session, Submit raises the
+ * same `add_contact` request every other entry raises, and the flow resumes
+ * when an admin approves (approvalEvents.resumeHeldFlowAfterContact).
+ */
+const HELD_FLOWS = {
+  sample_flow: { icon: '🧪', what: 'sample request', back: 'sample' },
+  order_flow: { icon: '📋', what: 'order', back: 'order' },
+  receipt_flow: { icon: '🧾', what: 'receipt upload', back: 'receipt' },
+};
+
+/** The customer picker of the flow a held door came from. */
+async function showHeldFlowCustomerPicker(bot, chatId, userId, parent) {
+  if (!parent) return;
+  if (parent.type === 'sample_flow') await showSampleCustomerPicker(bot, chatId, userId);
+  else if (parent.type === 'order_flow') await showOrderCustomerPicker(bot, chatId, userId);
+  else if (parent.type === 'receipt_flow') await showReceiptCustomerPicker(bot, chatId, userId);
+}
+
+/**
+ * CON-2 — open the door from inside a live sample / order / receipt flow.
+ * The flow's session is kept whole inside the door's (`held`), so ⬅️ Back
+ * and ❌ Cancel return to the picker with nothing lost.
+ * @returns {Promise<boolean>} false = no such flow is live (caller says so)
+ */
+async function startAddCustomerHeld(bot, chatId, userId) {
+  const parent = sessionStore.get(userId);
+  if (!parent || !HELD_FLOWS[parent.type]) return false;
+  const settings = await settingsRepo.getAll().catch(() => ({}));
+  if (Number(settings.CUSTOMER_CREATION_ENABLED ?? 1) !== 1) {
+    await bot.sendMessage(chatId, '🔒 Adding customers is paused for now (list cleanup in progress). Pick an existing customer instead.');
+    await showHeldFlowCustomerPicker(bot, chatId, userId, parent);
+    return true;
+  }
+  sessionStore.set(userId, {
+    type: 'add_customer_flow', step: 'name', requestedBy: userId, flowMessageId: null,
+    personType: 'customer', held: { flow: parent.type, session: parent },
+  });
+  await showAddPersonNameStep(bot, chatId, userId);
+  return true;
+}
+
+/**
+ * CON-2 — leave a held door without submitting: the flow it came from is
+ * live again at its customer picker.
+ * @returns {Promise<boolean>} true = a held flow was restored
+ */
+async function returnToHeldFlow(bot, chatId, userId, doorSession) {
+  const held = doorSession && doorSession.held;
+  if (!held || !held.session || !HELD_FLOWS[held.flow]) return false;
+  const parent = { ...held.session, step: 'customer' };
+  delete parent.pendingCustomerName; delete parent.pendingCustomerId; delete parent.customerApprovalId;
+  sessionStore.set(userId, parent);
+  await showHeldFlowCustomerPicker(bot, chatId, userId, parent);
+  return true;
+}
+
 /** Only a customer carries a trade category, a credit limit and terms. */
 function personTypeIsCustomer(session) {
   return (session && session.personType) === 'customer';
@@ -1872,6 +1882,9 @@ function _acHeader(session) {
   // than always saying "Customer".
   const lines = ['➕ *Add contact*'];
   if (session.personType) lines.push(`✓ Type: *${PERSON_TYPE_LABEL(session.personType)}*`);
+  // CON-2 — raised from inside another flow: say what is waiting on it.
+  const heldMeta = session.held && HELD_FLOWS[session.held.flow];
+  if (heldMeta) lines.push(`${heldMeta.icon} Your ${heldMeta.what} is on hold until this customer is approved.`);
   if (session.name) lines.push(`✓ Name: *${session.name}*`);
   if (session.phone) lines.push(`✓ Phone: *${session.phone}*`);
   if (session.phone === '') lines.push(`✓ Phone: _skipped_`);
@@ -1998,6 +2011,19 @@ async function showAddPersonNameStep(bot, chatId, userId) {
   // path only: it exists to register a buyer fast, and the other kinds
   // have too few fields for a one-liner to save anything.
   const rows = [];
+  // CON-2 — raised from inside a sample / order / receipt: the kind is
+  // already known, so Back leaves the door for that flow's customer picker.
+  // No Quick Add here: it writes at once and would skip the approval the
+  // paused flow is waiting for.
+  const heldMeta = session && session.held && HELD_FLOWS[session.held.flow];
+  if (heldMeta) {
+    rows.push([
+      { text: `⬅️ Back to ${heldMeta.back}`, callback_data: 'acb:held' },
+      { text: '❌ Cancel', callback_data: 'accanc:0' },
+    ]);
+    await _acRender(bot, chatId, userId, 'Enter the *full name* (reply in chat):', rows);
+    return;
+  }
   if (isCust && config.access.adminIds.includes(userId)) {
     rows.push([{ text: '⚡ Quick Add (name+phone in one line)', callback_data: 'acquick:1' }]);
   }
@@ -3192,68 +3218,8 @@ async function handleOrderFlowText(bot, chatId, userId, text) {
   }
 
   /* ─── Proper new-customer flow with approval gate (Batch 5) ─── */
-  if (session.step === 'new_order_customer_name') {
-    const name = text.trim();
-    if (name.length < 2) {
-      await bot.sendMessage(chatId, 'Name too short, please re-enter:');
-      return true;
-    }
-    // CUS-2 — same freeze + collision rules as the CRM door.
-    const gate = await checkCustomerCreationGate(name);
-    if (!gate.ok) { await bot.sendMessage(chatId, gate.message, { parse_mode: 'Markdown' }); return true; }
-    session.pendingCustomerName = name;
-    session.step = 'new_order_customer_phone';
-    sessionStore.set(userId, session);
-    await bot.sendMessage(chatId, `Got it: *${name}*\n\nEnter phone number (or type "skip"):`, { parse_mode: 'Markdown' });
-    return true;
-  }
-
-  if (session.step === 'new_order_customer_phone') {
-    const raw = text.trim();
-    const phone = raw.toLowerCase() === 'skip' ? '' : raw;
-    const name = session.pendingCustomerName;
-
-    const customerId = idGenerator.customer(); // CUS-2 — one id scheme everywhere
-    const customersRepo2 = require('../repositories/customersRepository');
-    await customersRepo2.append({
-      customer_id: customerId, name, phone, address: '', category: '',
-      credit_limit: 0, payment_terms: '', notes: 'Added via order flow',
-      status: 'Pending',
-    });
-
-    const requestId = genId();
-    // APG-1 — raised through the gate: a double tap is one request.
-    const raised = await require('../services/approvalGate').raise({
-      requestId, fresh: true, audit: false, userId: userId,
-      actionJSON: {
-        // APU-1 3.1: was 'new_customer_registration' — a dead action name
-        // with no executor; 'new_customer' is what the approve/reject
-        // special-cases and the flow-resume hooks actually match.
-        action: 'new_customer',
-        customer_id: customerId, customer_name: name, phone,
-        requesterUserId: userId, from: 'order_flow',
-      },
-      riskReason: 'New customer requires admin approval',
-    });
-    if (!raised.created) return true;
-    await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'order_flow' }, userId);
-
-    session.pendingCustomerId = customerId;
-    session.customerApprovalId = requestId;
-    session.step = 'awaiting_customer_approval';
-    sessionStore.set(userId, session);
-
-    const userLabel = await getRequesterDisplayName(userId, null);
-    await approvalEvents.notifyAdminsApprovalRequest(
-      bot, requestId, userLabel,
-      `New Customer Registration\nName: ${name}\nPhone: ${phone || '—'}\n(from order flow)`,
-      'New customer requires admin approval',
-    );
-    await bot.sendMessage(chatId,
-      `⏳ Customer "*${name}*" sent for admin approval.\n\nYour order is *paused* — it will resume automatically once an admin approves the new customer.`,
-      { parse_mode: 'Markdown' });
-    return true;
-  }
+  // CON-2 (19-Nov-2026) — the private new-customer name / phone steps that
+  // lived here are gone: ➕ New customer opens the one ➕ Add Contact door.
 
   /* ─── Custom quantity (tapped "Custom" in presets) ─── */
   if (session.step === 'quantity_custom') {
@@ -3329,6 +3295,35 @@ async function showOrderSummary(bot, chatId, session) {
 // (downloadTelegramFile is now imported from ../utils/telegramFiles — used by
 // receipt, sale-doc, and design-asset upload flows.)
 
+/**
+ * CON-2 — the order flow's customer picker as a function, for a paused
+ * order returning to it (the two tap handlers draw the same card inline).
+ */
+async function showOrderCustomerPicker(bot, chatId, userId) {
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'order_flow') return;
+  let customerNames = await transactionsRepo.getCustomersByDesign(session.design);
+  let label = 'past buyers shown';
+  if (!customerNames.length) {
+    const allCust = await require('../repositories/customersRepository').getAll();
+    customerNames = allCust.filter((c) => c.status === 'Active' && c.name).map((c) => c.name);
+    if (customerNames.length) label = 'registered customers shown';
+  }
+  const rows = [];
+  for (let i = 0; i < customerNames.length; i += 2) {
+    const row = [{ text: customerNames[i], callback_data: `oc:${customerNames[i].slice(0, 50)}` }];
+    if (customerNames[i + 1]) row.push({ text: customerNames[i + 1], callback_data: `oc:${customerNames[i + 1].slice(0, 50)}` });
+    rows.push(row);
+  }
+  if (rows.length > 20) rows.splice(20);
+  rows.push([{ text: '➕ New customer', callback_data: 'oc:__new__' }]);
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'obb:design' },
+    { text: '❌ Cancel', callback_data: 'ocanc:1' },
+  ]);
+  await bot.sendMessage(chatId, `Design: *${session.design}*\n\nSelect customer (${label}):`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } });
+}
+
 async function startReceiptFlow(bot, chatId, userId, messageId = null) {
   sessionStore.set(userId, { type: 'receipt_flow', step: 'customer', createdBy: userId });
   await showReceiptCustomerPicker(bot, chatId, userId, false, messageId);
@@ -3386,65 +3381,9 @@ async function handleReceiptFlowText(bot, chatId, userId, text) {
     return true;
   }
 
-  /* ─── Approval-gated new-customer registration from receipt flow (Batch 6) ─── */
-  if (session.step === 'receipt_new_cust_name') {
-    const name = text.trim();
-    if (name.length < 2) {
-      await bot.sendMessage(chatId, 'Name too short, please re-enter:');
-      return true;
-    }
-    // CUS-2 — same freeze + collision rules as the CRM door.
-    const gate = await checkCustomerCreationGate(name);
-    if (!gate.ok) { await bot.sendMessage(chatId, gate.message, { parse_mode: 'Markdown' }); return true; }
-    session.pendingCustomerName = name;
-    session.step = 'receipt_new_cust_phone';
-    sessionStore.set(userId, session);
-    await bot.sendMessage(chatId, `Got it: *${name}*\n\nEnter phone number (or type "skip"):`, { parse_mode: 'Markdown' });
-    return true;
-  }
-
-  if (session.step === 'receipt_new_cust_phone') {
-    const raw = text.trim();
-    const phone = raw.toLowerCase() === 'skip' ? '' : raw;
-    const name = session.pendingCustomerName;
-    const customerId = idGenerator.customer(); // CUS-2 — one id scheme everywhere
-    const customersRepo2 = require('../repositories/customersRepository');
-    await customersRepo2.append({
-      customer_id: customerId, name, phone, address: '', category: '',
-      credit_limit: 0, payment_terms: '', notes: 'Added via receipt flow',
-      status: 'Pending',
-    });
-    const requestId = genId();
-    // APG-1 — raised through the gate: a double tap is one request.
-    const raised = await require('../services/approvalGate').raise({
-      requestId, fresh: true, audit: false, userId: userId,
-      actionJSON: {
-        // APU-1 3.1: was 'new_customer_registration' — a dead action name
-        // with no executor; 'new_customer' is what the approve/reject
-        // special-cases and the flow-resume hooks actually match.
-        action: 'new_customer',
-        customer_id: customerId, customer_name: name, phone,
-        requesterUserId: userId, from: 'receipt_flow',
-      },
-      riskReason: 'New customer requires admin approval',
-    });
-    if (!raised.created) return true;
-    await auditLogRepository.append('approval_queued', { requestId, reason: 'new_customer', from: 'receipt_flow' }, userId);
-    session.pendingCustomerId = customerId;
-    session.customerApprovalId = requestId;
-    session.step = 'awaiting_customer_approval';
-    sessionStore.set(userId, session);
-    const userLabel = await getRequesterDisplayName(userId, null);
-    await approvalEvents.notifyAdminsApprovalRequest(
-      bot, requestId, userLabel,
-      `New Customer Registration\nName: ${name}\nPhone: ${phone || '—'}\n(from receipt flow)`,
-      'New customer requires admin approval',
-    );
-    await bot.sendMessage(chatId,
-      `⏳ Customer "*${name}*" sent for admin approval.\n\nYour receipt upload is *paused* — it will resume once the new customer is approved.`,
-      { parse_mode: 'Markdown' });
-    return true;
-  }
+  // CON-2 (19-Nov-2026) — the private new-customer name / phone steps that
+  // lived here are gone: ➕ Register New Customer opens the one ➕ Add
+  // Contact door.
 
   /* ─── Legacy step kept for back-compat ─── */
   if (session.step === 'customer_new') {
@@ -8149,9 +8088,8 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
 
     if (val === '__more__') { await showSampleCustomerPicker(bot, chatId, uid, true); return; }
     if (val === '__new__') {
-      session.step = 'sample_new_cust_name';
-      sessionStore.set(uid, session);
-      await bot.sendMessage(chatId, '📝 Enter new customer *full name*:', { parse_mode: 'Markdown' });
+      // CON-2 — into the one door, with this sample request held.
+      await startAddCustomerHeld(bot, chatId, uid);
       return;
     }
     session.customer = val;
@@ -8289,6 +8227,11 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       }).catch(() => {});
     }
     sessionStore.clear(uid);
+    // CON-2 — a door opened from a sample / order / receipt hands that flow
+    // back at its customer picker; nothing the person picked there is lost.
+    if (session && session.type === 'add_customer_flow') {
+      await returnToHeldFlow(bot, callbackQuery.message.chat.id, uid, session);
+    }
 
   // P3 — Quick Add fast path (admin-only). Swaps the session into quick_add
   // step which expects "Name, Phone, [Address]" as a single text reply.
@@ -8312,6 +8255,16 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'add_customer_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id);
+
+    // CON-2 — ⬅️ Back to sample / order / receipt: leave the door for the
+    // flow it was opened from. A held door has no kind step to go back to.
+    if (session.held && (target === 'held' || target === 'type')) {
+      if (session.flowMessageId) {
+        await bot.editMessageText('⬅️ Back to your customer list.', { chat_id: chatId, message_id: session.flowMessageId }).catch(() => {});
+      }
+      await returnToHeldFlow(bot, chatId, uid, session);
+      return;
+    }
 
     // Wipe any field captured AT or AFTER the target step so the user
     // genuinely re-answers from there. Order: name, phone, address,
@@ -8488,6 +8441,8 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         ...(session.pendingTelegramId ? { pendingTelegramId: session.pendingTelegramId } : {}),
         // CRM-R1 — the provisional store; the executor writes it on approval.
         ...(Array.isArray(session.stores) && session.stores.length ? { stores: session.stores } : {}),
+        // CON-2 — raised from inside a flow that is waiting on the decision.
+        ...(session.held && HELD_FLOWS[session.held.flow] ? { resume: { flow: session.held.flow } } : {}),
       },
       riskReason: 'New contact requires admin approval',
     });
@@ -8517,9 +8472,25 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       + (Array.isArray(session.stores) && session.stores.length ? `\nStore: ${session.stores.join(', ')} (provisional)` : '')
       + (session.pendingTelegramId
         ? `\nFrom Pending user ${session.pendingTelegramId} — account will be linked on approval`
+        : '')
+      + (session.held && HELD_FLOWS[session.held.flow]
+        ? `\n${HELD_FLOWS[session.held.flow].icon} Raised from a ${HELD_FLOWS[session.held.flow].what} · on hold until approved`
         : '');
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'New contact requires admin approval');
 
+    // CON-2 — the paused flow becomes the live one again, WAITING on this
+    // request; approvalEvents.resumeHeldFlowAfterContact picks it up.
+    const heldMeta = session.held && HELD_FLOWS[session.held.flow];
+    if (heldMeta && session.held.session) {
+      sessionStore.set(uid, {
+        ...session.held.session, step: 'awaiting_customer_approval',
+        pendingCustomerName: custData.name, customerApprovalId: requestId,
+      });
+      await bot.sendMessage(chatId,
+        `⏳ Customer "${custData.name}" sent for admin approval.\n`
+        + `Your ${heldMeta.what} is paused. It resumes automatically once an admin approves the new customer.`);
+      return;
+    }
     sessionStore.clear(uid);
 
   /* ─── BANK MANAGER: Add New Bank (prompt for text) ─── */
@@ -9045,11 +9016,8 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     await bot.answerCallbackQuery(callbackQuery.id);
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id });
     if (val === '__new__') {
-      session.step = 'new_order_customer_name';
-      sessionStore.set(uid, session);
-      await bot.sendMessage(chatId,
-        '📝 Enter *new customer name* (will be sent for 2-admin approval):',
-        { parse_mode: 'Markdown' });
+      // CON-2 — into the one door, with this order held.
+      await startAddCustomerHeld(bot, chatId, uid);
     } else {
       session.customer = val;
       session.step = 'quantity';
@@ -9396,9 +9364,8 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     }
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: callbackQuery.message.message_id }).catch(() => {});
     if (val === '__new__') {
-      session.step = 'receipt_new_cust_name';
-      sessionStore.set(uid, session);
-      await bot.sendMessage(chatId, '📝 Enter *new customer name* (will be sent for 2-admin approval):', { parse_mode: 'Markdown' });
+      // CON-2 — into the one door, with this receipt upload held.
+      await startAddCustomerHeld(bot, chatId, uid);
     } else {
       session.customer = val;
       session.step = 'amount';
@@ -13612,4 +13579,5 @@ module.exports = {
   // Exposed for cross-module flow resumption (e.g. approval events).
   showSampleQuantityPicker,
   showSampleCustomerPicker,
+  showHeldFlowCustomerPicker, // CON-2 — a paused flow returned to its picker
 };

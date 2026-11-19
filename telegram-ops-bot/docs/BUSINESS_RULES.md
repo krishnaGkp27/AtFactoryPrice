@@ -788,6 +788,17 @@ added through railway variables."*
     trailing column). It is text as chosen that day, never a lookup.
   - **An unreadable account list stops the approval** rather than letting
     a payment through with no paying account.
+**Amended 19-Nov-2026 (CON-2, owner's go):** the three "➕ New customer"
+buttons inside Samples, Orders and the receipt upload are shortcuts INTO
+this door, kind already set — never a second form. The flow they were
+tapped in is held inside the door; Submit raises the same `add_contact`
+request, writes no Customers row before approval, and the flow resumes on
+the decision (continues when approved as a customer; returns to its
+customer picker when routed to the phonebook or rejected — a paused order
+or receipt is no longer thrown away). The name is checked at the name step
+for every customer entry: an existing customer's name, or frozen creation,
+is refused there. Spec: `specs/CON-2_ONE_CUSTOMER_DOOR.md`.
+
 ## 14 · Removing a person is a status flip, never a deletion
 
 **Locked 16-Aug-2026** (owner, after the removal impact analysis): *"I can

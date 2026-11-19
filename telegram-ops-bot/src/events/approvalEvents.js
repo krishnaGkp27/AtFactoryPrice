@@ -2597,6 +2597,16 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           }
         }
 
+        // CON-2 — an `add_contact` raised from inside a sample / order /
+        // receipt: that paused flow moves now (continues with the customer,
+        // or returns to its picker when the admin routed the person to the
+        // phonebook or the network).
+        if (item && item.actionJSON && item.actionJSON.action === 'add_contact' && item.actionJSON.resume) {
+          const ajc = item.actionJSON;
+          const dest = ajc.destination || (ajc.type === 'customer' ? 'customer' : 'contact');
+          await resumeHeldFlowAfterContact(bot, requestId, ajc, requestingUser, dest === 'customer' ? 'customer' : dest);
+        }
+
         // For design_asset_upload, send the now-active photo to the
         // approving admin as a confirmation. This warms up the Telegram
         // file_id cache (first send produces a Buffer→Telegram upload;
@@ -2685,6 +2695,10 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           by: rejecter, at: new Date().toISOString(),
           note: (item && item.actionJSON && item.actionJSON.rejectNote) || '',
         }));
+        // CON-2 — a paused sample / order / receipt returns to its picker.
+        if (item && item.actionJSON && item.actionJSON.action === 'add_contact' && item.actionJSON.resume) {
+          await resumeHeldFlowAfterContact(bot, requestId, item.actionJSON, requestingUser, 'rejected');
+        }
       } else {
         await bot.sendMessage(chatIdCb, `⚠️ Rejection failed: ${result.message || 'Unknown error'}`);
       }
@@ -2915,6 +2929,90 @@ async function handleSupplyReassign(bot, callbackQuery) {
   await bot.sendMessage(chatId,
     `🚚 ${shortRequestRef(requestId)} will be supplied by *${u.name || u.user_id}* (changed by you). Tap ✅ Approve when ready.`,
     { parse_mode: 'Markdown' });
+}
+
+/**
+ * CON-2 (owner's go, 19-Nov-2026) — a sample / order / receipt flow that
+ * was paused while its new customer went through the ➕ Add Contact door.
+ *
+ * The request is an ordinary `add_contact` carrying `resume: { flow }`; the
+ * requester's session is that flow at `awaiting_customer_approval`, waiting
+ * on THIS request id. After the decision:
+ *
+ *   customer            → the flow continues with the new customer in place
+ *   contact / network   → told it was filed as a contact; back to the picker
+ *   rejected            → told; back to the picker
+ *   flow no longer there → nothing here: the requester's closing card (sent
+ *                          for every request) already carries the outcome
+ *
+ * Never throws: a resume that fails must not undo a decision already made.
+ * @param {'customer'|'contact'|'network'|'rejected'} outcome
+ * @returns {Promise<boolean>} true = a paused flow was moved
+ */
+async function resumeHeldFlowAfterContact(bot, requestId, aj, requesterUserId, outcome) {
+  try {
+    const flow = aj && aj.resume && aj.resume.flow;
+    if (!flow) return false;
+    const uid = String(requesterUserId || '');
+    const session = sessionStore.get(uid);
+    if (!session || session.type !== flow || session.step !== 'awaiting_customer_approval'
+      || String(session.customerApprovalId || '') !== String(requestId)) return false;
+    const name = aj.name || session.pendingCustomerName || 'the customer';
+    const what = { sample_flow: 'sample request', order_flow: 'order', receipt_flow: 'receipt upload' }[flow] || 'request';
+    delete session.pendingCustomerId; delete session.pendingCustomerName; delete session.customerApprovalId;
+    const telegramController = require('../controllers/telegramController');
+
+    if (outcome !== 'customer') {
+      session.step = 'customer';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(uid, outcome === 'rejected'
+        ? `❌ Customer "${name}" was not approved.\nPick a different customer for your ${what}.`
+        : `ℹ️ "${name}" was filed as a contact, not a customer.\nPick a customer for your ${what}.`);
+      if (typeof telegramController.showHeldFlowCustomerPicker === 'function') {
+        await telegramController.showHeldFlowCustomerPicker(bot, uid, uid, session);
+      }
+      return true;
+    }
+
+    let custId = '';
+    try {
+      const hit = await require('../services/customerEntity').resolve({ name });
+      custId = (hit && hit.customer_id) || '';
+    } catch (_) { /* the name alone still resumes the flow */ }
+    session.customer = name;
+    session.customerId = custId;
+    if (flow === 'sample_flow') {
+      session.step = 'quantity';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(uid, `✅ Customer "${name}" approved.\nContinuing your sample request.`);
+      if (typeof telegramController.showSampleQuantityPicker === 'function') {
+        await telegramController.showSampleQuantityPicker(bot, uid, uid);
+      }
+    } else if (flow === 'order_flow') {
+      session.step = 'quantity';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(uid, `✅ Customer "${name}" approved. Continuing your order.\n\nPick quantity:`, {
+        reply_markup: { inline_keyboard: [
+          [
+            { text: '1 Bale', callback_data: 'oq:1' },
+            { text: '2 Bales', callback_data: 'oq:2' },
+            { text: '5 Bales', callback_data: 'oq:5' },
+            { text: '10 Bales', callback_data: 'oq:10' },
+          ],
+          [{ text: '✏️ Custom', callback_data: 'oq:__custom__' }],
+          [{ text: '❌ Cancel', callback_data: 'ocanc:1' }],
+        ] },
+      });
+    } else {
+      session.step = 'amount';
+      sessionStore.set(uid, session);
+      await bot.sendMessage(uid, `✅ Customer "${name}" approved. Continuing your receipt upload.\n\nEnter the payment amount received (NGN):`);
+    }
+    return true;
+  } catch (e) {
+    logger.error(`CON-2: resume after contact decision failed for ${requestId}: ${e.message}`);
+    return false;
+  }
 }
 
 async function handleNewCustomerApproval(bot, chatId, requestId, item, requestingUser, approved, adminId) {
@@ -3501,6 +3599,7 @@ module.exports = {
   notifyAdminsApprovalRequest,
   handleApprovalCallback,
   handleContactTriageCallback,
+  resumeHeldFlowAfterContact, // CON-2
   handleMarkDone,
   handleEnrichmentMessage,
   handleEnrichmentCallback,

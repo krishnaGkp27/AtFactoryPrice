@@ -441,6 +441,13 @@ async function buildSaleCard(p) {
  * card) executes as 📒 Contact — the pre-CNET-2 behaviour, never a surprise
  * registration.
  */
+/** CON-2 — what a paused flow is called on the admin's contact card. */
+const HELD_FLOW_LINES = {
+  sample_flow: '🧪 Raised from a sample request',
+  order_flow: '📋 Raised from an order',
+  receipt_flow: '🧾 Raised from a receipt upload',
+};
+
 function buildAddContactCard(aj) {
   let text = `📇 New contact — ${aj.name || '?'}`;
   const bits = [`🏷 typed as: ${aj.type || 'other'}`];
@@ -459,6 +466,9 @@ function buildAddContactCard(aj) {
   if (aj.notes) text += `\n📝 ${aj.notes}`;
   // CRM-R1 — the provisional store the prospect is tagged with.
   if (Array.isArray(aj.stores) && aj.stores.length) text += `\n🏙 ${aj.stores.join(' · ')} · provisional`;
+  // CON-2 — raised from inside a flow that is paused on this decision.
+  const held = aj.resume && HELD_FLOW_LINES[aj.resume.flow];
+  if (held) text += `\n${held} · on hold until approved`;
   if (aj.destination) {
     // A second admin's reminder copy after a choice was already persisted.
     text += `\n\n➡️ Destination chosen: ${aj.destination}${aj.boss_name ? ` (under ${aj.boss_name})` : ''}`;
