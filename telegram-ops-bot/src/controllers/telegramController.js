@@ -7667,6 +7667,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['snt:'], handle: (bot, cq) => require('../flows/dataHealthFlow').handleCallback(bot, cq) },
   // AGT-1 — 🤖 Agent Data Access (session-free; every tap re-checks admin).
   { prefixes: ['agk:'], handle: (bot, cq) => require('../flows/agentAccessFlow').handleCallback(bot, cq) },
+  // BKP-2 — 💾 Backup (session-free; every tap re-checks admin).
+  { prefixes: ['bkp:'], handle: (bot, cq) => require('../flows/backupFlow').handleCallback(bot, cq) },
   { prefixes: ['apz:'], handle: (bot, cq) => require('../events/approvalEvents').handleMarkDone(bot, cq) },
   { prefixes: ['abx:'], handle: (bot, cq) => require('../flows/approvalsInboxFlow').handleCallback(bot, cq) },
   // DCAT-1 — design → product-category mapping (dual-admin approval).
@@ -10421,6 +10423,12 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         // AGT-1 — the coding agent's read-only data door (admin-only, gated
         // in the flow's start()).
         await require('../flows/agentAccessFlow').start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'backup': {
+        // BKP-2 — the offsite backup's status card (admin-only, gated in
+        // the flow's start()).
+        await require('../flows/backupFlow').start(bot, chatId, uid, messageId);
         break;
       }
       case 'display_units': {

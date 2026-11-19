@@ -93,6 +93,14 @@ const DEFAULTS = {
   // schedule and the DM reports off entirely (the 🩺 tile still works).
   SENTINEL_ENABLED: 1,
   SENTINEL_HOUR: 20,
+  // BKP-2 (19-Nov-2026) — the offsite backup: the workbook as an .xlsx and
+  // the database records, sent over Telegram once a day. HOUR is the Lagos
+  // hour of the run (the first tick at or after it; a bot that was down
+  // catches up). IDS = who receives it, a CSV of chat ids (a private group
+  // or channel id works); blank = every admin in the Railway ADMIN_IDS.
+  OFFSITE_BACKUP_ENABLED: 1,
+  OFFSITE_BACKUP_HOUR: 2,
+  OFFSITE_BACKUP_IDS: '',
   // APX-2 — minutes within which two IDENTICAL requests from the same person
   // are treated as one double-tapped Submit rather than two real requests.
   // Only ever flags a card, never rejects. Widen it if submissions are slow

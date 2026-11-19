@@ -67,6 +67,9 @@ const IN_DEFAULTS = {
   APPROVAL_TWIN_GUARD: 'number',
   APPROVAL_DOUBLE_TAP_SECONDS: 'number',
   TYPED_CUSTOMER_LINE: 'number',           // CUS-4 — default 1 (on); an empty cell is still on
+  OFFSITE_BACKUP_ENABLED: 'number',        // BKP-2 — default 1 (on); an empty cell is still on
+  OFFSITE_BACKUP_HOUR: 'number',           // BKP-2 — default 2 (02:00 Lagos); an empty cell is not midnight
+  OFFSITE_BACKUP_IDS: 'text',              // BKP-2 — blank = every admin
   ASKED_ADMIN_WIDEN_HOURS: 'number',       // PRC-2
   AI_TEXT_PARSER: 'number',                // default 0; `reads` is a filled cell
   PAYMENT_FINANCE_REMINDER_HOURS: 'number',

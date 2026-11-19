@@ -308,6 +308,62 @@ async function findRowIndex(sheetName, columnIndex, matchValue) {
   return -1;
 }
 
+/**
+ * BKP-2 — a tab as an A1 range for the raw reads below: the whole tab, or a
+ * window of rows (`'AuditLog'!20001:30000`, every column). A quote inside a
+ * title is doubled, as A1 notation requires.
+ */
+function tabRange(name, fromRow, toRow) {
+  const quoted = `'${String(name).replace(/'/g, "''")}'`;
+  return fromRow && toRow ? `${quoted}!${fromRow}:${toRow}` : quoted;
+}
+
+/**
+ * BKP-2 — several ranges in ONE request (`values.batchGet`), for the offsite
+ * backup. Numbers come back as numbers (UNFORMATTED_VALUE) and a date cell
+ * as the text it DISPLAYS (FORMATTED_STRING) — so `28.5` is not rounded by a
+ * column format and a container label stored as a date still reads `Mar26`.
+ * Values only: formulas and formatting are not carried.
+ * @param {string[]} ranges A1 ranges (see tabRange)
+ * @returns {Promise<Array<Array<Array>>>} one rows array per range, in order
+ */
+async function readRangesRaw(ranges) {
+  const list = (Array.isArray(ranges) ? ranges : []).filter(Boolean);
+  if (!list.length) return [];
+  const s = await getSheets();
+  return withRetry(async () => {
+    const res = await s.spreadsheets.values.batchGet({
+      spreadsheetId: spreadsheetId(),
+      ranges: list,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+      dateTimeRenderOption: 'FORMATTED_STRING',
+    });
+    const got = (res.data && res.data.valueRanges) || [];
+    return list.map((_, i) => (got[i] && got[i].values) || []);
+  }, 'readRangesRaw');
+}
+
+/**
+ * BKP-2 — every tab with the size of its GRID (allocated rows × columns —
+ * an upper bound on what it holds), so a caller can plan its reads before
+ * pulling any values.
+ * @returns {Promise<Array<{name: string, rows: number, cols: number}>>}
+ */
+async function getSheetGrid() {
+  const s = await getSheets();
+  return withRetry(async () => {
+    const res = await s.spreadsheets.get({
+      spreadsheetId: spreadsheetId(),
+      fields: 'sheets.properties(title,gridProperties(rowCount,columnCount))',
+    });
+    return (res.data.sheets || []).map((sh) => ({
+      name: sh.properties.title,
+      rows: Number(sh.properties.gridProperties && sh.properties.gridProperties.rowCount) || 0,
+      cols: Number(sh.properties.gridProperties && sh.properties.gridProperties.columnCount) || 0,
+    }));
+  }, 'getSheetGrid');
+}
+
 async function getSheetNames() {
   const s = await getSheets();
   return withRetry(async () => {
@@ -356,6 +412,9 @@ module.exports = {
   spreadsheetId,
   readRange,
   readRangeUnformatted,
+  readRangesRaw,
+  tabRange,
+  getSheetGrid,
   appendRows,
   updateRange,
   findRowIndex,

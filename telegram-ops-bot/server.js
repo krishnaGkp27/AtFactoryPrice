@@ -559,6 +559,9 @@ const server = app.listen(PORT, async () => {
     // BKP-1 — daily snapshot of the master sheet into the backup Drive
     // folder (Settings-tunable hour/retention; admins DM'd on failure).
     require('./src/services/sheetBackup').start(bot);
+    // BKP-2 — the offsite backup: the workbook (.xlsx, built in-process)
+    // and the database records, sent over Telegram once a day.
+    try { require('./src/services/offsiteBackup').start(bot); } catch (e) { logger.warn(`offsiteBackup boot: ${e.message}`); }
     // APR-1 — pending-approval reminder: re-sends admin cards for stale
     // pending ApprovalQueue rows, covering approvals queued outside this
     // process (Drive photo imports) and missed one-shot cards. First pass

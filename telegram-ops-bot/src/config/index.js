@@ -134,6 +134,16 @@ const config = {
    * AGENT_DATA_KEY is an optional fixed key for the same door — the usual
    * key is minted from Telegram (📊 Reporting → 🤖 Agent Data Access).
    */
+  /**
+   * BKP-2 — the offsite backup's memory budget. Building an .xlsx holds the
+   * whole file in memory (about 0.5 MB per thousand cells), so a workbook
+   * file carries at most OFFSITE_BACKUP_CELLS_PER_FILE cells (default
+   * 250,000, roughly 170 MB while it is built) and a larger workbook goes
+   * out as several files. Raise it on a bigger container for fewer files.
+   */
+  offsiteBackup: {
+    cellsPerFile: Math.max(10_000, parseInt(process.env.OFFSITE_BACKUP_CELLS_PER_FILE, 10) || 250_000),
+  },
   logSink: {
     enabled: !['0', 'false'].includes(String(process.env.LOG_SINK_ENABLED || '').toLowerCase()),
     level: String(process.env.LOG_SINK_LEVEL || 'INFO').toUpperCase(),

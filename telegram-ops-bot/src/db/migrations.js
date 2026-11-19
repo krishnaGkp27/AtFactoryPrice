@@ -153,6 +153,24 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    // BKP-2 (19-Nov-2026) — which scheduled job ran on which day. The bot
+    // redeploys on every push, so "did today's backup already go out?"
+    // cannot live in memory: without this row each restart would send it
+    // again. Operational state — Postgres, never a sheet (rule 5b).
+    id: '005_job_runs',
+    sql: `
+      CREATE TABLE IF NOT EXISTS job_runs (
+        id          BIGSERIAL PRIMARY KEY,
+        job         TEXT NOT NULL,
+        day         DATE NOT NULL,
+        status      TEXT NOT NULL,
+        detail      JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS job_runs_job_day_idx ON job_runs (job, day);
+    `,
+  },
 ];
 
 /**

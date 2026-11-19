@@ -277,6 +277,9 @@ const ACTIVITIES = [
   // AGT-1 — the coding agent's read-only data door: mint / replace / switch
   // off its key, or send the report file (admin-only, gated in the flow).
   { code: 'agent_access',          label: 'Agent Data Access',         icon: '🤖', callback: 'act:agent_access',       hub: 'reporting' },
+  // BKP-2 — the offsite backup: shows the nightly run and sends one on
+  // demand (admin-only, gated in the flow's start()).
+  { code: 'backup',                label: 'Backup',                    icon: '💾', callback: 'act:backup',             hub: 'reporting' },
   // T3 — admin read-only lens on the supply-order pipeline (Orders +
   // Customers + LedgerBalanceCache joined into one view).
   // SUPQ-1 (owner, 22-Aug-2026): relabeled — this IS the goods-owed queue.
