@@ -42,4 +42,18 @@ async function latest(job, statuses = ['ok', 'manual']) {
   return (res && res.rows && res.rows[0]) || null;
 }
 
-module.exports = { record, hasOk, latest };
+/**
+ * BKP-4 — every run of a job recorded since an instant, oldest first.
+ * null without Postgres (the caller then works from what it holds in memory).
+ * @param {string} job  @param {Date|string} since
+ * @returns {Promise<Array<{day: string, status: string, detail: object, created_at: Date}>|null>}
+ */
+async function since(job, sinceAt) {
+  if (!pool.isEnabled()) return null;
+  const res = await pool.query(
+    'SELECT day, status, detail, created_at FROM job_runs WHERE job = $1 AND created_at >= $2 ORDER BY created_at ASC',
+    [String(job), new Date(sinceAt).toISOString()]);
+  return (res && res.rows) || [];
+}
+
+module.exports = { record, hasOk, latest, since };

@@ -1281,6 +1281,31 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
 Spec: `specs/BKP-3_TWO_ADMINS_ON_BACKUP.md` (§6 lists what is not yet
 closed).
 
+**Tightened the same day (BKP-4, owner, on the first nightly files in every
+admin's chat):** *"I did not ask you to send the backup of the sheet like
+this so easily … Can you delete it all? Let you disable this function
+entirely for any other admin and give it a switch inside the sheet
+itself."*
+
+- **The backup is OFF unless the owner switches it on.** The switch is a
+  row on the Settings sheet, `OFFSITE_BACKUP_ENABLED`: `1` is on; `0`, an
+  empty cell, a missing row and a sheet that cannot be read are all off.
+  Off means no daily backup and none on demand.
+- **Nobody receives a backup by default.** Only the admins NAMED in the
+  Settings row `OFFSITE_BACKUP_IDS` do, and "every admin" is never a
+  default again. An admin who is not named has no part in the function:
+  no file, no schedule, no request, no approval card, no notice.
+- **The two-admin rule above still stands** when it is on: two or more
+  named admins, or nothing is sent.
+- **What was sent can be taken back.** Every file the backup sends is
+  recorded with its chat and message id, and `🗑 Delete the backup files
+  already sent` removes the files of the last 48 hours (Telegram's limit)
+  from every admin's chat. Any admin may run it.
+- **No bulk-data door opens by default.** A new function that hands out
+  the company's records starts switched off, with its switch in the sheet.
+
+Spec: `specs/BKP-4_SWITCH_AND_CLEANUP.md`.
+
 ## Incident log (why these rules exist)
 
 | Date | Incident | Rule born |
@@ -1328,5 +1353,6 @@ closed).
 | 04-Nov-2026 | On a sale card a bale the seller loaded WHOLE (a bare typed number, 📦 Take whole bale) and still whole at submit is ONE line and one B (`481 · 150 yd`, `10B · 1,500 yd`), whichever door raised it; a than dropped from it un-wholes the bale (its thans print one per line, `9B + 4t`); a bale typed as `6189/5` stays a than line; a flagged than keeps its bale than by than. The request still carries every than; nothing in execution changes. Owner, on Abdul's 50-line card: "It is not the same way it was coming before"; layout shown; "Go". | SELL-T3e (`approvalCards.foldWholeBales`; `specs/SELL-T3_TYPED_THAN_LIST.md`) |
 | 19-Nov-2026 | A marketer who met a new buyer had no way to record them (one tile, typed words ignored), a salesperson had an eight-question form, and the business card stayed in a pocket. Owner: "go ahead with the prospect door as per your own recommendation" | §12b amendment (PRS-1) |
 | 19-Nov-2026 | The offsite backup shipped with `📤 Send me a backup now`: one admin, one tap, the whole workbook and the database records in that chat, nobody else told; and its recipient list was a Settings cell any workbook editor could point at any chat. Owner the same day: "This backup job should never be happening alone to a single admin … make it available only through two admins" | §22 (BKP-3) |
+| 19-Nov-2026 | The first nightly backup (02:20) put the whole workbook and the database records in every admin's chat: the job was ON by default and its default recipients were every admin. Owner: "I did not ask you to send the backup of the sheet like this so easily … Can you delete it all? … disable this function entirely for any other admin and give it a switch inside the sheet itself" | §22 tightened (BKP-4) |
 
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

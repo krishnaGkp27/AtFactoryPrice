@@ -2,6 +2,13 @@
 
 Shipped 19-Nov-2026, the same day as BKP-2.
 
+**Tightened the same day by BKP-4** (`specs/BKP-4_SWITCH_AND_CLEANUP.md`):
+the backup is OFF unless Settings `OFFSITE_BACKUP_ENABLED` says 1, and only
+the admins NAMED in `OFFSITE_BACKUP_IDS` take part. Wherever this document
+says "every admin", read "every named admin"; §4's "a cell that names fewer
+than two admins … every admin receives the backup instead" no longer holds
+(nothing is sent).
+
 Owner, 19-Nov-2026: "This backup job should never be happening alone to a
 single admin. It may cause risk to the company data, so make it available
 only through two admins. It will get stricter later."

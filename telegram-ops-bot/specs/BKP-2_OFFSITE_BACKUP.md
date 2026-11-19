@@ -6,6 +6,11 @@ Shipped 19-Nov-2026. Owner's idea 01-Sep-2026, go 19-Nov-2026.
 a backup never goes to one admin alone. Sections 3, 5 and 7 below carry
 the change; the files, the schedule and the restore are as written.
 
+**And by BKP-4** (`specs/BKP-4_SWITCH_AND_CLEANUP.md`): the job is OFF
+unless Settings `OFFSITE_BACKUP_ENABLED` says 1 (the default below is no
+longer 1), nobody receives it unless named in `OFFSITE_BACKUP_IDS` (blank
+is nobody, not every admin), and sent files can be removed from the chats.
+
 ## 1. Why
 
 No automated backup ran at all. BKP-1 copied the spreadsheet inside Google

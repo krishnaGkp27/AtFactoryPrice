@@ -89,7 +89,8 @@ function resetWorld() {
     'R-3': { requestId: 'R-3', user: '777', status: 'approved', actionJSON: { action: 'sale_bundle' } },
   };
   approvalQueueRepository.getByRequestId = async (id) => queue[id] || null;
-  settings = { OFFSITE_BACKUP_ENABLED: 1, OFFSITE_BACKUP_HOUR: 2, OFFSITE_BACKUP_IDS: '' };
+  // BKP-4 — the switch on and both admins named: what most tests need.
+  settings = { OFFSITE_BACKUP_ENABLED: 1, OFFSITE_BACKUP_HOUR: 2, OFFSITE_BACKUP_IDS: '777, 888' };
 
   reads = [];
   // the GRID is what Google allocates: at least the rows held, usually more
@@ -356,33 +357,101 @@ async function withAdmins(ids, fn) {
   try { return await fn(); } finally { config.access.adminIds = keep; }
 }
 
-test('who receives the daily backup: every admin; the Settings cell may only narrow among admins', () => {
-  const d = (cell) => offsiteBackup.dailyRecipients({ OFFSITE_BACKUP_IDS: cell });
-  assert.deepEqual(d(''), { ids: ['777', '888'], ignored: [], widened: false, blocked: '' });
-  assert.deepEqual(offsiteBackup.dailyRecipients(null).ids, ['777', '888']);
-  // a group, a channel, an employee: never a recipient, and named
-  assert.deepEqual(d(' -1001234567890, 555 ; 555 abc '), { ids: ['777', '888'], ignored: ['-1001234567890', '555'], widened: true, blocked: '' });
-  // ONE admin named: not honoured — every admin receives it, never one alone
-  assert.deepEqual(d('888'), { ids: ['777', '888'], ignored: [], widened: true, blocked: '' });
-  // two admins named: honoured, in the cell's order
-  assert.deepEqual(d('888, 777, 4242'), { ids: ['888', '777'], ignored: ['4242'], widened: false, blocked: '' });
-  assert.deepEqual(offsiteBackup.recipients({ OFFSITE_BACKUP_IDS: '888' }), ['777', '888']);
+/* BKP-4 — "disable this function entirely for any other admin and give it a
+ * switch inside the sheet itself." */
+
+test('the switch: OFF unless the Settings cell says 1 — a missing row, an empty cell and 0 are all off', () => {
+  const settingsRepo = require('../../../src/repositories/settingsRepository');
+  assert.equal(settingsRepo.DEFAULTS.OFFSITE_BACKUP_ENABLED, 0, 'the in-code default is OFF');
+  assert.equal(settingsRepo.DEFAULTS.OFFSITE_BACKUP_IDS, '', 'and nobody is named');
+  for (const v of [undefined, null, '', 0, '0', 'off', 'no', 2, 'maybe']) assert.equal(offsiteBackup.switchedOn({ OFFSITE_BACKUP_ENABLED: v }), false, String(v));
+  for (const v of [1, '1', ' 1 ', 'on', 'ON', 'yes', 'true']) assert.equal(offsiteBackup.switchedOn({ OFFSITE_BACKUP_ENABLED: v }), true, String(v));
+  assert.equal(offsiteBackup.switchedOn(null), false);
 });
 
-test('fewer than two admins: nobody receives the daily backup, whatever the cell says', async () => {
-  await withAdmins(['777'], async () => {
-    const r = offsiteBackup.dailyRecipients({ OFFSITE_BACKUP_IDS: '777, -100123, 888' });
-    assert.deepEqual(r.ids, []);
-    assert.equal(r.blocked, 'a backup goes to at least 2 admins and only 1 is set up (Railway ADMIN_IDS)');
+test('who may hold a backup: only the admins NAMED in the sheet — blank is nobody, never "every admin"', () => {
+  const h = (enabled, cell) => offsiteBackup.holders({ OFFSITE_BACKUP_ENABLED: enabled, OFFSITE_BACKUP_IDS: cell });
+  // off: nobody, whatever is named
+  assert.deepEqual(h(0, '777, 888'), { on: false, named: ['777', '888'], ignored: [], ids: [], blocked: 'the backup is switched off (Settings OFFSITE_BACKUP_ENABLED)' });
+  assert.deepEqual(offsiteBackup.holders(null).ids, []);
+  assert.deepEqual(offsiteBackup.holders({}).ids, [], 'the defaults send nothing');
+  // on, nobody named: nobody
+  assert.deepEqual(h(1, ''), { on: true, named: [], ignored: [], ids: [], blocked: 'nobody is named to receive it (Settings OFFSITE_BACKUP_IDS)' });
+  // a group, a channel, an employee: never a holder, and reported
+  assert.deepEqual(h(1, ' -1001234567890, 555 ; 555 abc '), { on: true, named: [], ignored: ['-1001234567890', '555'], ids: [], blocked: 'nobody is named to receive it (Settings OFFSITE_BACKUP_IDS)' });
+  // ONE admin named: nothing is sent — a backup never goes to one admin alone (BKP-3)
+  assert.deepEqual(h(1, '888'), { on: true, named: ['888'], ignored: [], ids: [], blocked: 'only one admin is named to receive it, and a backup never goes to one admin alone' });
+  // two named: those two, in the cell's order
+  assert.deepEqual(h(1, '888, 777, 4242'), { on: true, named: ['888', '777'], ignored: ['4242'], ids: ['888', '777'], blocked: '' });
+  assert.deepEqual(offsiteBackup.recipients({ OFFSITE_BACKUP_ENABLED: 1, OFFSITE_BACKUP_IDS: '888,777' }), ['888', '777']);
+});
+
+test('an admin who is not named receives nothing: three admins, two named', async () => {
+  await withAdmins(['777', '888', '999'], async () => {
     const bot = createFakeBot();
     const res = await offsiteBackup.run(bot, { now: NOW });
-    assert.deepEqual([res.ok, res.blocked], [false, true]);
+    assert.equal(res.ok, true);
+    assert.deepEqual([...new Set(docs(bot).map((x) => String(x.chatId)))], ['777', '888']);
+    assert.ok(!bot.calls.some((c) => String(c.args.chatId) === '999'), '999 hears nothing at all');
+  });
+});
+
+test('switched off, or nobody named, or one named: nothing is read, built or sent — daily and on demand', async () => {
+  const release = { requestId: 'R-1', requestedBy: '888', approvedBy: '777' };
+  for (const [cfg, why] of [
+    [{ OFFSITE_BACKUP_ENABLED: 0, OFFSITE_BACKUP_IDS: '777, 888' }, /switched off/],
+    [{ OFFSITE_BACKUP_ENABLED: '', OFFSITE_BACKUP_IDS: '777, 888' }, /switched off/],
+    [{ OFFSITE_BACKUP_IDS: '777, 888' }, /switched off/],
+    [{ OFFSITE_BACKUP_ENABLED: 1, OFFSITE_BACKUP_IDS: '' }, /nobody is named/],
+    [{ OFFSITE_BACKUP_ENABLED: 1, OFFSITE_BACKUP_IDS: '777' }, /only one admin is named/],
+  ]) {
+    settings = { OFFSITE_BACKUP_HOUR: 2, ...cfg };
+    const bot = createFakeBot();
+    const daily = await offsiteBackup.run(bot, { now: NOW });
+    assert.equal(daily.ok, false, JSON.stringify(cfg));
+    assert.equal(daily.blocked, true, JSON.stringify(cfg));
+    assert.match(daily.message, why);
+    const demand = await offsiteBackup.run(bot, { now: NOW, kind: 'manual', release });
+    assert.equal(demand.ok, false, JSON.stringify(cfg));
+    assert.equal(docs(bot).length, 0, JSON.stringify(cfg));
+    assert.equal(bot.calls.length, 0, 'not even a reachability check');
+  }
+  assert.equal(reads.length, 0, 'nothing was ever read from the workbook');
+  assert.equal(runs.length, 0);
+});
+
+test('an unreadable Settings sheet releases nothing: it reads as the defaults, where the switch is off', async () => {
+  settingsRepository.getAll = async () => { throw new Error('quota'); };
+  const bot = createFakeBot();
+  const res = await offsiteBackup.run(bot, { now: NOW, kind: 'manual', release: { requestId: 'R-1', requestedBy: '888', approvedBy: '777' } });
+  assert.deepEqual([res.ok, res.off], [false, true]);
+  assert.equal(docs(bot).length, 0);
+  const allowed = await offsiteBackup.releaseAllowed({ requestedBy: '888', approvedBy: '777' });
+  assert.deepEqual([allowed.ok, allowed.off], [false, true]);
+});
+
+test('releaseAllowed: the switch on, two different admins, BOTH named', async () => {
+  const ok = await offsiteBackup.releaseAllowed({ requestedBy: '888', approvedBy: '777' });
+  assert.deepEqual(ok, { ok: true, ids: ['888', '777'] });
+  assert.match((await offsiteBackup.releaseAllowed({ requestedBy: '777', approvedBy: '777' })).message, /two different admins/);
+  await withAdmins(['777', '888', '999'], async () => {
+    // 999 is an admin, but not named in the sheet
+    const r = await offsiteBackup.releaseAllowed({ requestedBy: '777', approvedBy: '999' });
+    assert.deepEqual([r.ok, r.message], [false, 'A backup is released only between two admins named in Settings OFFSITE_BACKUP_IDS.']);
+    const bot = createFakeBot();
+    queue['R-7'] = { requestId: 'R-7', user: '777', status: 'approved', actionJSON: { action: 'release_backup' } };
+    const run = await offsiteBackup.run(bot, { now: NOW, kind: 'manual', release: { requestId: 'R-7', requestedBy: '777', approvedBy: '999' } });
+    assert.deepEqual([run.ok, run.refused], [false, true]);
     assert.equal(docs(bot).length, 0);
-    assert.equal(reads.length, 0, 'nothing was even read');
   });
-  await withAdmins([], async () => {
-    assert.match(offsiteBackup.dailyRecipients({}).blocked, /only 0 are set up/);
-  });
+});
+
+test('the switch rows are put on the Settings sheet when missing — off, nobody named — and a row already there is never touched', async () => {
+  const added = [];
+  const realEnsure = settingsRepository.ensureRow;
+  settingsRepository.ensureRow = async (key, value) => { added.push([key, value]); return true; };
+  try { await offsiteBackup.ensureSwitchRows(); } finally { settingsRepository.ensureRow = realEnsure; }
+  assert.deepEqual(added, [['OFFSITE_BACKUP_ENABLED', 0], ['OFFSITE_BACKUP_IDS', '']]);
 });
 
 test('the pair behind a backup on demand: two DIFFERENT admins from ADMIN_IDS', () => {
@@ -415,6 +484,10 @@ test('run: each file goes up once and is forwarded by its file id; the run is re
   assert.deepEqual([runs[0].job, runs[0].day, runs[0].status], ['offsite_backup', '2026-11-19', 'ok']);
   assert.equal(runs[0].detail.workbook.tabs, 4);
   assert.equal(runs[0].detail.recipients, 2);
+  // BKP-4 — where every file now sits, so it can be taken out again
+  assert.deepEqual(runs[0].detail.messages.map((x) => x.c), ['777', '888', '777', '888']);
+  assert.ok(runs[0].detail.messages.every((x) => Number.isInteger(x.m) && x.m > 0));
+  assert.deepEqual(offsiteBackup.sentInMemory()[0].messages, runs[0].detail.messages);
 });
 
 test('an admin the bot cannot reach is found BEFORE anything is built: one reachable admin = nothing sent', async () => {
@@ -430,8 +503,9 @@ test('an admin the bot cannot reach is found BEFORE anything is built: one reach
   assert.equal(runs.length, 0);
 });
 
-test('three admins, one unreachable: the two who can be reached receive it', async () => {
+test('three named admins, one unreachable: the two who can be reached receive it', async () => {
   await withAdmins(['777', '888', '999'], async () => {
+    settings.OFFSITE_BACKUP_IDS = '777, 888, 999';
     const bot = createFakeBot();
     const act = bot.sendChatAction.bind(bot);
     bot.sendChatAction = async (chatId, ...rest) => { if (String(chatId) === '888') throw new Error('chat not found'); return act(chatId, ...rest); };
@@ -460,6 +534,20 @@ test('run: a send that fails AFTER the check leaves one holder — recorded, and
   res = await offsiteBackup.run(bot, { now: NOW });
   assert.equal(res.ok, false);
   assert.match(res.message, /afp-backup-2026-11-19-workbook\.xlsx.* reached nobody: bot was blocked/);
+});
+
+test('a run that fails half way keeps the record of what DID land, so it can be removed', async () => {
+  const bot = createFakeBot();
+  const send = bot.sendDocument.bind(bot);
+  let k = 0;
+  // the workbook reaches both admins; the data file reaches nobody
+  bot.sendDocument = async (...a) => { k += 1; if (k > 2) throw new Error('timeout'); return send(...a); };
+  const res = await offsiteBackup.run(bot, { now: NOW });
+  assert.equal(res.ok, false);
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].status, 'failed');
+  assert.deepEqual(runs[0].detail.messages.map((x) => x.c), ['777', '888']);
+  assert.equal(await jobRuns.hasOk('offsite_backup', '2026-11-19'), false, 'not the day\'s run');
 });
 
 test('run on demand: to the two admins who asked and approved, with sound, recorded with the pair', async () => {
@@ -586,7 +674,7 @@ test('tick: a failure tells the admins ONCE, waits an hour, and stops after thre
 
   assert.equal(await offsiteBackup.tick(bot, t('02:00')), 'failed');
   const dms = () => bot.callsTo('sendMessage').map((c) => c.args);
-  assert.equal(dms().length, 2, 'both admins, once');
+  assert.equal(dms().length, 2, 'both named admins, once');
   assert.match(dms()[0].text, /^⚠️ Backup failed\nSheets is down\n\nThe bot tries again in an hour, three times a day\./);
 
   assert.equal(await offsiteBackup.tick(bot, t('02:10')), 'waiting');
@@ -604,8 +692,9 @@ test('tick: a failure tells the admins ONCE, waits an hour, and stops after thre
   assert.equal(await offsiteBackup.tick(bot, t('03:15')), 'done');
 });
 
-test('tick: with one admin the daily backup does not go out — said once a day, never retried as a failure', async () => {
-  await withAdmins(['777'], async () => {
+test('tick: one admin named — the daily backup does not go out; said once a day to THAT admin only', async () => {
+  await withAdmins(['777', '888', '999'], async () => {
+    settings.OFFSITE_BACKUP_IDS = '777';
     const bot = createFakeBot();
     const t = (hhmm) => new Date(`2026-11-19T${hhmm}:00+01:00`);
     assert.equal(await offsiteBackup.tick(bot, t('02:00')), 'blocked');
@@ -613,12 +702,28 @@ test('tick: with one admin the daily backup does not go out — said once a day,
     assert.equal(await offsiteBackup.tick(bot, t('09:00')), 'blocked');
     const dms = bot.callsTo('sendMessage').map((c) => c.args);
     assert.equal(dms.length, 1, 'one notice for the day');
-    assert.equal(String(dms[0].chatId), '777');
-    assert.match(dms[0].text, /^🔐 The daily backup was NOT sent\na backup goes to at least 2 admins and only 1 is set up \(Railway ADMIN_IDS\)\.\n\nA backup never goes to one admin alone\./);
+    assert.equal(String(dms[0].chatId), '777', 'the admins who are not named hear nothing');
+    assert.match(dms[0].text, /^🔐 The daily backup was NOT sent\nonly one admin is named to receive it, and a backup never goes to one admin alone\.\n\nA backup never goes to one admin alone\. Name a second admin in Settings OFFSITE_BACKUP_IDS/);
     assert.equal(docs(bot).length, 0);
     assert.equal(await offsiteBackup.tick(bot, new Date('2026-11-20T02:00:00+01:00')), 'blocked');
     assert.equal(bot.callsTo('sendMessage').length, 2, 'said again the next day');
   });
+});
+
+test('tick: switched on with nobody named — nothing is sent and nobody is messaged', async () => {
+  settings.OFFSITE_BACKUP_IDS = '';
+  const bot = createFakeBot();
+  assert.equal(await offsiteBackup.tick(bot, NOW), 'blocked');
+  assert.equal(bot.calls.length, 0);
+});
+
+test('tick: the defaults — no Settings row at all — send nothing, ever', async () => {
+  settings = {};
+  const bot = createFakeBot();
+  assert.equal(await offsiteBackup.tick(bot, NOW), 'disabled');
+  settings = { OFFSITE_BACKUP_ENABLED: '' , OFFSITE_BACKUP_IDS: '777,888' };
+  assert.equal(await offsiteBackup.tick(bot, NOW), 'disabled', 'an empty switch cell is off');
+  assert.equal(bot.calls.length, 0);
 });
 
 test('tick: unreadable Settings sends nothing', async () => {
@@ -630,36 +735,58 @@ test('tick: unreadable Settings sends nothing', async () => {
 
 /* ── the status card ─────────────────────────────────────────────────── */
 
-test('status + card: the schedule, who receives it, and the last run', async () => {
+test('status + card: off by default; on shows the schedule and the named holders; a non-holder sees nothing of it', async () => {
+  const card = backupFlow._internals.cardText;
+  // the defaults: off
+  settings = {};
   let st = await offsiteBackup.status();
-  assert.deepEqual([st.enabled, st.hour, st.recipients, st.last], [true, 2, ['777', '888'], null]);
-  assert.deepEqual([st.ignored, st.widened, st.blocked, st.admins], [[], false, '', 2]);
-  let text = backupFlow._internals.cardText(st, ['Krishna', 'Musa']);
+  assert.deepEqual([st.enabled, st.recipients, st.named, st.last], [false, [], [], null]);
+  assert.equal(card(st, []), [
+    '💾 *Backup*', '',
+    '🔴 Switched OFF. No backup is sent to anyone, daily or on demand.',
+    'The switch is in the Settings sheet: `OFFSITE_BACKUP_ENABLED` (1 = on, 0 = off).',
+    'Who may receive one is named there too: `OFFSITE_BACKUP_IDS` (two or more admin ids). Blank = nobody.',
+  ].join('\n'));
+  assert.deepEqual(backupFlow._internals.keyboard(st, null, '777').flat().map((b) => b.callback_data), ['act:__back__'], 'nothing to ask while off');
+  assert.deepEqual(backupFlow._internals.keyboard(st, null, '777', { purgeable: true }).flat().map((b) => `${b.text}|${b.callback_data}`),
+    ['🗑 Delete the backup files already sent|bkp:del', '🏠 Back to menu|act:__back__']);
+  assert.match(card(st, [], { purgeable: true, note: 'n' }), /\n\n🗑 Backup files sent in the last 48 hours can still be removed from the chats\.\n\nn$/);
+
+  // on, both named
+  settings = { OFFSITE_BACKUP_ENABLED: 1, OFFSITE_BACKUP_HOUR: 2, OFFSITE_BACKUP_IDS: '777, 888' };
+  st = await offsiteBackup.status();
+  assert.deepEqual([st.enabled, st.hour, st.recipients, st.named, st.ignored, st.blocked, st.admins], [true, 2, ['777', '888'], ['777', '888'], [], '', 2]);
+  let text = card(st, ['Krishna', 'Musa'], { holder: true });
   assert.equal(text, [
     '💾 *Backup*', '',
     'Runs every day at 02:00 and goes to: Krishna, Musa.',
     'Two files: the workbook, and the database records.',
-    '🔐 A backup never goes to one admin alone. One on demand is asked by one admin and approved by another, and both receive it.',
+    '🔐 A backup never goes to one admin alone. One on demand is asked by one named admin and approved by another, and both receive it.',
     '', 'Last backup: none on record yet.',
   ].join('\n'));
+  assert.equal(backupFlow._internals.isHolder(st, '777'), true);
+  assert.equal(backupFlow._internals.isHolder(st, '999'), false);
 
-  // what the two-admin rule did with the Settings cell is said on the card
-  settings.OFFSITE_BACKUP_IDS = '-1001234567890, 888';
-  text = backupFlow._internals.cardText(await offsiteBackup.status(), ['Krishna', 'Musa']);
-  assert.match(text, /⚠️ Settings `OFFSITE_BACKUP_IDS` names 1 chat that is not an admin\. Only admins receive a backup\.\n⚠️ Settings `OFFSITE_BACKUP_IDS` names fewer than two admins, so every admin receives the backup\./);
-  settings.OFFSITE_BACKUP_IDS = '';
-  await withAdmins(['777'], async () => {
-    const one = await offsiteBackup.status();
-    assert.deepEqual([one.recipients, one.admins], [[], 1]);
-    assert.match(backupFlow._internals.cardText(one, []), /^💾 \*Backup\*\n\n🔐 The daily backup is NOT being sent: a backup goes to at least 2 admins and only 1 is set up \(Railway ADMIN_IDS\)\.\n/);
-    assert.deepEqual(backupFlow._internals.keyboard(one, null, '777').flat().map((b) => b.callback_data), ['act:__back__'], 'nothing to ask with one admin');
-  });
-
-  // the pending request, as its asker and as the other admin see it
-  const open = { who: 'Krishna', age: 'under 1h', ref: 'R-AB12', mine: true };
-  assert.match(backupFlow._internals.cardText(st, ['Krishna', 'Musa'], { open }), /\n\n⏳ You asked for a backup under 1h ago · R-AB12 · waiting on another admin\.$/);
-  assert.match(backupFlow._internals.cardText(st, ['Krishna', 'Musa'], { open: { ...open, mine: false } }), /\n\n⏳ Krishna asks for a backup · under 1h ago · R-AB12\. Approving sends the files to you and to Krishna\.$/);
+  // an admin who is NOT named: the function does not exist for them
+  assert.equal(card(st, [], { holder: false }), '💾 *Backup*\n\nThe backup is not open to you.');
+  assert.deepEqual(backupFlow._internals.keyboard(st, null, '999').flat().map((b) => b.callback_data), ['act:__back__']);
   const row = { requestId: 'aaaa1111-2222', user: '777' };
+  assert.deepEqual(backupFlow._internals.keyboard(st, row, '999').flat().map((b) => b.callback_data), ['act:__back__'], 'no decision buttons either');
+
+  // a chat in the cell that is not an admin, and one admin named
+  settings.OFFSITE_BACKUP_IDS = '-1001234567890, 888';
+  st = await offsiteBackup.status();
+  text = card(st, [], { holder: true });
+  assert.match(text, /^💾 \*Backup\*\n\n🟡 Switched on, but nothing is sent: only one admin is named to receive it, and a backup never goes to one admin alone\.\n/);
+  assert.match(text, /⚠️ Settings `OFFSITE_BACKUP_IDS` names 1 chat that is not an admin\. Only admins receive a backup\./);
+  assert.deepEqual(backupFlow._internals.keyboard(st, null, '888').flat().map((b) => b.callback_data), ['act:__back__'], 'nothing to ask while blocked');
+  settings.OFFSITE_BACKUP_IDS = '777, 888';
+  st = await offsiteBackup.status();
+
+  // the pending request, as its asker and as the other named admin see it
+  const open = { who: 'Krishna', age: 'under 1h', ref: 'R-AB12', mine: true };
+  assert.match(card(st, ['Krishna', 'Musa'], { holder: true, open }), /\n\n⏳ You asked for a backup under 1h ago · R-AB12 · waiting on another named admin\.$/);
+  assert.match(card(st, ['Krishna', 'Musa'], { holder: true, open: { ...open, mine: false } }), /\n\n⏳ Krishna asks for a backup · under 1h ago · R-AB12\. Approving sends the files to you and to Krishna\.$/);
   assert.deepEqual(backupFlow._internals.keyboard(st, row, '777').flat().map((b) => b.callback_data), ['apg:nudge:aaaa1111-2222', 'apg:st:aaaa1111-2222', 'act:__back__']);
   assert.deepEqual(backupFlow._internals.keyboard(st, row, '888').flat().map((b) => `${b.text}|${b.callback_data}`),
     ['✅ Approve and send|approve:aaaa1111-2222', '❌ Reject|reject:aaaa1111-2222', '🏠 Back to menu|act:__back__']);
@@ -668,13 +795,9 @@ test('status + card: the schedule, who receives it, and the last run', async () 
 
   await offsiteBackup.run(createFakeBot(), { now: NOW });
   st = await offsiteBackup.status();
-  text = backupFlow._internals.cardText(st, ['Krishna', 'Musa'], { note: '✅ note' });
+  text = card(st, ['Krishna', 'Musa'], { holder: true, note: '✅ note' });
   assert.match(text, /Workbook: 4 tabs · 7 rows · \d+ KB\nDatabase: 3 tables · 4 rows · \d+ KB\n\n✅ note$/);
   assert.match(text, /Last backup: \d{2}-[A-Z][a-z]{2}-\d{4} \d{2}:\d{2}\n/);
-
-  settings.OFFSITE_BACKUP_ENABLED = 0;
-  text = backupFlow._internals.cardText(await offsiteBackup.status(), []);
-  assert.match(text, /⚠️ The daily backup is switched OFF \(Settings `OFFSITE_BACKUP_ENABLED`\)\./);
 });
 
 /* ── the restore script ──────────────────────────────────────────────── */

@@ -1408,7 +1408,9 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // own self-approval guard lets a sole admin approve their own request,
     // and a backup never goes to one admin alone. offsiteBackup.run checks
     // the same pair again before it sends.
-    const pair = require('./offsiteBackup').releasePair({ requestedBy: item.user, approvedBy });
+    // BKP-4 — and only while the switch in the Settings sheet is on, between
+    // two admins NAMED there (an unreadable sheet reads as off).
+    const pair = await require('./offsiteBackup').releaseAllowed({ requestedBy: item.user, approvedBy });
     if (!pair.ok) return { ok: false, message: pair.message };
     closingNote = '💾 The backup is being built now. The files go to the two admins who signed, and to nobody else.';
   } else if (aj.action === 'task_reminder_enable') {

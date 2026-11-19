@@ -58,6 +58,21 @@
  *     once (`approvedRelease`) — there is no parameter that names a chat;
  *   · before anything is built, every recipient is checked to be reachable
  *     — a backup that could reach only one of them is not sent.
+ *
+ * BKP-4 — OFF, AND A SWITCH IN THE SHEET. Owner, 19-Nov-2026, on the first
+ * nightly files landing in every admin's chat: "I did not ask you to send
+ * the backup of the sheet like this so easily … disable this function
+ * entirely for any other admin and give it a switch inside the sheet
+ * itself."
+ *
+ *   · Settings OFFSITE_BACKUP_ENABLED is THE switch, and it is OFF unless
+ *     the cell says 1: no daily backup, none on demand, whoever asks;
+ *   · nobody receives a backup by default. Settings OFFSITE_BACKUP_IDS
+ *     NAMES who may hold one (two or more admins, typed in the sheet);
+ *     blank = nobody. An admin who is not named has no part in it: no
+ *     file, no request, no approval, no notice;
+ *   · every file sent is recorded with its chat and message id, so
+ *     services/backupPurge can take it out of the chats again.
  */
 
 const zlib = require('zlib');
@@ -119,6 +134,8 @@ let _last = null;
 let _blockedDay = '';
 /** BKP-3 — request ids that have released their backup in this process: each releases once. */
 const _released = new Set();
+/** BKP-4 — what this process sent ({at, messages}), for the purge when Postgres is not there to ask. */
+const _sentInMemory = [];
 
 /** BKP-3 — a backup is never delivered to fewer than this many admins. */
 const MIN_ADMINS = 2;
@@ -458,38 +475,46 @@ function envAdmins() {
   return [...new Set((config.access.adminIds || []).map((x) => String(x).trim()).filter(Boolean))];
 }
 
-/**
- * BKP-3 — who receives the DAILY backup.
- *
- * Every admin, unless Settings OFFSITE_BACKUP_IDS names two or more of them:
- * the cell may only NARROW the list among the admins. An id in the cell that
- * is not an admin (an employee, a group, a channel) receives nothing and is
- * reported. A cell that names fewer than two admins is not honoured — every
- * admin receives the backup instead, so it still goes out and never to one
- * person. With fewer than two admins in all, nothing is sent.
- *
- * @returns {{ids: string[], ignored: string[], widened: boolean, blocked: string}}
- */
-function dailyRecipients(settings) {
-  const admins = envAdmins();
-  const own = [...new Set(String((settings && settings.OFFSITE_BACKUP_IDS) || '')
-    .split(/[,;\s]+/).map((x) => x.trim()).filter((x) => /^-?\d+$/.test(x)))];
-  const named = own.filter((id) => admins.includes(id));
-  const ignored = own.filter((id) => !admins.includes(id));
-  const widened = own.length > 0 && named.length < MIN_ADMINS;
-  const ids = named.length >= MIN_ADMINS ? named : admins;
-  if (ids.length < MIN_ADMINS) {
-    return {
-      ids: [], ignored, widened,
-      blocked: `a backup goes to at least ${MIN_ADMINS} admins and only ${admins.length} ${admins.length === 1 ? 'is' : 'are'} set up (Railway ADMIN_IDS)`,
-    };
-  }
-  return { ids, ignored, widened, blocked: '' };
+/** BKP-4 — the switch: Settings OFFSITE_BACKUP_ENABLED. Off unless the cell says 1 (or on / yes / true). */
+function switchedOn(settings) {
+  const v = settings ? settings.OFFSITE_BACKUP_ENABLED : 0;
+  return Number(v) === 1 || /^(on|yes|true)$/i.test(String(v == null ? '' : v).trim());
 }
 
-/** The daily recipients' ids (empty when the two-admin rule blocks the run). */
+/** The ids typed in Settings OFFSITE_BACKUP_IDS, as written (admins or not). */
+function typedIds(settings) {
+  return [...new Set(String((settings && settings.OFFSITE_BACKUP_IDS) || '')
+    .split(/[,;\s]+/).map((x) => x.trim()).filter((x) => /^-?\d+$/.test(x)))];
+}
+
+/**
+ * BKP-4 — who may HOLD a backup, and whether one may be sent at all.
+ *
+ * The switch must be on. Then only the admins NAMED in Settings
+ * OFFSITE_BACKUP_IDS hold one — blank is nobody, never "every admin". A
+ * typed id that is not an admin (an employee, a group, a channel) is not a
+ * holder and is reported. Fewer than two named admins = nothing is sent
+ * (BKP-3: a backup never goes to one admin alone).
+ *
+ * @returns {{on: boolean, named: string[], ignored: string[], ids: string[], blocked: string}}
+ *   `ids` = the holders a backup may go to (empty whenever `blocked` says why not)
+ */
+function holders(settings) {
+  const admins = envAdmins();
+  const own = typedIds(settings);
+  const named = own.filter((id) => admins.includes(id));
+  const ignored = own.filter((id) => !admins.includes(id));
+  const on = switchedOn(settings);
+  let blocked = '';
+  if (!on) blocked = 'the backup is switched off (Settings OFFSITE_BACKUP_ENABLED)';
+  else if (!named.length) blocked = 'nobody is named to receive it (Settings OFFSITE_BACKUP_IDS)';
+  else if (named.length < MIN_ADMINS) blocked = 'only one admin is named to receive it, and a backup never goes to one admin alone';
+  return { on, named, ignored, ids: blocked ? [] : named, blocked };
+}
+
+/** The daily recipients' ids (empty when the switch or the two-admin rule blocks the run). */
 function recipients(settings) {
-  return dailyRecipients(settings).ids;
+  return holders(settings).ids;
 }
 
 /**
@@ -510,6 +535,25 @@ function releasePair(release) {
     return { ok: false, message: 'A backup is released only between two admins set in the bot\'s own configuration (Railway ADMIN_IDS).' };
   }
   return { ok: true, ids: [a, b] };
+}
+
+/**
+ * BKP-4 — may THIS pair release a backup on demand right now? The switch is
+ * on, they are two different admins (BKP-3), and both are NAMED holders. An
+ * unreadable Settings sheet reads as the in-code defaults, where the switch
+ * is off — so a read failure releases nothing.
+ * @returns {Promise<{ok: boolean, ids?: string[], message?: string}>}
+ */
+async function releaseAllowed(release) {
+  const settings = (await settingsRepository.getAll().catch(() => null)) || {};
+  const h = holders(settings);
+  if (!h.on) return { ok: false, off: true, message: 'Backups are switched off in the Settings sheet. Nothing was sent.' };
+  const pair = releasePair(release);
+  if (!pair.ok) return pair;
+  if (!pair.ids.every((id) => h.ids.includes(id))) {
+    return { ok: false, message: 'A backup is released only between two admins named in Settings OFFSITE_BACKUP_IDS.' };
+  }
+  return { ok: true, ids: pair.ids };
 }
 
 /**
@@ -566,7 +610,8 @@ async function deliver(bot, files, ids, { silent = false } = {}) {
           ? await bot.sendDocument(id, fileId, opts)
           : await bot.sendDocument(id, f.buffer, opts, { filename: f.filename, contentType: f.contentType });
         if (!fileId && msg && msg.document && msg.document.file_id) fileId = msg.document.file_id;
-        sent.push({ id: String(id), file: f.filename });
+        // BKP-4 — where the file now sits, so it can be taken out again.
+        sent.push({ id: String(id), file: f.filename, messageId: msg && msg.message_id });
       } catch (e) {
         failed.push({ id: String(id), file: f.filename, error: e.message });
         logger.warn(`offsiteBackup: ${f.filename} to ${id} failed: ${e.message}`);
@@ -593,17 +638,22 @@ async function run(bot, { now = new Date(), kind = 'ok', release = null } = {}) 
   _running = true;
   try {
     const settings = (await settingsRepository.getAll().catch(() => null)) || {};
+    // BKP-4 — the switch in the sheet comes first, for every kind of run.
+    const h = holders(settings);
+    if (!h.on) return { ok: false, blocked: true, off: true, message: h.blocked };
     let ids;
     if (kind === 'manual') {
       const pair = releasePair(release);
       if (!pair.ok) return { ok: false, refused: true, message: pair.message };
+      if (!pair.ids.every((id) => h.ids.includes(id))) {
+        return { ok: false, refused: true, message: 'A backup is released only between two admins named in Settings OFFSITE_BACKUP_IDS.' };
+      }
       const req = await approvedRelease(release);
       if (!req.ok) return { ok: false, refused: true, message: req.message };
       ids = pair.ids;
     } else {
-      const daily = dailyRecipients(settings);
-      if (daily.blocked) return { ok: false, blocked: true, message: daily.blocked };
-      ids = daily.ids;
+      if (h.blocked) return { ok: false, blocked: true, message: h.blocked };
+      ids = h.ids;
     }
     // Nothing is built for a delivery that could end with one admin alone.
     const reach = await reachable(bot, ids);
@@ -616,27 +666,35 @@ async function run(bot, { now = new Date(), kind = 'ok', release = null } = {}) 
     ids = reach.yes;
     const built = await build({ now });
     const d = await deliver(bot, built.files, ids, { silent: kind === 'ok' });
+    // BKP-4 — every file that landed, by chat and message id (the purge reads this).
+    const messages = d.sent.filter((x) => x.messageId).map((x) => ({ c: x.id, m: x.messageId }));
     const missing = built.files.filter((f) => !d.sent.some((x) => x.file === f.filename));
     if (missing.length) {
+      // What DID land must still be findable: a failed run keeps its record.
+      if (messages.length) {
+        try { await jobRuns.record(JOB, built.day, 'failed', { messages, holders: [...new Set(d.sent.map((x) => x.id))] }); } catch (_) { /* best-effort */ }
+        _sentInMemory.push({ at: now.getTime(), messages });
+      }
       const why = (d.failed.find((x) => x.file === missing[0].filename) || {}).error || 'unknown error';
       throw new Error(`${missing.map((f) => f.filename).join(', ')} reached nobody: ${why}`);
     }
     // Who holds a file now. One holder means a send failed after the check
     // above: it cannot be taken back, so it is recorded and every admin is told.
-    const holders = [...new Set(d.sent.map((x) => x.id))];
+    const landed = [...new Set(d.sent.map((x) => x.id))];
     const detail = {
       ...built.summary, recipients: ids.length, undelivered: d.failed.length, warnings: built.warnings,
-      holders,
+      holders: landed, messages,
       ...(kind === 'manual' ? { release: { requestId: String((release && release.requestId) || ''), requestedBy: ids[0], approvedBy: ids[1] } } : {}),
     };
     try { await jobRuns.record(JOB, built.day, kind, detail); } catch (e) {
       logger.warn(`offsiteBackup: the run record could not be saved: ${e.message}`);
     }
     _last = { at: now.toISOString(), kind, ...detail };
+    _sentInMemory.push({ at: now.getTime(), messages });
     if (kind === 'manual') _released.add(String(release.requestId));
-    logger.info(`offsiteBackup: ${kind} backup of ${built.day} sent to ${holders.length} admin(s) — ${built.summary.workbook.tabs} tabs, ${built.summary.workbook.rows} rows`);
-    if (holders.length < MIN_ADMINS) await notifyAlone(bot, holders);
-    return { ok: true, ...detail, alone: holders.length < MIN_ADMINS };
+    logger.info(`offsiteBackup: ${kind} backup of ${built.day} sent to ${landed.length} admin(s) — ${built.summary.workbook.tabs} tabs, ${built.summary.workbook.rows} rows`);
+    if (landed.length < MIN_ADMINS) await notifyAlone(bot, landed, ids);
+    return { ok: true, ...detail, alone: landed.length < MIN_ADMINS };
   } catch (e) {
     logger.error(`offsiteBackup: backup failed: ${e.message}`);
     return { ok: false, message: e.message };
@@ -645,10 +703,10 @@ async function run(bot, { now = new Date(), kind = 'ok', release = null } = {}) 
   }
 }
 
-/** BKP-3 — a delivery that ended with one holder is said to every admin. */
-async function notifyAlone(bot, holders) {
+/** BKP-3 — a delivery that ended with one holder is said to every admin named to hold a backup. */
+async function notifyAlone(bot, holders, tell) {
   logger.error(`offsiteBackup: a backup reached only ${holders.join(', ') || 'nobody'} — the two-admin rule was not met at delivery`);
-  for (const id of envAdmins()) {
+  for (const id of tell) {
     try {
       await bot.sendMessage(id,
         `⚠️ Backup: the files reached only one admin (id ${holders[0] || '?'}).\n`
@@ -658,8 +716,9 @@ async function notifyAlone(bot, holders) {
   }
 }
 
-async function notifyFailure(bot, message) {
-  for (const id of config.access.adminIds || []) {
+async function notifyFailure(bot, message, tell) {
+  // BKP-4 — only the admins named to hold a backup hear about it.
+  for (const id of tell) {
     try {
       await bot.sendMessage(id,
         `⚠️ Backup failed\n${message}\n\nThe bot tries again in an hour, three times a day. `
@@ -669,12 +728,12 @@ async function notifyFailure(bot, message) {
 }
 
 /** BKP-3 — the daily backup cannot go out under the two-admin rule: said once a day. */
-async function notifyBlocked(bot, message) {
-  for (const id of envAdmins()) {
+async function notifyBlocked(bot, message, tell) {
+  for (const id of tell) {
     try {
       await bot.sendMessage(id,
         `🔐 The daily backup was NOT sent\n${message}.\n\nA backup never goes to one admin alone. `
-        + 'Add a second admin to the bot, and it runs again from the next day.');
+        + 'Name a second admin in Settings OFFSITE_BACKUP_IDS, and it runs again from the next day.');
     } catch (_) { /* best-effort */ }
   }
 }
@@ -686,7 +745,7 @@ async function notifyBlocked(bot, message) {
 async function tick(bot, now = new Date()) {
   const settings = await settingsRepository.getAll().catch(() => null);
   if (!settings) return 'settings_unreadable';
-  if (!Number(settings.OFFSITE_BACKUP_ENABLED)) return 'disabled';
+  if (!switchedOn(settings)) return 'disabled';
   const want = Number(settings.OFFSITE_BACKUP_HOUR);
   const hour = Number.isFinite(want) && want >= 0 && want <= 23 ? want : settingsRepository.DEFAULTS.OFFSITE_BACKUP_HOUR;
   const at = lagosNow(now);
@@ -704,15 +763,17 @@ async function tick(bot, now = new Date()) {
   const res = await run(bot, { now, kind: 'ok' });
   if (res.ok) { _doneDay = at.day; _failDay = ''; _tries = 0; return 'ran'; }
   if (res.busy) return 'busy';
-  // BKP-3 — fewer than two admins: not a failure to retry, a rule. Said once a day.
+  // BKP-3 — fewer than two admins: not a failure to retry, a rule. Said once
+  // a day, and (BKP-4) only to the admin who IS named — with nobody named
+  // nobody is told: the tile says why nothing is sent.
   if (res.blocked) {
-    if (_blockedDay !== at.day) { _blockedDay = at.day; await notifyBlocked(bot, res.message); }
+    if (_blockedDay !== at.day) { _blockedDay = at.day; await notifyBlocked(bot, res.message, holders(settings).named); }
     return 'blocked';
   }
   if (_failDay !== at.day) { _failDay = at.day; _tries = 0; }
   _tries += 1;
   _nextTryAt = now.getTime() + RETRY_MS;
-  if (_tries === 1) await notifyFailure(bot, res.message);
+  if (_tries === 1) await notifyFailure(bot, res.message, holders(settings).ids);
   return 'failed';
 }
 
@@ -728,21 +789,35 @@ async function status() {
     }
   } catch (e) { logger.warn(`offsiteBackup: status read failed: ${e.message}`); }
   const want = Number(settings.OFFSITE_BACKUP_HOUR);
-  const daily = dailyRecipients(settings);
+  const daily = holders(settings);
   return {
-    enabled: Boolean(Number(settings.OFFSITE_BACKUP_ENABLED)),
+    enabled: daily.on,
     hour: Number.isFinite(want) && want >= 0 && want <= 23 ? want : settingsRepository.DEFAULTS.OFFSITE_BACKUP_HOUR,
     recipients: daily.ids,
-    // BKP-3 — what the two-admin rule did with the Settings cell
-    ignored: daily.ignored, widened: daily.widened, blocked: daily.blocked, admins: envAdmins().length,
+    // BKP-3 / BKP-4 — the switch, who is named, and why nothing is sent when nothing is
+    named: daily.named, ignored: daily.ignored, blocked: daily.blocked, admins: envAdmins().length,
     ownList: Boolean(String(settings.OFFSITE_BACKUP_IDS || '').trim()),
     database: pool.isEnabled(),
     last,
   };
 }
 
+/**
+ * BKP-4 — "give it a switch inside the sheet itself": the two rows are put
+ * on the Settings sheet when they are missing, so the switch can be SEEN —
+ * off, and with nobody named. A row that is already there is never touched.
+ */
+async function ensureSwitchRows() {
+  try {
+    const a = await settingsRepository.ensureRow('OFFSITE_BACKUP_ENABLED', 0);
+    const b = await settingsRepository.ensureRow('OFFSITE_BACKUP_IDS', '');
+    if (a || b) logger.info('offsiteBackup: the backup switch rows were added to the Settings sheet (off, nobody named)');
+  } catch (e) { logger.warn(`offsiteBackup: the switch rows could not be added to Settings: ${e.message}`); }
+}
+
 function start(bot) {
   if (_timer) return;
+  ensureSwitchRows();
   const safe = () => { tick(bot).catch((e) => logger.warn(`offsiteBackup: tick failed: ${e.message}`)); };
   _timer = setInterval(safe, TICK_MS);
   if (_timer.unref) _timer.unref();
@@ -757,10 +832,14 @@ function _resetForTests() {
   if (_timer) { clearInterval(_timer); _timer = null; }
   _running = false; _doneDay = ''; _failDay = ''; _tries = 0; _nextTryAt = 0; _last = null; _blockedDay = '';
   _released.clear();
+  _sentInMemory.length = 0;
 }
 
 module.exports = {
-  JOB, FORMAT, MIN_ADMINS, start, tick, run, build, status, recipients, dailyRecipients, releasePair, envAdmins, size,
+  JOB, FORMAT, MIN_ADMINS, start, tick, run, build, status, recipients, holders, switchedOn, typedIds,
+  releasePair, releaseAllowed, envAdmins, ensureSwitchRows, size,
+  /** BKP-4 — what this process has sent, newest last (read by the purge without Postgres). */
+  sentInMemory: () => _sentInMemory.map((x) => ({ at: x.at, messages: [...x.messages] })),
   _internals: {
     xlsxNames, prepareTab, buildWorkbookBuffer, packWorkbooks, batchesByGrid, readWorkbook, gzipWriter, dumpTable, dumpDatabase,
     deliver, lagosNow, EXCLUDED_TABLES, CAP_BYTES, CELL_MAX, INDEX_SHEET, MAX_TRIES, RETRY_MS, PAGE,

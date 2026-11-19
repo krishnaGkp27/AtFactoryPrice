@@ -96,10 +96,14 @@ const DEFAULTS = {
   // BKP-2 (19-Nov-2026) — the offsite backup: the workbook as an .xlsx and
   // the database records, sent over Telegram once a day. HOUR is the Lagos
   // hour of the run (the first tick at or after it; a bot that was down
-  // catches up). IDS: blank = every admin in the Railway ADMIN_IDS. BKP-3 —
-  // the cell may only NARROW that list, to two or more admins; an id that
-  // is not an admin (an employee, a group, a channel) receives nothing.
-  OFFSITE_BACKUP_ENABLED: 1,
+  // catches up).
+  // BKP-4 (owner, 19-Nov-2026: "disable this function entirely for any other
+  // admin and give it a switch inside the sheet itself") — ENABLED is THE
+  // switch and it is OFF unless the cell says 1: no daily backup, none on
+  // demand. IDS names who may hold a backup: two or more admin ids, typed
+  // by the owner; BLANK = NOBODY (it no longer means "every admin"). An id
+  // that is not an admin (an employee, a group, a channel) receives nothing.
+  OFFSITE_BACKUP_ENABLED: 0,
   OFFSITE_BACKUP_HOUR: 2,
   OFFSITE_BACKUP_IDS: '',
   // APX-2 — minutes within which two IDENTICAL requests from the same person
@@ -396,4 +400,21 @@ async function set(key, value) {
   });
 }
 
-module.exports = { getAll, getAllStrict, set, invalidateCache, ensureHeader, DEFAULTS };
+/**
+ * BKP-4 — make a switch VISIBLE: add the key's row to the Settings sheet
+ * when the sheet has none. An existing row — whatever its value, an empty
+ * cell included — is never touched: the sheet's owner decides it.
+ * @returns {Promise<boolean>} true = the row was added
+ */
+async function ensureRow(key, value) {
+  return runExclusive('settings:set', async () => {
+    await ensureHeader();
+    const rows = await sheets.readRange(SHEET, 'A2:A');
+    if (rows.some((r) => (r[0] || '').toString().trim() === key)) return false;
+    await sheets.appendRows(SHEET, [[key, "'" + String(value), new Date().toISOString()]]);
+    invalidateCache();
+    return true;
+  });
+}
+
+module.exports = { getAll, getAllStrict, set, ensureRow, invalidateCache, ensureHeader, DEFAULTS };

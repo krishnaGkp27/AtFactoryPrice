@@ -1,27 +1,36 @@
 'use strict';
 
 /**
- * BKP-2 / BKP-3 — 📊 Reporting → 💾 Backup (session-free).
+ * BKP-2 / BKP-3 / BKP-4 — 📊 Reporting → 💾 Backup (session-free).
  *
- * The nightly backup needs no hand: this card shows that it runs, who
- * receives it and when the last one went out.
+ * BKP-4 (owner, 19-Nov-2026: "I did not ask you to send the backup of the
+ * sheet like this so easily … Can you delete it all? … disable this
+ * function entirely for any other admin and give it a switch inside the
+ * sheet itself.")
  *
- * BKP-3 (owner, 19-Nov-2026: "This backup job should never be happening
- * alone to a single admin. It may cause risk to the company data, so make
- * it available only through two admins.") — a backup ON DEMAND is no longer
- * one tap. One admin ASKS (`bkp:ask`); that raises an ordinary
- * `release_backup` request through the approval gate; a DIFFERENT admin
- * approves it (their DM card, 🛂 Approvals, or this tile); the files then
- * go to those two admins and to nobody else, and every admin is told.
+ *   · The backup is OFF unless Settings `OFFSITE_BACKUP_ENABLED` says 1.
+ *     Off = this card says so and offers nothing but the clean-up.
+ *   · Nobody holds a backup unless NAMED in Settings `OFFSITE_BACKUP_IDS`
+ *     (two or more admins). An admin who is not named sees no schedule, no
+ *     request and no button to ask: the function does not exist for them.
+ *   · 🗑 Delete the backup files already sent — takes the files of the last
+ *     48 hours back out of every admin's chat (services/backupPurge). Any
+ *     admin may do it: removing data is always the safe direction.
+ *
+ * BKP-3 — when it IS on, a backup on demand takes two of the named admins:
+ * one asks (`bkp:ask`, a `release_backup` request through the approval
+ * gate), a different one approves; the files go to those two.
  *
  * "Admin" on this tile means an id in the Railway ADMIN_IDS list. A role
  * typed into the Users sheet does not open it.
  *
- * Callback namespace `bkp:` — `home` · `ask` (and the retired `now`, which
- * sends nothing). Every tap re-checks who is tapping.
+ * Callback namespace `bkp:` — `home` · `ask` · `del` (asks first) ·
+ * `delyes` (and the retired `now`, which sends nothing). Every tap
+ * re-checks who is tapping.
  */
 
 const offsiteBackup = require('../services/offsiteBackup');
+const backupPurge = require('../services/backupPurge');
 const auditLogRepository = require('../repositories/auditLogRepository');
 const approvalQueueRepository = require('../repositories/approvalQueueRepository');
 const { editOrSend } = require('../utils/telegramUI');
@@ -80,23 +89,42 @@ async function openRelease() {
   }
 }
 
+/** May this viewer use the function right now: the switch is on and they are a named holder. */
+function isHolder(st, viewerId) {
+  return Boolean(st.enabled) && (st.named || []).includes(String(viewerId));
+}
+
 /**
  * The card's text. Pure given a status.
  * @param {object} st offsiteBackup.status()
- * @param {string[]} names the daily recipients, by name
- * @param {{note?: string, open?: {who: string, age: string, ref: string, mine: boolean}, releasedBy?: string}} [o]
+ * @param {string[]} names the people a backup goes to, by name
+ * @param {{note?: string, holder?: boolean, purgeable?: boolean,
+ *   open?: {who: string, age: string, ref: string, mine: boolean}, releasedBy?: string}} [o]
  */
 function cardText(st, names, o = {}) {
   const lines = ['💾 *Backup*', ''];
-  if (!st.enabled) lines.push('⚠️ The daily backup is switched OFF (Settings `OFFSITE_BACKUP_ENABLED`).');
-  else if (st.blocked) lines.push(`🔐 The daily backup is NOT being sent: ${st.blocked}.`);
+  const tail = () => {
+    if (o.purgeable) { lines.push(''); lines.push('🗑 Backup files sent in the last 48 hours can still be removed from the chats.'); }
+    if (o.note) { lines.push(''); lines.push(o.note); }
+    return lines.join('\n');
+  };
+  if (!st.enabled) {
+    lines.push('🔴 Switched OFF. No backup is sent to anyone, daily or on demand.');
+    lines.push('The switch is in the Settings sheet: `OFFSITE_BACKUP_ENABLED` (1 = on, 0 = off).');
+    lines.push('Who may receive one is named there too: `OFFSITE_BACKUP_IDS` (two or more admin ids). Blank = nobody.');
+    return tail();
+  }
+  if (!o.holder) {
+    lines.push('The backup is not open to you.');
+    return tail();
+  }
+  if (st.blocked) lines.push(`🟡 Switched on, but nothing is sent: ${st.blocked}.`);
   else lines.push(`Runs every day at ${hh(st.hour)} and goes to: ${names.join(', ') || 'nobody'}.`);
   lines.push('Two files: the workbook, and the database records.');
-  lines.push('🔐 A backup never goes to one admin alone. One on demand is asked by one admin and approved by another, and both receive it.');
+  lines.push('🔐 A backup never goes to one admin alone. One on demand is asked by one named admin and approved by another, and both receive it.');
   if ((st.ignored || []).length) {
     lines.push(`⚠️ Settings \`OFFSITE_BACKUP_IDS\` names ${st.ignored.length} chat${st.ignored.length === 1 ? '' : 's'} that ${st.ignored.length === 1 ? 'is' : 'are'} not an admin. Only admins receive a backup.`);
   }
-  if (st.widened && !st.blocked) lines.push('⚠️ Settings `OFFSITE_BACKUP_IDS` names fewer than two admins, so every admin receives the backup.');
   if (!st.database) lines.push('The database is not connected here, so only the workbook is sent.');
   lines.push('');
   const l = st.last;
@@ -113,50 +141,62 @@ function cardText(st, names, o = {}) {
   if (o.open) {
     lines.push('');
     lines.push(o.open.mine
-      ? `⏳ You asked for a backup${o.open.age ? ` ${o.open.age} ago` : ''} · ${o.open.ref} · waiting on another admin.`
+      ? `⏳ You asked for a backup${o.open.age ? ` ${o.open.age} ago` : ''} · ${o.open.ref} · waiting on another named admin.`
       : `⏳ ${o.open.who} asks for a backup${o.open.age ? ` · ${o.open.age} ago` : ''} · ${o.open.ref}. Approving sends the files to you and to ${o.open.who}.`);
   }
-  if (o.note) { lines.push(''); lines.push(o.note); }
-  return lines.join('\n');
+  return tail();
 }
 
-/** The card's buttons: ask, or — while a request is open — what this viewer can do with it. */
-function keyboard(st, open, viewerId) {
+/**
+ * The card's buttons: ask or decide (named holders, switch on), and the
+ * clean-up whenever there is something to remove.
+ */
+function keyboard(st, open, viewerId, o = {}) {
   const rows = [];
-  if (open) {
-    const id = String(open.requestId);
-    if (String(open.user) === String(viewerId)) {
-      rows.push(require('../services/approvalGate').receiptRow(id));
+  if (isHolder(st, viewerId) && !st.blocked) {
+    if (open) {
+      const id = String(open.requestId);
+      if (String(open.user) === String(viewerId)) {
+        rows.push(require('../services/approvalGate').receiptRow(id));
+      } else {
+        rows.push([
+          { text: '✅ Approve and send', callback_data: `approve:${id}` },
+          { text: '❌ Reject', callback_data: `reject:${id}` },
+        ]);
+      }
     } else {
-      rows.push([
-        { text: '✅ Approve and send', callback_data: `approve:${id}` },
-        { text: '❌ Reject', callback_data: `reject:${id}` },
-      ]);
+      rows.push([{ text: '📤 Ask for a backup now', callback_data: `${NS}:ask` }]);
     }
-  } else if ((st.admins || 0) >= offsiteBackup.MIN_ADMINS) {
-    rows.push([{ text: '📤 Ask for a backup now', callback_data: `${NS}:ask` }]);
   }
+  if (o.purgeable) rows.push([{ text: '🗑 Delete the backup files already sent', callback_data: `${NS}:del` }]);
   rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   return rows;
 }
 
 async function home(bot, chatId, messageId, viewerId, note = '') {
   const st = await offsiteBackup.status();
-  const names = await namesOf(st.recipients);
-  const open = await openRelease();
+  const holder = isHolder(st, viewerId);
+  const purgeable = await backupPurge.pending();
   const approvalCards = require('../services/approvalCards');
-  const rel = st.last && st.last.kind === 'manual' && st.last.release;
-  const o = {
-    note,
-    open: open ? {
-      who: await nameOf(open.user), age: ago(open.createdAt), ref: approvalCards.shortRequestRef(open.requestId),
-      mine: String(open.user) === String(viewerId),
-    } : null,
-    releasedBy: rel && rel.requestedBy ? `asked by ${await nameOf(rel.requestedBy)}, approved by ${await nameOf(rel.approvedBy)}` : '',
-  };
+  let open = null;
+  let o = { note, holder, purgeable };
+  let names = [];
+  if (holder) {
+    names = await namesOf(st.recipients);
+    open = st.blocked ? null : await openRelease();
+    const rel = st.last && st.last.kind === 'manual' && st.last.release;
+    o = {
+      ...o,
+      open: open ? {
+        who: await nameOf(open.user), age: ago(open.createdAt), ref: approvalCards.shortRequestRef(open.requestId),
+        mine: String(open.user) === String(viewerId),
+      } : null,
+      releasedBy: rel && rel.requestedBy ? `asked by ${await nameOf(rel.requestedBy)}, approved by ${await nameOf(rel.approvedBy)}` : '',
+    };
+  }
   await editOrSend(bot, chatId, messageId, cardText(st, names, o), {
     parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: keyboard(st, open, viewerId) },
+    reply_markup: { inline_keyboard: keyboard(st, open, viewerId, { purgeable }) },
   });
 }
 
@@ -169,14 +209,16 @@ async function start(bot, chatId, userId, messageId = null) {
 }
 
 /**
- * 📤 Ask for a backup now — raise the request a second admin signs.
+ * 📤 Ask for a backup now — raise the request a second named admin signs.
  * Sends no file. Returns the note the card then shows.
  */
 async function ask(bot, userId) {
-  const others = offsiteBackup.envAdmins().filter((id) => id !== String(userId));
-  if (!others.length) {
-    return '🔐 A backup needs two admins and you are the only one set up. Nothing was sent.';
-  }
+  const st = await offsiteBackup.status();
+  if (!st.enabled) return '🔴 The backup is switched off in the Settings sheet. Nothing was asked and nothing was sent.';
+  if (!isHolder(st, userId)) return 'The backup is not open to you. Nothing was asked.';
+  if (st.blocked) return `🟡 Nothing can be sent: ${st.blocked}.`;
+  const others = st.recipients.filter((id) => id !== String(userId));
+  if (!others.length) return '🔐 A backup needs two named admins and you are the only one. Nothing was sent.';
   const approvalCards = require('../services/approvalCards');
   const requesterName = await nameOf(userId);
   const risk = await require('../risk/evaluate').evaluate({ action: ACTION, userId });
@@ -193,19 +235,22 @@ async function ask(bot, userId) {
       ? '⏳ A backup request is already waiting for its second admin. It is shown below.'
       : '⚠️ The request could not be raised. Nothing was sent. Try again in a minute.';
   }
-  if (!raised.created) return '⏳ Already asked. Waiting on another admin.';
+  if (!raised.created) return '⏳ Already asked. Waiting on another named admin.';
   const ref = approvalCards.shortRequestRef(raised.requestId);
   let reached = 0;
   try {
+    // BKP-4 — the card goes to the other NAMED admins only; an admin who is
+    // not named has no part in a backup.
     const res = await require('../events/approvalEvents').notifyAdminsApprovalRequest(
       bot, raised.requestId, requesterName, approvalCards.buildBackupReleaseCard(raised.actionJSON), risk.reason, String(userId),
+      { excludeIds: offsiteBackup.envAdmins().filter((id) => !others.includes(id)) },
     );
     reached = (res && res.sent) || 0;
   } catch (e) { logger.warn(`backupFlow: admin card for ${raised.requestId} failed: ${e.message}`); }
   if (!reached) {
-    return `⚠️ Asked (${ref}), but the card reached no other admin. They can approve it from 📊 Reporting → 💾 Backup or 🛂 Approvals.`;
+    return `⚠️ Asked (${ref}), but the card reached no other named admin. They can approve it from 📊 Reporting → 💾 Backup or 🛂 Approvals.`;
   }
-  return `✅ Asked · ${ref}. Sent to ${reached} admin${reached === 1 ? '' : 's'} for approval. Nothing is sent until one of them approves; the files then arrive here and in their chat.`;
+  return `✅ Asked · ${ref}. Sent to ${reached} named admin${reached === 1 ? '' : 's'} for approval. Nothing is sent until one of them approves; the files then arrive here and in their chat.`;
 }
 
 /**
@@ -234,11 +279,34 @@ async function releaseApproved(bot, release) {
   auditLogRepository.append('backup_released', {
     requestId: release.requestId, requestedBy: pair[0], approvedBy: pair[1], tabs: res.workbook && res.workbook.tabs, holders: res.holders,
   }, pair[1]).catch(() => {});
-  // Every admin learns that the company's data was handed out, and to whom.
-  await tell(offsiteBackup.envAdmins(),
+  // BKP-4 — the admins NAMED to hold a backup learn that one was handed out,
+  // and to whom. Nobody else is part of it.
+  const st = await offsiteBackup.status();
+  await tell([...pair, ...(st.named || [])],
     `💾 Backup released on demand · ${ref}\nAsked by ${asked} · approved by ${approved}\n${when(new Date().toISOString())} · the files went to these two admins and to nobody else. Keep both files together.`);
   return res;
 }
+
+/** What a finished clean-up says on the card. Pure. */
+function purgeNote(res, names = {}) {
+  if (!res) return '⚠️ The clean-up could not be run. Try again in a minute.';
+  if (res.busy) return '⏳ A clean-up is already running. Its result appears on that card.';
+  if (!res.ok) return `⚠️ The clean-up stopped: ${res.message || 'unknown error'}. Tap again to continue.`;
+  if (res.nothing) return '✅ Nothing to remove: no backup file was sent in the last 48 hours.';
+  const per = Object.entries(res.perChat || {}).map(([id, k]) => `${names[id] || `id ${id}`} ${k}`).join(' · ');
+  const lines = [res.deleted
+    ? `🗑 ${res.deleted} backup file${res.deleted === 1 ? '' : 's'} removed from ${Object.keys(res.perChat).length} chat${Object.keys(res.perChat).length === 1 ? '' : 's'}${per ? `: ${per}` : ''}.`
+    : '🗑 No backup file was found in the chats.'];
+  if ((res.unreachable || []).length) lines.push(`⚠️ ${res.unreachable.length} chat${res.unreachable.length === 1 ? '' : 's'} could not be reached, so ${res.unreachable.length === 1 ? 'it was' : 'they were'} not checked.`);
+  if (res.failed) lines.push(`⚠️ ${res.failed} file${res.failed === 1 ? '' : 's'} could not be deleted (Telegram refuses after 48 hours).`);
+  if (res.leftovers) lines.push(`⚠️ ${res.leftovers} forwarded cop${res.leftovers === 1 ? 'y' : 'ies'} made while looking could not be removed. Delete ${res.leftovers === 1 ? 'it' : 'them'} by hand.`);
+  if (!res.complete && !res.failed && !res.leftovers && !(res.unreachable || []).length) lines.push('⚠️ The look through the chats did not finish. Tap 🗑 again to continue.');
+  lines.push('A file somebody already saved to their phone or forwarded elsewhere is not removed by this.');
+  return lines.join('\n');
+}
+
+/** The clean-up in flight, for the tests to wait on. */
+let _purging = null;
 
 async function handleCallback(bot, callbackQuery) {
   const data = String(callbackQuery.data || '');
@@ -262,8 +330,49 @@ async function handleCallback(bot, callbackQuery) {
   }
   if (rest === 'now') {
     // The one-tap button of BKP-2, still sitting in old chats: it sends nothing.
-    await answer('A backup now needs a second admin.');
-    await home(bot, chatId, messageId, userId, '🔐 A backup is no longer sent on one tap. Tap 📤 Ask for a backup now, and another admin approves it.');
+    await answer('A backup is no longer sent on one tap.');
+    await home(bot, chatId, messageId, userId, '🔐 A backup is no longer sent on one tap.');
+    return true;
+  }
+  if (rest === 'del') {
+    await answer();
+    await editOrSend(bot, chatId, messageId, [
+      '🗑 *Delete the backup files already sent?*', '',
+      'Every backup file the bot sent in the last 48 hours is removed from every admin\'s chat with the bot, yours included.',
+      'While the bot looks for them, messages may flicker in each admin\'s chat for a minute or two.',
+      'A file somebody already saved to their phone or forwarded elsewhere is not removed by this.',
+    ].join('\n'), {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [
+        [{ text: '🗑 Yes, delete them', callback_data: `${NS}:delyes` }],
+        [{ text: '⬅ Back', callback_data: `${NS}:home` }],
+      ] },
+    });
+    return true;
+  }
+  if (rest === 'delyes') {
+    await answer('Removing the files…');
+    await editOrSend(bot, chatId, messageId,
+      '🧹 Removing the backup files from the chats. This card shows the result when it is done.', {
+        reply_markup: { inline_keyboard: [[{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]] },
+      });
+    // Not awaited: looking through the chats takes minutes, and a tap that
+    // waits that long is delivered again by Telegram.
+    _purging = (async () => {
+      let res = null;
+      try { res = await backupPurge.run(bot, { byUserId: userId }); } catch (e) {
+        logger.error(`backupFlow: clean-up failed: ${e.message}`);
+      }
+      const names = {};
+      for (const id of Object.keys((res && res.perChat) || {})) names[id] = await nameOf(id);
+      if (res && res.ok && !res.busy) {
+        auditLogRepository.append('backup_files_deleted', { deleted: res.deleted, perChat: res.perChat, complete: res.complete }, userId).catch(() => {});
+      }
+      try { await home(bot, chatId, messageId, userId, purgeNote(res, names)); } catch (e) {
+        logger.warn(`backupFlow: the clean-up result could not be shown: ${e.message}`);
+      }
+      return res;
+    })();
     return true;
   }
   await answer();
@@ -271,4 +380,7 @@ async function handleCallback(bot, callbackQuery) {
   return true;
 }
 
-module.exports = { NS, ACTION, start, handleCallback, releaseApproved, _internals: { cardText, keyboard, when, ago, ask, openRelease } };
+module.exports = {
+  NS, ACTION, start, handleCallback, releaseApproved,
+  _internals: { cardText, keyboard, when, ago, ask, openRelease, purgeNote, isHolder, purging: () => _purging },
+};
