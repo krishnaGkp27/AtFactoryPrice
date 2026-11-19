@@ -401,6 +401,8 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   // Ajeet ‖ John — now with finance to pay"), delivered by approvalEvents
   // the way the RET-3 credit note is. Null for every other action.
   let paymentNote = null;
+  // BKP-3 — the same closing line for an action that is not a payment.
+  let closingNote = null;
   // H6 — ERP/ledger hook failures on money paths. Inventory mutations are
   // already applied when these run, so a failure here means BOOKS ≠ STOCK.
   // Collected (not thrown) and returned so approvalEvents can warn the
@@ -1397,6 +1399,18 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // approval-events handler if/when we want it. For now the
     // requester + approver both get direct messages via the existing
     // approval pipeline, which is sufficient signal.
+  } else if (aj.action === 'release_backup') {
+    // BKP-3 (owner, 19-Nov-2026: "make it available only through two
+    // admins") — nothing on a sheet changes here. What the second admin
+    // signs is the RELEASE of the backup files; approvalEvents builds and
+    // sends them once this row is marked approved below. Refused unless two
+    // DIFFERENT admins from Railway ADMIN_IDS stand behind it: the queue's
+    // own self-approval guard lets a sole admin approve their own request,
+    // and a backup never goes to one admin alone. offsiteBackup.run checks
+    // the same pair again before it sends.
+    const pair = require('./offsiteBackup').releasePair({ requestedBy: item.user, approvedBy });
+    if (!pair.ok) return { ok: false, message: pair.message };
+    closingNote = '💾 The backup is being built now. The files go to the two admins who signed, and to nobody else.';
   } else if (aj.action === 'task_reminder_enable') {
     // TRM-1 — the second admin's signature is what arms a task's automatic
     // reminders (owner: "the last door of reminder will only go through it
@@ -2274,7 +2288,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   }
   await auditLogRepository.append('approval_approved', auditPayload, approvedBy);
   // H6 — erpFailures non-empty means stock moved but books did not.
-  return { ok: true, bundleReport, message: customMessage, erpFailures, invoice, approver: approverLabel, creditNote, note: paymentNote };
+  return { ok: true, bundleReport, message: customMessage, erpFailures, invoice, approver: approverLabel, creditNote, note: paymentNote || closingNote };
 }
 
 /**

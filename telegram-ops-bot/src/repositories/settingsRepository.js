@@ -96,8 +96,9 @@ const DEFAULTS = {
   // BKP-2 (19-Nov-2026) — the offsite backup: the workbook as an .xlsx and
   // the database records, sent over Telegram once a day. HOUR is the Lagos
   // hour of the run (the first tick at or after it; a bot that was down
-  // catches up). IDS = who receives it, a CSV of chat ids (a private group
-  // or channel id works); blank = every admin in the Railway ADMIN_IDS.
+  // catches up). IDS: blank = every admin in the Railway ADMIN_IDS. BKP-3 —
+  // the cell may only NARROW that list, to two or more admins; an id that
+  // is not an admin (an employee, a group, a channel) receives nothing.
   OFFSITE_BACKUP_ENABLED: 1,
   OFFSITE_BACKUP_HOUR: 2,
   OFFSITE_BACKUP_IDS: '',

@@ -62,6 +62,8 @@ const ACTION_LABELS = {
   // TRM-1 — the card must say what is being signed: arming a task's
   // automatic reminders, not "task reminder enable".
   task_reminder_enable: '🔁 arm task reminders',
+  // BKP-3 — what the second admin signs: the release of the backup files.
+  release_backup: '💾 backup on demand',
   sale_bundle: 'sale bale',
   revert_sale_bundle: 'revert sale bale',
   sell_package: 'sell bale',
@@ -487,6 +489,23 @@ function buildAddContactCard(aj) {
     text += '\n\n_Approving without choosing registers them as a CUSTOMER, as requested._';
   }
   return text;
+}
+
+/**
+ * BKP-3 (owner, 19-Nov-2026) — the card a second admin signs to release a
+ * backup on demand. It says exactly what leaves and where it lands: the
+ * whole workbook and the database records, to the two admins who signed.
+ */
+function buildBackupReleaseCard(aj, opts = {}) {
+  const who = (aj && aj.requester_name) || 'An admin';
+  const lines = [
+    '💾 Backup on demand',
+    `${who} asks for the full backup: the workbook and the database records.`,
+  ];
+  if (opts.decided) return lines.join('\n');
+  lines.push(`Approving sends both files to you and to ${who}, and to nobody else.`);
+  lines.push('🔐 A backup never goes to one admin alone. Every admin is told when it is released.');
+  return lines.join('\n');
 }
 
 /**
@@ -1404,6 +1423,8 @@ async function buildCardFromActionJSON(aj, opts = {}) {
     if (aj.action === 'record_payment' && aj.customer) {
       return await buildPaymentCard(aj, { createdAt: opts.createdAt, requesterId: opts.requesterId, decided: opts.decided });
     }
+    // BKP-3 — the release of a backup: what is handed over, and to whom.
+    if (aj.action === 'release_backup') return buildBackupReleaseCard(aj, { decided: opts.decided });
   } catch (_) { /* fall through to generic */ }
   const parts = [actionLabel(aj.action)];
   // CUR-1 S-CUR rule 5 — `price` / `amount` print RAW (bare) here, which is
@@ -1518,6 +1539,7 @@ module.exports = {
   buildReturnBundleCard,
   buildSaleBundleCard,
   buildAddContactCard,
+  buildBackupReleaseCard,
   buildRemoveCustomerCard,
   buildRevertSaleCard,
   keyboardForRequest,

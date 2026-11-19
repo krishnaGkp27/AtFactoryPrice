@@ -61,6 +61,8 @@ const WRITE_ACTIONS = [
   'update_contact_info',
   // APR-2 — reminder on/off/cadence change (see ALWAYS list below).
   'set_reminder_config',
+  // BKP-3 — releasing a backup on demand (see ALWAYS list below).
+  'release_backup',
 ];
 
 // Actions that ALWAYS go through the approval queue, regardless of whether
@@ -174,6 +176,13 @@ const ALWAYS_APPROVAL_ACTIONS = [
   // sign-off trail): reminder toggles always go through approval —
   // managers may request, a different admin approves (TV-2 semantics).
   'set_reminder_config',
+  // BKP-3 (owner, 19-Nov-2026: "This backup job should never be happening
+  // alone to a single admin. It may cause risk to the company data, so make
+  // it available only through two admins.") — a backup on demand hands the
+  // whole workbook and the database records to a chat. It is a request one
+  // admin raises and a DIFFERENT admin approves; nothing on a sheet changes.
+  // Tap-flow only (the 💾 Backup tile) — never in the intentParser enum.
+  'release_backup',
 ];
 
 /**
@@ -229,6 +238,12 @@ const DUAL_ADMIN_ACTIONS = [
   'task_reminder_enable',
   // EDB-1 — the owner's ruling: "dual admin approval for the above correction".
   'edit_bale',
+  // BKP-3 — two admins behind every backup on demand. Only an admin can
+  // raise one, so in practice the requester is the first admin and one
+  // OTHER admin approves; the executor and offsiteBackup.run both refuse a
+  // pair that is not two different ADMIN_IDS admins (the sole-admin
+  // self-approval the queue otherwise allows does not apply to a backup).
+  'release_backup',
 ];
 
 /**
@@ -322,6 +337,7 @@ function formatAction(action) {
     add_contact_link: 'contact-network addition',
     update_contact_info: 'contact detail update',
     set_reminder_config: 'reminder on/off/cadence change',
+    release_backup: 'backup release', // BKP-3
   };
   return map[action] || action.replace(/_/g, ' ');
 }

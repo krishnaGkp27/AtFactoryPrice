@@ -1250,6 +1250,37 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
 - Valve: Settings `APPROVAL_TWIN_GUARD = 0` stops every refusal (the flag
   stays), live within the settings cache.
 
+## 22 · A backup never goes to one admin alone
+
+**Locked 19-Nov-2026 (owner, BKP-3).**
+
+> "This backup job should never be happening alone to a single admin. It
+> may cause risk to the company data, so make it available only through
+> two admins. It will get stricter later."
+
+- **The backup files are the whole company record.** They leave the bot
+  only under this rule, and the rule is checked in the one function that
+  sends them.
+- **"Admin" here means an id in the Railway `ADMIN_IDS` list.** Never a
+  role typed into the Users sheet, never an id typed into a Settings cell:
+  both can be changed by anyone who can edit the workbook.
+- **The daily backup goes to two or more admins, or it does not go.** A
+  group, a channel or any other chat is never a recipient. Settings
+  `OFFSITE_BACKUP_IDS` may only narrow the list among the admins.
+- **A backup on demand takes two admins.** One asks, a DIFFERENT one
+  approves (`release_backup`, the ordinary approval queue). The files go
+  to those two and to nobody else, and every admin is told who asked and
+  who approved.
+- **No one-admin fallback.** Elsewhere a sole admin may approve their own
+  request so that a one-admin deployment still works. Not here: with one
+  admin there is no backup on demand and no daily backup.
+- **It only gets stricter.** A change that lets a backup reach one person,
+  or a chat that is not an admin, is raised with the owner first. Any new
+  door that hands out the company's records in bulk follows this rule.
+
+Spec: `specs/BKP-3_TWO_ADMINS_ON_BACKUP.md` (§6 lists what is not yet
+closed).
+
 ## Incident log (why these rules exist)
 
 | Date | Incident | Rule born |
@@ -1296,5 +1327,6 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
 | 16-Nov-2026 | A customer's payment received went to every admin at once and needed its amount at entry, while the employee often knows WHO should check it and sometimes not HOW MUCH was paid. Owner: *"the employee will select the admin from the admin list to send for approval"*, *"if the amount is known … I will attach the amount also"*, then *"Go with the recommendation"*: the named admin is asked first, two approvals stay, never stuck on one person, a blank amount is typed at the first approval and checked by the second | §21 (PRC-2: `src/services/askedApprover.js`, `src/flows/paymentReceivedFlow.js`; `specs/PRC-2_ASK_AN_ADMIN.md`) |
 | 04-Nov-2026 | On a sale card a bale the seller loaded WHOLE (a bare typed number, 📦 Take whole bale) and still whole at submit is ONE line and one B (`481 · 150 yd`, `10B · 1,500 yd`), whichever door raised it; a than dropped from it un-wholes the bale (its thans print one per line, `9B + 4t`); a bale typed as `6189/5` stays a than line; a flagged than keeps its bale than by than. The request still carries every than; nothing in execution changes. Owner, on Abdul's 50-line card: "It is not the same way it was coming before"; layout shown; "Go". | SELL-T3e (`approvalCards.foldWholeBales`; `specs/SELL-T3_TYPED_THAN_LIST.md`) |
 | 19-Nov-2026 | A marketer who met a new buyer had no way to record them (one tile, typed words ignored), a salesperson had an eight-question form, and the business card stayed in a pocket. Owner: "go ahead with the prospect door as per your own recommendation" | §12b amendment (PRS-1) |
+| 19-Nov-2026 | The offsite backup shipped with `📤 Send me a backup now`: one admin, one tap, the whole workbook and the database records in that chat, nobody else told; and its recipient list was a Settings cell any workbook editor could point at any chat. Owner the same day: "This backup job should never be happening alone to a single admin … make it available only through two admins" | §22 (BKP-3) |
 
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

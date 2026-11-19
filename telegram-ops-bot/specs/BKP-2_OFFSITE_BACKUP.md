@@ -2,6 +2,10 @@
 
 Shipped 19-Nov-2026. Owner's idea 01-Sep-2026, go 19-Nov-2026.
 
+**Amended the same day by BKP-3** (`specs/BKP-3_TWO_ADMINS_ON_BACKUP.md`):
+a backup never goes to one admin alone. Sections 3, 5 and 7 below carry
+the change; the files, the schedule and the restore are as written.
+
 ## 1. Why
 
 No automated backup ran at all. BKP-1 copied the spreadsheet inside Google
@@ -66,7 +70,7 @@ change here. The file's last line names what was left out.
 |---|---|---|
 | `OFFSITE_BACKUP_ENABLED` | 1 | 0 switches the daily run off. The tile still works. |
 | `OFFSITE_BACKUP_HOUR` | 2 | Lagos hour of the run. |
-| `OFFSITE_BACKUP_IDS` | blank | Who receives it: chat ids, comma-separated. Blank = every admin in Railway `ADMIN_IDS`. |
+| `OFFSITE_BACKUP_IDS` | blank | Blank = every admin in Railway `ADMIN_IDS`. The cell may only narrow that list, to two or more admins (BKP-3). An id that is not an admin receives nothing. |
 
 - The first check at or after the hour sends the day's backup. A bot that
   was down at the hour catches up when it is back.
@@ -75,8 +79,9 @@ change here. The file's last line names what was left out.
   kept in memory and a redeploy after the hour sends one more copy.
 - The nightly files arrive without a notification sound.
 - Each file is uploaded once and forwarded to the other recipients.
-- A private Telegram group or channel works as a recipient: add the bot,
-  put the chat id in `OFFSITE_BACKUP_IDS`. Then one place holds every day.
+- ~~A private Telegram group or channel works as a recipient.~~ **Reversed
+  by BKP-3:** only admins receive a backup, two or more of them. A group or
+  channel id in the cell receives nothing.
 
 ## 4. When it fails
 
@@ -100,12 +105,14 @@ Last backup: 19-Nov-2026 02:00
 Workbook: 33 tabs · 58,112 rows · 3.1 MB
 Database: 11 tables · 48,210 rows · 0.6 MB
 
-[📤 Send me a backup now]
+[📤 Ask for a backup now]
 [🏠 Back to menu]
 ```
 
-`📤 Send me a backup now` sends the files to the admin who tapped, in that
-chat. It does not replace or count as the day's scheduled run.
+**BKP-3:** the one-tap `📤 Send me a backup now` is gone. `📤 Ask for a
+backup now` raises a request; a different admin approves it; the files go
+to those two admins. It does not replace or count as the day's scheduled
+run.
 
 ## 6. Restoring
 
@@ -146,11 +153,11 @@ past the restored ids.
 
 ## 7. Owner steps
 
-1. Open 📊 Reporting → 💾 Backup and tap `📤 Send me a backup now`. Open the
-   workbook file on your phone and check the `_BACKUP` sheet against your
-   tabs.
-2. Decide who receives it. Every admin is the default. A private group or
-   channel is the tidier choice.
+1. Open 📊 Reporting → 💾 Backup and tap `📤 Ask for a backup now`; have the
+   other admin approve it (BKP-3). Open the workbook file on your phone and
+   check the `_BACKUP` sheet against your tabs.
+2. Who receives it: every admin. Leave `OFFSITE_BACKUP_IDS` blank, or name
+   two or more admins. A group or channel is not a recipient (BKP-3).
 3. Confirm Railway's own Postgres snapshots are on. This job is a second
    net, not a replacement.
 4. The first nightly files arrive after 02:00.

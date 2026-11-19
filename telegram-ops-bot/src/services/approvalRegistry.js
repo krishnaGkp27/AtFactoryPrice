@@ -92,6 +92,15 @@ const ENTRIES = Object.freeze({
     twin: { key: (aj) => (aj && aj.saleRefId ? `sale:${aj.saleRefId}` : null), policy: 'refuse', scope: 'open', anyRequester: true },
     oneLine: (aj) => [aj.customer || '', aj.goods || '', aj.saleRef ? `sale ${aj.saleRef}` : ''].filter(Boolean).join(' · '),
   },
+  // BKP-3 (owner, 19-Nov-2026) — a backup on demand: one admin asks, a
+  // different admin approves, the files go to those two. One at a time:
+  // a second ask while one is open is refused at the door, whoever asks.
+  release_backup: {
+    icon: '💾',
+    label: 'Backup on demand',
+    twin: { key: () => 'backup', policy: 'refuse', scope: 'open', anyRequester: true },
+    oneLine: () => 'the workbook and the database records',
+  },
   register_payment_account: {
     icon: '🏦',
     label: 'Payee account',

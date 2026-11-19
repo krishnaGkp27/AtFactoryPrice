@@ -32,13 +32,16 @@ const restore = require('../../../scripts/restore-backup-data');
 const backupFlow = require('../../../src/flows/backupFlow');
 
 const I = offsiteBackup._internals;
+const approvalQueueRepository = require('../../../src/repositories/approvalQueueRepository');
 const real = {
+  getByRequestId: approvalQueueRepository.getByRequestId,
   getSheetGrid: sheets.getSheetGrid, readRangesRaw: sheets.readRangesRaw,
   isEnabled: pool.isEnabled, withTransaction: pool.withTransaction,
   getAll: settingsRepository.getAll,
   record: jobRuns.record, hasOk: jobRuns.hasOk, latest: jobRuns.latest,
 };
 test.after(() => {
+  approvalQueueRepository.getByRequestId = real.getByRequestId;
   Object.assign(sheets, { getSheetGrid: real.getSheetGrid, readRangesRaw: real.readRangesRaw });
   Object.assign(pool, { isEnabled: real.isEnabled, withTransaction: real.withTransaction });
   settingsRepository.getAll = real.getAll;
@@ -57,6 +60,7 @@ let settings;
 let runs;        // job_runs rows
 let recordFails;
 let reads;       // every ranges list asked of the sheet client
+let queue;       // ApprovalQueue rows by request id (the backup requests)
 
 function resetWorld() {
   I._resetForTests();
@@ -78,6 +82,13 @@ function resetWorld() {
     inventory_rows: { columns: [{ name: 'x', type: 'text' }], pk: null, rows: [{ x: 'copy' }] },
   };
   pgOn = true; pgFail = ''; queries = []; runs = []; recordFails = false;
+  // an approved backup request raised by 888, and one still waiting
+  queue = {
+    'R-1': { requestId: 'R-1', user: '888', status: 'approved', actionJSON: { action: 'release_backup' } },
+    'R-2': { requestId: 'R-2', user: '777', status: 'pending', actionJSON: { action: 'release_backup' } },
+    'R-3': { requestId: 'R-3', user: '777', status: 'approved', actionJSON: { action: 'sale_bundle' } },
+  };
+  approvalQueueRepository.getByRequestId = async (id) => queue[id] || null;
   settings = { OFFSITE_BACKUP_ENABLED: 1, OFFSITE_BACKUP_HOUR: 2, OFFSITE_BACKUP_IDS: '' };
 
   reads = [];
@@ -334,10 +345,56 @@ test('reads are planned by grid size: one request asks for a bounded number of g
 
 /* ── delivery ────────────────────────────────────────────────────────── */
 
-test('who receives it: the Settings list when set, else every admin', () => {
-  assert.deepEqual(offsiteBackup.recipients({ OFFSITE_BACKUP_IDS: '' }), ['777', '888']);
-  assert.deepEqual(offsiteBackup.recipients({ OFFSITE_BACKUP_IDS: ' -1001234567890, 555 ; 555 abc ' }), ['-1001234567890', '555']);
-  assert.deepEqual(offsiteBackup.recipients(null), ['777', '888']);
+/* BKP-3 — "This backup job should never be happening alone to a single
+ * admin … make it available only through two admins." */
+
+/** Run `fn` with a different Railway admin list, then put the real one back. */
+async function withAdmins(ids, fn) {
+  const config = require('../../../src/config');
+  const keep = config.access.adminIds;
+  config.access.adminIds = ids;
+  try { return await fn(); } finally { config.access.adminIds = keep; }
+}
+
+test('who receives the daily backup: every admin; the Settings cell may only narrow among admins', () => {
+  const d = (cell) => offsiteBackup.dailyRecipients({ OFFSITE_BACKUP_IDS: cell });
+  assert.deepEqual(d(''), { ids: ['777', '888'], ignored: [], widened: false, blocked: '' });
+  assert.deepEqual(offsiteBackup.dailyRecipients(null).ids, ['777', '888']);
+  // a group, a channel, an employee: never a recipient, and named
+  assert.deepEqual(d(' -1001234567890, 555 ; 555 abc '), { ids: ['777', '888'], ignored: ['-1001234567890', '555'], widened: true, blocked: '' });
+  // ONE admin named: not honoured — every admin receives it, never one alone
+  assert.deepEqual(d('888'), { ids: ['777', '888'], ignored: [], widened: true, blocked: '' });
+  // two admins named: honoured, in the cell's order
+  assert.deepEqual(d('888, 777, 4242'), { ids: ['888', '777'], ignored: ['4242'], widened: false, blocked: '' });
+  assert.deepEqual(offsiteBackup.recipients({ OFFSITE_BACKUP_IDS: '888' }), ['777', '888']);
+});
+
+test('fewer than two admins: nobody receives the daily backup, whatever the cell says', async () => {
+  await withAdmins(['777'], async () => {
+    const r = offsiteBackup.dailyRecipients({ OFFSITE_BACKUP_IDS: '777, -100123, 888' });
+    assert.deepEqual(r.ids, []);
+    assert.equal(r.blocked, 'a backup goes to at least 2 admins and only 1 is set up (Railway ADMIN_IDS)');
+    const bot = createFakeBot();
+    const res = await offsiteBackup.run(bot, { now: NOW });
+    assert.deepEqual([res.ok, res.blocked], [false, true]);
+    assert.equal(docs(bot).length, 0);
+    assert.equal(reads.length, 0, 'nothing was even read');
+  });
+  await withAdmins([], async () => {
+    assert.match(offsiteBackup.dailyRecipients({}).blocked, /only 0 are set up/);
+  });
+});
+
+test('the pair behind a backup on demand: two DIFFERENT admins from ADMIN_IDS', () => {
+  const pair = (a, b) => offsiteBackup.releasePair({ requestedBy: a, approvedBy: b });
+  assert.deepEqual(pair('777', '888'), { ok: true, ids: ['777', '888'] });
+  assert.deepEqual(pair(888, 777), { ok: true, ids: ['888', '777'] });
+  assert.match(pair('777', '777').message, /two different admins/);
+  assert.match(pair('777', '4242').message, /Railway ADMIN_IDS/);
+  assert.match(pair('4242', '888').message, /Railway ADMIN_IDS/);
+  assert.match(pair('777', '').message, /who asked and the admin who approved/);
+  assert.equal(offsiteBackup.releasePair(null).ok, false);
+  assert.equal(offsiteBackup.releasePair({}).ok, false);
 });
 
 test('run: each file goes up once and is forwarded by its file id; the run is recorded', async () => {
@@ -360,7 +417,32 @@ test('run: each file goes up once and is forwarded by its file id; the run is re
   assert.equal(runs[0].detail.recipients, 2);
 });
 
-test('run: one unreachable chat does not stop the others; a file that reaches NOBODY fails the run', async () => {
+test('an admin the bot cannot reach is found BEFORE anything is built: one reachable admin = nothing sent', async () => {
+  const bot = createFakeBot();
+  const act = bot.sendChatAction.bind(bot);
+  bot.sendChatAction = async (chatId, ...rest) => { if (String(chatId) === '777') throw new Error('bot was blocked by the user'); return act(chatId, ...rest); };
+  const res = await offsiteBackup.run(bot, { now: NOW });
+  assert.equal(res.ok, false);
+  assert.deepEqual(res.unreachable, ['777']);
+  assert.match(res.message, /cannot reach 1 of the 2 admins .* nothing was sent, because a backup never goes to one admin alone/);
+  assert.equal(docs(bot).length, 0, '888 does not receive it alone');
+  assert.equal(reads.length, 0, 'nothing was built');
+  assert.equal(runs.length, 0);
+});
+
+test('three admins, one unreachable: the two who can be reached receive it', async () => {
+  await withAdmins(['777', '888', '999'], async () => {
+    const bot = createFakeBot();
+    const act = bot.sendChatAction.bind(bot);
+    bot.sendChatAction = async (chatId, ...rest) => { if (String(chatId) === '888') throw new Error('chat not found'); return act(chatId, ...rest); };
+    const res = await offsiteBackup.run(bot, { now: NOW });
+    assert.equal(res.ok, true);
+    assert.deepEqual([...new Set(docs(bot).map((x) => String(x.chatId)))], ['777', '999']);
+    assert.deepEqual([res.recipients, res.alone], [2, false]);
+  });
+});
+
+test('run: a send that fails AFTER the check leaves one holder — recorded, and every admin is told; a file that reaches NOBODY fails the run', async () => {
   const bot = createFakeBot();
   const send = bot.sendDocument.bind(bot);
   bot.sendDocument = async (chatId, ...rest) => { if (String(chatId) === '777') throw new Error('bot was blocked'); return send(chatId, ...rest); };
@@ -368,6 +450,11 @@ test('run: one unreachable chat does not stop the others; a file that reaches NO
   assert.equal(res.ok, true);
   assert.equal(res.undelivered, 2);
   assert.ok(Buffer.isBuffer(docs(bot)[0].doc), 'the upload moved to the next chat');
+  assert.deepEqual([res.alone, res.holders], [true, ['888']]);
+  assert.deepEqual(runs[0].detail.holders, ['888']);
+  const warned = bot.callsTo('sendMessage').map((c) => c.args);
+  assert.deepEqual(warned.map((w) => String(w.chatId)), ['777', '888'], 'both admins are told');
+  assert.match(warned[0].text, /^⚠️ Backup: the files reached only one admin \(id 888\)\./);
 
   bot.sendDocument = async () => { throw new Error('bot was blocked'); };
   res = await offsiteBackup.run(bot, { now: NOW });
@@ -375,14 +462,70 @@ test('run: one unreachable chat does not stop the others; a file that reaches NO
   assert.match(res.message, /afp-backup-2026-11-19-workbook\.xlsx.* reached nobody: bot was blocked/);
 });
 
-test('run by hand: to the asking chat only, with sound, recorded as manual', async () => {
+test('run on demand: to the two admins who asked and approved, with sound, recorded with the pair', async () => {
   const bot = createFakeBot();
-  const res = await offsiteBackup.run(bot, { now: NOW, toIds: ['888'], kind: 'manual' });
+  const res = await offsiteBackup.run(bot, { now: NOW, kind: 'manual', release: { requestId: 'R-1', requestedBy: '888', approvedBy: '777' } });
   assert.equal(res.ok, true);
-  assert.deepEqual(docs(bot).map((x) => String(x.chatId)), ['888', '888']);
+  assert.deepEqual(docs(bot).map((x) => String(x.chatId)), ['888', '777', '888', '777'], 'two files, both admins');
   assert.equal(docs(bot)[0].opts.disable_notification, false);
   assert.equal(runs[0].status, 'manual');
-  assert.equal(await jobRuns.hasOk('offsite_backup', '2026-11-19'), false, 'a hand-sent copy is not the day\'s scheduled run');
+  assert.deepEqual(runs[0].detail.release, { requestId: 'R-1', requestedBy: '888', approvedBy: '777' });
+  assert.deepEqual([res.alone, res.holders], [false, ['888', '777']]);
+  assert.equal(await jobRuns.hasOk('offsite_backup', '2026-11-19'), false, 'a copy on demand is not the day\'s scheduled run');
+});
+
+test('run on demand is refused without two different admins — there is no way to name a chat', async () => {
+  const cases = [
+    { kind: 'manual' },                                                        // nobody behind it
+    { kind: 'manual', release: { requestedBy: '777', approvedBy: '777' } },    // one admin twice
+    { kind: 'manual', release: { requestedBy: '777', approvedBy: '4242' } },   // an employee approving
+    { kind: 'manual', release: { requestedBy: '-100123', approvedBy: '888' } }, // a channel asking
+    { kind: 'manual', toIds: ['777'] },                                        // the retired parameter
+    { kind: 'manual', toIds: ['777'], release: { requestedBy: '777' } },
+    // two admins, but no approved backup request behind them
+    { kind: 'manual', release: { requestedBy: '888', approvedBy: '777' } },                    // no request named
+    { kind: 'manual', release: { requestId: 'R-0', requestedBy: '888', approvedBy: '777' } }, // no such request
+    { kind: 'manual', release: { requestId: 'R-2', requestedBy: '777', approvedBy: '888' } }, // not approved yet
+    { kind: 'manual', release: { requestId: 'R-3', requestedBy: '777', approvedBy: '888' } }, // another kind of request
+    { kind: 'manual', release: { requestId: 'R-1', requestedBy: '777', approvedBy: '888' } }, // raised by someone else
+  ];
+  for (const o of cases) {
+    const bot = createFakeBot();
+    const res = await offsiteBackup.run(bot, { now: NOW, ...o });
+    assert.deepEqual([res.ok, res.refused], [false, true], JSON.stringify(o));
+    assert.equal(docs(bot).length, 0, JSON.stringify(o));
+  }
+  assert.equal(reads.length, 0, 'nothing was built for any of them');
+  assert.equal(runs.length, 0);
+});
+
+test('one approved request releases ONE backup: a second run on it is refused; an unreadable request releases nothing', async () => {
+  const release = { requestId: 'R-1', requestedBy: '888', approvedBy: '777' };
+  const bot = createFakeBot();
+  assert.equal((await offsiteBackup.run(bot, { now: NOW, kind: 'manual', release })).ok, true);
+  const again = await offsiteBackup.run(bot, { now: NOW, kind: 'manual', release });
+  assert.deepEqual([again.ok, again.refused, again.message], [false, true, 'That request has already released its backup. Ask again for a new one.']);
+  assert.equal(docs(bot).length, 4, 'only the first run sent files');
+
+  I._resetForTests();
+  approvalQueueRepository.getByRequestId = async () => { throw new Error('quota'); };
+  const bot2 = createFakeBot();
+  const res = await offsiteBackup.run(bot2, { now: NOW, kind: 'manual', release });
+  assert.deepEqual([res.ok, res.refused], [false, true]);
+  assert.match(res.message, /could not be read \(quota\)/);
+  assert.equal(docs(bot2).length, 0);
+});
+
+test('run on demand: one of the two cannot be reached — nothing is sent to the other', async () => {
+  const bot = createFakeBot();
+  const act = bot.sendChatAction.bind(bot);
+  bot.sendChatAction = async (chatId, ...rest) => { if (String(chatId) === '888') throw new Error('bot was blocked by the user'); return act(chatId, ...rest); };
+  queue['R-9'] = { requestId: 'R-9', user: '777', status: 'approved', actionJSON: { action: 'release_backup' } };
+  const res = await offsiteBackup.run(bot, { now: NOW, kind: 'manual', release: { requestId: 'R-9', requestedBy: '777', approvedBy: '888' } });
+  assert.equal(res.ok, false);
+  assert.deepEqual(res.unreachable, ['888']);
+  assert.equal(docs(bot).length, 0);
+  assert.equal(reads.length, 0);
 });
 
 test('a run record that cannot be saved does not fail a backup that was delivered', async () => {
@@ -461,6 +604,23 @@ test('tick: a failure tells the admins ONCE, waits an hour, and stops after thre
   assert.equal(await offsiteBackup.tick(bot, t('03:15')), 'done');
 });
 
+test('tick: with one admin the daily backup does not go out — said once a day, never retried as a failure', async () => {
+  await withAdmins(['777'], async () => {
+    const bot = createFakeBot();
+    const t = (hhmm) => new Date(`2026-11-19T${hhmm}:00+01:00`);
+    assert.equal(await offsiteBackup.tick(bot, t('02:00')), 'blocked');
+    assert.equal(await offsiteBackup.tick(bot, t('02:10')), 'blocked');
+    assert.equal(await offsiteBackup.tick(bot, t('09:00')), 'blocked');
+    const dms = bot.callsTo('sendMessage').map((c) => c.args);
+    assert.equal(dms.length, 1, 'one notice for the day');
+    assert.equal(String(dms[0].chatId), '777');
+    assert.match(dms[0].text, /^🔐 The daily backup was NOT sent\na backup goes to at least 2 admins and only 1 is set up \(Railway ADMIN_IDS\)\.\n\nA backup never goes to one admin alone\./);
+    assert.equal(docs(bot).length, 0);
+    assert.equal(await offsiteBackup.tick(bot, new Date('2026-11-20T02:00:00+01:00')), 'blocked');
+    assert.equal(bot.callsTo('sendMessage').length, 2, 'said again the next day');
+  });
+});
+
 test('tick: unreadable Settings sends nothing', async () => {
   settingsRepository.getAll = async () => { throw new Error('quota'); };
   const bot = createFakeBot();
@@ -473,12 +633,42 @@ test('tick: unreadable Settings sends nothing', async () => {
 test('status + card: the schedule, who receives it, and the last run', async () => {
   let st = await offsiteBackup.status();
   assert.deepEqual([st.enabled, st.hour, st.recipients, st.last], [true, 2, ['777', '888'], null]);
+  assert.deepEqual([st.ignored, st.widened, st.blocked, st.admins], [[], false, '', 2]);
   let text = backupFlow._internals.cardText(st, ['Krishna', 'Musa']);
-  assert.match(text, /^💾 \*Backup\*\n\nRuns every day at 02:00 and goes to: Krishna, Musa\.\nTwo files: the workbook, and the database records\.\n\nLast backup: none on record yet\.$/);
+  assert.equal(text, [
+    '💾 *Backup*', '',
+    'Runs every day at 02:00 and goes to: Krishna, Musa.',
+    'Two files: the workbook, and the database records.',
+    '🔐 A backup never goes to one admin alone. One on demand is asked by one admin and approved by another, and both receive it.',
+    '', 'Last backup: none on record yet.',
+  ].join('\n'));
+
+  // what the two-admin rule did with the Settings cell is said on the card
+  settings.OFFSITE_BACKUP_IDS = '-1001234567890, 888';
+  text = backupFlow._internals.cardText(await offsiteBackup.status(), ['Krishna', 'Musa']);
+  assert.match(text, /⚠️ Settings `OFFSITE_BACKUP_IDS` names 1 chat that is not an admin\. Only admins receive a backup\.\n⚠️ Settings `OFFSITE_BACKUP_IDS` names fewer than two admins, so every admin receives the backup\./);
+  settings.OFFSITE_BACKUP_IDS = '';
+  await withAdmins(['777'], async () => {
+    const one = await offsiteBackup.status();
+    assert.deepEqual([one.recipients, one.admins], [[], 1]);
+    assert.match(backupFlow._internals.cardText(one, []), /^💾 \*Backup\*\n\n🔐 The daily backup is NOT being sent: a backup goes to at least 2 admins and only 1 is set up \(Railway ADMIN_IDS\)\.\n/);
+    assert.deepEqual(backupFlow._internals.keyboard(one, null, '777').flat().map((b) => b.callback_data), ['act:__back__'], 'nothing to ask with one admin');
+  });
+
+  // the pending request, as its asker and as the other admin see it
+  const open = { who: 'Krishna', age: 'under 1h', ref: 'R-AB12', mine: true };
+  assert.match(backupFlow._internals.cardText(st, ['Krishna', 'Musa'], { open }), /\n\n⏳ You asked for a backup under 1h ago · R-AB12 · waiting on another admin\.$/);
+  assert.match(backupFlow._internals.cardText(st, ['Krishna', 'Musa'], { open: { ...open, mine: false } }), /\n\n⏳ Krishna asks for a backup · under 1h ago · R-AB12\. Approving sends the files to you and to Krishna\.$/);
+  const row = { requestId: 'aaaa1111-2222', user: '777' };
+  assert.deepEqual(backupFlow._internals.keyboard(st, row, '777').flat().map((b) => b.callback_data), ['apg:nudge:aaaa1111-2222', 'apg:st:aaaa1111-2222', 'act:__back__']);
+  assert.deepEqual(backupFlow._internals.keyboard(st, row, '888').flat().map((b) => `${b.text}|${b.callback_data}`),
+    ['✅ Approve and send|approve:aaaa1111-2222', '❌ Reject|reject:aaaa1111-2222', '🏠 Back to menu|act:__back__']);
+  assert.deepEqual(backupFlow._internals.keyboard(st, null, '777').flat().map((b) => `${b.text}|${b.callback_data}`),
+    ['📤 Ask for a backup now|bkp:ask', '🏠 Back to menu|act:__back__']);
 
   await offsiteBackup.run(createFakeBot(), { now: NOW });
   st = await offsiteBackup.status();
-  text = backupFlow._internals.cardText(st, ['Krishna', 'Musa'], '✅ note');
+  text = backupFlow._internals.cardText(st, ['Krishna', 'Musa'], { note: '✅ note' });
   assert.match(text, /Workbook: 4 tabs · 7 rows · \d+ KB\nDatabase: 3 tables · 4 rows · \d+ KB\n\n✅ note$/);
   assert.match(text, /Last backup: \d{2}-[A-Z][a-z]{2}-\d{4} \d{2}:\d{2}\n/);
 

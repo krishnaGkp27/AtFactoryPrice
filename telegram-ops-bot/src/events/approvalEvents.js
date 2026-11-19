@@ -2644,6 +2644,20 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           }
         }
 
+        // BKP-3 (owner, 19-Nov-2026) — a backup on demand a second admin has
+        // just approved: the files are built now and go to the two admins
+        // who signed, never to one alone; every admin is told. A failure
+        // here never rolls back the approval — it is said to both.
+        if (item && item.actionJSON && item.actionJSON.action === 'release_backup') {
+          try {
+            await require('../flows/backupFlow').releaseApproved(bot, {
+              requestId, requestedBy: String(item.user), approvedBy: adminId,
+            });
+          } catch (e) {
+            logger.warn(`BKP-3 backup release for ${requestId} failed: ${e.message}`);
+          }
+        }
+
         const customer = item && item.actionJSON && (item.actionJSON.customer || item.actionJSON.customerName);
         if (customer) {
           try {

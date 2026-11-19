@@ -99,6 +99,8 @@ const CATEGORIES = [
   // decision; without this it fell into ❓ Other, where the dual-admin
   // badge the category carries is not shown either.
   { key: 'config', label: '⚙️ Config & messaging', actions: ['set_reminder_config', 'notify_wholesaler', 'broadcast_wholesalers', 'task_reminder_enable'], dual: true },
+  // BKP-3 — releasing the company's data is its own concern, never ❓ Other.
+  { key: 'data', label: '💾 Company data', actions: ['release_backup'], dual: true },
 ];
 
 /**
