@@ -297,6 +297,10 @@ const ACTIVITIES = [
   { code: 'snap_task',             label: 'Snap Task',                 icon: '📸', callback: 'act:snap_task',          hub: 'planning' },
   { code: 'assign_task',           label: 'Assign Task',               icon: '➕', callback: 'act:assign_task',        hub: 'planning' },
   { code: 'my_tasks',              label: 'My Tasks',                  icon: '📋', callback: 'act:my_tasks',           hub: 'planning' },
+  // REQ-1 — what the person has asked for and where it stands; an admin
+  // also sees everyone's. Injected for EVERY user (like 💳 Payments),
+  // never drawn from a department's allowed_activities.
+  { code: 'my_requests',           label: 'My Requests',               icon: '📨', callback: 'act:my_requests',        hub: 'planning' },
   { code: 'team_tasks',            label: 'Team Tasks',                icon: '👥', callback: 'act:team_tasks',         hub: 'planning' },
   { code: 'pending_signoff',       label: 'Pending Sign-off',          icon: '⏳', callback: 'act:pending_signoff',    hub: 'planning' },
   // P4 — admin Procurement Plan: low-stock alerts + open POs + new PO flow.

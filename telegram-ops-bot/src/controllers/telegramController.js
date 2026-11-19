@@ -5439,7 +5439,9 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
   // write behind the tile is dual-admin approved, and the pickers show a
   // person only their own registered account, so surfacing it costs
   // nothing in safety.
-  for (const a of activityRegistry.filterByCodes(['payments'])) {
+  // REQ-1 — 📨 My Requests rides the same universal injection: anyone who
+  // can raise a request can see where it stands.
+  for (const a of activityRegistry.filterByCodes(['payments', 'my_requests'])) {
     if (!allowed.find((x) => x.code === a.code)) allowed.push(a);
   }
 
@@ -5686,7 +5688,9 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId, callbackQ
   // PAY-1 — same universal injection as the greeting menu, so the tile is
   // still there when the Finance hub is opened rather than vanishing one
   // level down.
-  for (const a of activityRegistry.filterByCodes(['payments'])) {
+  // REQ-1 — 📨 My Requests rides the same universal injection: anyone who
+  // can raise a request can see where it stands.
+  for (const a of activityRegistry.filterByCodes(['payments', 'my_requests'])) {
     if (!allowed.find((x) => x.code === a.code)) allowed.push(a);
   }
   // A hub renders its visible child sub-hubs (each holding ≥1 allowed
@@ -7608,6 +7612,8 @@ const FLOW_CALLBACK_ROUTES = [
   { prefixes: ['agk:'], handle: (bot, cq) => require('../flows/agentAccessFlow').handleCallback(bot, cq) },
   // BKP-2 — 💾 Backup (session-free; every tap re-checks admin).
   { prefixes: ['bkp:'], handle: (bot, cq) => require('../flows/backupFlow').handleCallback(bot, cq) },
+  // REQ-1 — 📨 My Requests (session-free; every tap re-checks who may see what).
+  { prefixes: ['myr:'], handle: (bot, cq) => require('../flows/myRequestsFlow').handleCallback(bot, cq) },
   { prefixes: ['apz:'], handle: (bot, cq) => require('../events/approvalEvents').handleMarkDone(bot, cq) },
   { prefixes: ['abx:'], handle: (bot, cq) => require('../flows/approvalsInboxFlow').handleCallback(bot, cq) },
   // DCAT-1 — design → product-category mapping (dual-admin approval).
@@ -10390,6 +10396,11 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         // AGT-1 — the coding agent's read-only data door (admin-only, gated
         // in the flow's start()).
         await require('../flows/agentAccessFlow').start(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'my_requests': {
+        // REQ-1 — the person's own requests; an admin may widen the scope.
+        await require('../flows/myRequestsFlow').start(bot, chatId, uid, messageId);
         break;
       }
       case 'backup': {
