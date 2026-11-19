@@ -339,6 +339,7 @@ module.exports = {
   findByUserId,
   findByDepartment,
   inDepartment,
+  isActive,
   append,
   reactivate,
   updateDepartment,

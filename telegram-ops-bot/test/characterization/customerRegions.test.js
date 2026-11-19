@@ -70,7 +70,7 @@ inventoryRepository.getWarehouses = async () => [];
 inventoryRepository.getSoldRows = async () => [];
 auditLogRepository.append = async () => {};
 approvalEvents.notifyAdminsApprovalRequest = async () => {};
-approvalQueueRepository.getAll = async () => [];
+approvalQueueRepository.getResolved = async () => []; // no request names who added anyone
 
 const ADMIN = '777';
 function last(bot) {

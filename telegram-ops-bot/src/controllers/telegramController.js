@@ -1009,9 +1009,23 @@ async function handleAddCustomerFlowText(bot, chatId, userId, text) {
 
   if (session.step === 'phone') {
     session.phone = trimmed;
+    // PRS-1 — a prospect goes from the phone straight to the business card.
+    if (session.prospect) {
+      sessionStore.set(userId, session);
+      await showAddProspectCardStep(bot, chatId, userId);
+      return true;
+    }
     session.step = 'address';
     sessionStore.set(userId, session);
     await showAddCustomerAddressStep(bot, chatId, userId);
+    return true;
+  }
+
+  // PRS-1 — the card step takes a photo, never words.
+  if (session.step === 'card' && session.prospect) {
+    await bot.sendMessage(chatId, session.phone
+      ? '📇 Send the business card as a photo, or tap ⏭ Skip card.'
+      : '📇 Send the business card as a photo, or tap ⬅️ Back to enter the phone number.');
     return true;
   }
 
@@ -1880,8 +1894,9 @@ const PERSON_TYPE_LABEL = (k) => (PERSON_TYPES.find((t) => t.key === k) || {}).l
 function _acHeader(session) {
   // CON-1 — one door, so the title names the KIND being added rather
   // than always saying "Customer".
-  const lines = ['➕ *Add contact*'];
-  if (session.personType) lines.push(`✓ Type: *${PERSON_TYPE_LABEL(session.personType)}*`);
+  // PRS-1 — the short path for a buyer who has not bought yet.
+  const lines = [session.prospect ? '🆕 *Add prospect*' : '➕ *Add contact*'];
+  if (session.personType) lines.push(`✓ Type: *${PERSON_TYPE_LABEL(session.personType)}*${session.prospect ? ' · no sale yet' : ''}`);
   // CON-2 — raised from inside another flow: say what is waiting on it.
   const heldMeta = session.held && HELD_FLOWS[session.held.flow];
   if (heldMeta) lines.push(`${heldMeta.icon} Your ${heldMeta.what} is on hold until this customer is approved.`);
@@ -1897,6 +1912,9 @@ function _acHeader(session) {
   if (session.payment_terms) lines.push(`✓ Payment terms: *${session.payment_terms}*`);
   if (session.notes) lines.push(`✓ Notes: *${session.notes}*`);
   if (session.notes === '') lines.push(`✓ Notes: _skipped_`);
+  // PRS-1 — the business card kept as evidence with the request.
+  if (session.card && session.card.fileId) lines.push('✓ Business card: *attached*');
+  if (session.card === null) lines.push('✓ Business card: _none_');
   // CRM-R1 — the provisional store a prospect is tagged with.
   if (Array.isArray(session.stores) && session.stores.length) lines.push(`✓ Store: *${session.stores.join(' · ')}* _(provisional)_`);
   return lines.join('\n');
@@ -1990,6 +2008,69 @@ async function startAddCustomerFromLine(bot, chatId, userId, parsed) {
   return true;
 }
 
+/**
+ * PRS-1 (owner's go, 19-Nov-2026) — 🆕 Add Prospect: the SHORT path into
+ * this door for a marketer or a salesperson who met a buyer.
+ *
+ * A shortcut INTO the one door (§12b), never a second form: the same
+ * session, the same name / freeze / collision checks, the same confirm
+ * card, the same `add_contact` request and admin triage. The kind is
+ * already Customer; the address, category, credit limit, terms and notes
+ * are not asked (the door's defaults apply at submit — Retail · 0 · COD).
+ * What it adds is one step of its own: the business card, a photo kept as
+ * evidence with the request.
+ *
+ *   name → phone → business card → store (the door's CRM-R1 rule) → confirm
+ */
+async function startAddProspect(bot, chatId, userId, messageId = null) {
+  sessionStore.set(userId, {
+    type: 'add_customer_flow', step: 'name', requestedBy: userId,
+    flowMessageId: messageId || null, personType: 'customer', prospect: true,
+  });
+  await showAddPersonNameStep(bot, chatId, userId);
+}
+
+/** PRS-1 — the business card: a photo, or Skip when a phone number was given. */
+async function showAddProspectCardStep(bot, chatId, userId, note = '') {
+  const session = sessionStore.get(userId);
+  if (!session) return;
+  session.step = 'card';
+  sessionStore.set(userId, session);
+  const hasPhone = !!String(session.phone || '').trim();
+  const rows = [];
+  if (hasPhone) rows.push([{ text: '⏭ Skip card', callback_data: 'acskip:card' }]);
+  rows.push([
+    { text: '⬅️ Back', callback_data: 'acb:phone' },
+    { text: '❌ Cancel', callback_data: 'accanc:0' },
+  ]);
+  const ask = hasPhone
+    ? '📇 Send a *photo of their business card* (or tap Skip):'
+    : '📇 Send a *photo of their business card*.\n_No phone number was given, so the card is needed. Tap Back to enter the phone instead._';
+  await _acRender(bot, chatId, userId, `${note ? `${note}\n\n` : ''}${ask}`, rows);
+}
+
+/**
+ * PRS-1 — a photo arrived while the prospect door waits for the card.
+ * @returns {Promise<boolean>} true = the message was the card
+ */
+async function handleAddProspectCard(bot, msg) {
+  const userId = String(msg.from.id);
+  const session = sessionStore.get(userId);
+  if (!session || session.type !== 'add_customer_flow' || !session.prospect || session.step !== 'card') return false;
+  const card = require('../services/prospectDoor').cardFromMessage(msg);
+  if (!card) {
+    // A PDF or another file is not a picture of a card: say so, keep the step.
+    await bot.sendMessage(msg.chat.id, session.phone
+      ? '📇 The business card must be a photo. Send it as a picture, or tap ⏭ Skip card.'
+      : '📇 The business card must be a photo. Send it as a picture, or tap ⬅️ Back to enter the phone number.');
+    return true;
+  }
+  session.card = card;
+  sessionStore.set(userId, session);
+  await showAddCustomerStoreStepOrConfirm(bot, msg.chat.id, userId);
+  return true;
+}
+
 /** CON-1 — step 1 of the one door: what kind of person is this? */
 async function showAddPersonTypePicker(bot, chatId, userId) {
   const rows = [];
@@ -2022,6 +2103,13 @@ async function showAddPersonNameStep(bot, chatId, userId) {
       { text: '❌ Cancel', callback_data: 'accanc:0' },
     ]);
     await _acRender(bot, chatId, userId, 'Enter the *full name* (reply in chat):', rows);
+    return;
+  }
+  // PRS-1 — the kind is already set, so there is no kind step to go back to;
+  // no Quick Add either (it writes at once, and a prospect is approved).
+  if (session && session.prospect) {
+    rows.push([{ text: '❌ Cancel', callback_data: 'accanc:0' }]);
+    await _acRender(bot, chatId, userId, 'Enter the *name* of the shop or the person (reply in chat):', rows);
     return;
   }
   if (isCust && config.access.adminIds.includes(userId)) {
@@ -2192,19 +2280,25 @@ async function showAddCustomerStoreStepOrConfirm(bot, chatId, userId) {
     rows.push(row);
   }
   rows.push([{ text: '❔ Place later', callback_data: 'acst:__later__' }]);
-  rows.push([{ text: '⬅️ Back', callback_data: 'acb:notes' }, { text: '❌ Cancel', callback_data: 'accanc:0' }]);
+  // PRS-1 — a prospect reached the store from the business card, not the notes.
+  rows.push([{ text: '⬅️ Back', callback_data: session.prospect ? 'acb:card' : 'acb:notes' }, { text: '❌ Cancel', callback_data: 'accanc:0' }]);
   await _acRender(bot, chatId, userId, 'Which store does this customer belong to? _(provisional until their first sale)_', rows);
 }
 async function showAddCustomerConfirmation(bot, chatId, userId) {
   // CUS-4 — a card filled from a typed line never walked the form, so its
   // way back is the whole form from the name, not the notes step.
-  const typedLine = !!(sessionStore.get(userId) || {}).fromTypedLine;
+  const live = sessionStore.get(userId) || {};
+  const typedLine = !!live.fromTypedLine;
+  // PRS-1 — a prospect's way back is its own last step, the business card.
+  const backRow = live.prospect
+    ? { text: '⬅️ Back', callback_data: 'acb:card' }
+    : (typedLine ? { text: '✏️ Change details', callback_data: 'acb:name' } : { text: '⬅️ Back', callback_data: 'acb:notes' });
   const rows = [
     [
       { text: '✅ Submit for Approval', callback_data: 'acconf:1' },
       { text: '❌ Cancel', callback_data: 'accanc:0' },
     ],
-    [typedLine ? { text: '✏️ Change details', callback_data: 'acb:name' } : { text: '⬅️ Back', callback_data: 'acb:notes' }],
+    [backRow],
   ];
   await _acRender(bot, chatId, userId, '*Confirm and submit for admin approval?*', rows);
 }
@@ -2648,6 +2742,8 @@ function _cdTabFooter(customerName, opts = {}) {
   const safe = customerName.slice(0, CB_NAME_MAX);
   return [
     ...(opts.changeStore ? [[{ text: '🏙 Change store', callback_data: `cd:cs:${safe}` }]] : []),
+    // PRS-1 — the business card kept with the request that added them.
+    ...(opts.businessCard ? [[{ text: '📇 Business card', callback_data: `cd:bc:${safe}` }]] : []),
     [
       { text: '📋 History',  callback_data: `cd:t:h:${safe}` },
       { text: '🔍 Pattern',  callback_data: `cd:t:p:${safe}` },
@@ -2793,13 +2889,17 @@ async function renderCustomerCard(bot, chatId, messageId, customerName, tab = 'h
   const viewer = String(viewerId || chatId);
   let topLine = '';
   let changeStore = false;
+  let businessCard = false;
   try {
     const region = require('../services/customerRegion');
     const c = await customersRepo.findByName(customerName);
     if (c) {
       topLine = region.storesLine(c);
+      // The request that added a customer who has not bought yet: who raised
+      // it, and (PRS-1) the business card it carries. One queue read.
+      const who = region.hasBought(c) ? null : await region.addedBy(c.name);
+      businessCard = !!(who && who.card);
       if (!region.hasBought(c) && Array.isArray(c.stores) && c.stores.length) {
-        const who = await region.addedBy(c.name);
         if (who) topLine += ` — added by ${who.by}${who.at ? `, ${fmtDate(who.at)}` : ''}`;
         else if (c.created_at) topLine += ` — added ${fmtDate(c.created_at)}`;
       }
@@ -2808,7 +2908,7 @@ async function renderCustomerCard(bot, chatId, messageId, customerName, tab = 'h
       changeStore = !region.hasBought(c) && region.mayTouch(scope, c, map.placeRegion);
     }
   } catch (_) { topLine = ''; }
-  const footer = _cdTabFooter(customerName, { changeStore });
+  const footer = _cdTabFooter(customerName, { changeStore, businessCard });
   const baseOpts = { editMessageId: messageId, extraButtons: footer, topLine };
   if (tab === 'p') {
     await sendCustomerPatternReport(bot, chatId, customerName, baseOpts);
@@ -3604,6 +3704,13 @@ async function handleFileMessage(bot, msg) {
     if (handled) return;
   }
 
+  // PRS-1 — the prospect door's business card (a photo, or an image as a File).
+  if (session && session.type === 'add_customer_flow' && session.prospect && session.step === 'card'
+      && (msg.photo || msg.document)) {
+    const handled = await handleAddProspectCard(bot, msg);
+    if (handled) return;
+  }
+
   // RET-4 — the return card's optional photo of the goods that came back.
   if (session && session.type === 'return_flow' && session.step === 'photo'
       && (msg.photo || (msg.document && /^image\//i.test(msg.document.mime_type || '')))) {
@@ -3768,6 +3875,12 @@ async function handleMessage(bot, msg) {
     if (fieldUser
       && !config.access.adminIds.includes(userId)
       && fieldRoles.isFieldRole(fieldUser.role)) {
+      // PRS-1 — the one typed thing a field role owns: the answers of the
+      // 🆕 Add Prospect door they opened from their own tile. Handed straight
+      // to that door, so every other typed line stays ignored as before.
+      const liveDoor = sessionStore.get(userId);
+      if (liveDoor && liveDoor.type === 'add_customer_flow' && liveDoor.prospect
+        && await handleAddCustomerFlowText(bot, chatId, userId, text)) return;
       await bot.sendMessage(chatId, '👋 Tap *🧵 My Collection* to see the designs and quantities available in your warehouse.', { parse_mode: 'Markdown' });
       await buildGreetingMenu(bot, chatId, userId);
       return;
@@ -5444,6 +5557,13 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
   for (const a of activityRegistry.filterByCodes(['payments', 'my_requests'])) {
     if (!allowed.find((x) => x.code === a.code)) allowed.push(a);
   }
+  // PRS-1 — 🆕 Add Prospect for the people who meet buyers: marketers,
+  // salesmen and the Sales / Marketing departments, with no sheet edit.
+  if (require('../services/prospectDoor').maySee(user)) {
+    for (const a of activityRegistry.filterByCodes(['add_prospect'])) {
+      if (!allowed.find((x) => x.code === a.code)) allowed.push(a);
+    }
+  }
 
   if (!allowed.length) {
     return {
@@ -5692,6 +5812,13 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId, callbackQ
   // can raise a request can see where it stands.
   for (const a of activityRegistry.filterByCodes(['payments', 'my_requests'])) {
     if (!allowed.find((x) => x.code === a.code)) allowed.push(a);
+  }
+  // PRS-1 — same rule as the greeting grid: 🆕 Add Prospect for the people
+  // who meet buyers.
+  if (require('../services/prospectDoor').maySee(user)) {
+    for (const a of activityRegistry.filterByCodes(['add_prospect'])) {
+      if (!allowed.find((x) => x.code === a.code)) allowed.push(a);
+    }
   }
   // A hub renders its visible child sub-hubs (each holding ≥1 allowed
   // activity) PLUS the activities that sit directly on it. Sub-hub tiles
@@ -8272,6 +8399,22 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       return;
     }
 
+    // PRS-1 — a prospect's steps are name → phone → card → store. Going back
+    // drops what was answered after the target; its kind is fixed, so a
+    // stale Back-to-kind button lands on the name.
+    if (session.prospect) {
+      const to = target === 'card' ? 'card' : (target === 'phone' ? 'phone' : 'name');
+      delete session.card; delete session.stores; delete session._storeChoices;
+      if (to !== 'card') delete session.phone;
+      if (to === 'name') delete session.name;
+      session.step = to;
+      sessionStore.set(uid, session);
+      if (to === 'card') await showAddProspectCardStep(bot, chatId, uid);
+      else if (to === 'phone') await showAddCustomerPhoneStep(bot, chatId, uid);
+      else await showAddPersonNameStep(bot, chatId, uid);
+      return;
+    }
+
     // Wipe any field captured AT or AFTER the target step so the user
     // genuinely re-answers from there. Order: name, phone, address,
     // category, credit, terms, notes.
@@ -8335,7 +8478,21 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     const session = sessionStore.get(uid);
     if (!session || session.type !== 'add_customer_flow') { await bot.answerCallbackQuery(callbackQuery.id, { text: 'Session expired.' }); return; }
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Skipped.' });
-    if (field === 'phone') {
+    if (field === 'phone' && session.prospect) {
+      // PRS-1 — no phone: the business card is then the way to reach them.
+      session.phone = '';
+      sessionStore.set(uid, session);
+      await showAddProspectCardStep(bot, callbackQuery.message.chat.id, uid);
+    } else if (field === 'card' && session.prospect) {
+      // PRS-1 — a prospect nobody can reach is only a name: phone OR card.
+      if (!require('../services/prospectDoor').hasFollowUp(session)) {
+        await showAddProspectCardStep(bot, callbackQuery.message.chat.id, uid, '⚠️ A prospect needs a phone number or a business card.');
+        return;
+      }
+      session.card = null;
+      sessionStore.set(uid, session);
+      await showAddCustomerStoreStepOrConfirm(bot, callbackQuery.message.chat.id, uid);
+    } else if (field === 'phone') {
       session.phone = '';
       session.step = 'address';
       sessionStore.set(uid, session);
@@ -8449,6 +8606,8 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         ...(Array.isArray(session.stores) && session.stores.length ? { stores: session.stores } : {}),
         // CON-2 — raised from inside a flow that is waiting on the decision.
         ...(session.held && HELD_FLOWS[session.held.flow] ? { resume: { flow: session.held.flow } } : {}),
+        // PRS-1 — a prospect, and the business card kept as evidence.
+        ...require('../services/prospectDoor').requestFields(session),
       },
       riskReason: 'New contact requires admin approval',
     });
@@ -8458,7 +8617,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
 
     if (session.flowMessageId) {
       await bot.editMessageText(
-        `👥 *Add contact — submitted*\n\n${_acHeader(session)}\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
+        `${session.prospect ? '🆕 *Add prospect — submitted*' : '👥 *Add contact — submitted*'}\n\n${_acHeader(session)}\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
         { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
       ).catch(() => {});
     }
@@ -8481,8 +8640,20 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         : '')
       + (session.held && HELD_FLOWS[session.held.flow]
         ? `\n${HELD_FLOWS[session.held.flow].icon} Raised from a ${HELD_FLOWS[session.held.flow].what} · on hold until approved`
-        : '');
+        : '')
+      + (session.prospect ? '\n🆕 Prospect · no sale yet' : '')
+      + (session.card && session.card.fileId ? '\n📇 Business card attached' : '');
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'New contact requires admin approval');
+    // PRS-1 — the business card follows the card to every admin (as the
+    // sale doors forward their bill); the inbox keeps it as a 📇 chip.
+    if (session.card && session.card.fileId) {
+      try {
+        await require('../services/approvalCards').forwardAttachmentsToAdmins(bot, requestId, [{
+          fileId: session.card.fileId, kind: session.card.kind,
+          caption: `📇 Business card · ${custData.name} · request ${require('../services/approvalCards').shortRequestRef(requestId)}`,
+        }]);
+      } catch (e) { logger.warn(`PRS-1 business card forward for ${requestId}: ${e.message}`); }
+    }
 
     // CON-2 — the paused flow becomes the live one again, WAITING on this
     // request; approvalEvents.resumeHeldFlowAfterContact picks it up.
@@ -9789,6 +9960,39 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       await _cdList(bot, chatId, uid, messageId, key, n, map, await cdScope(map));
       return;
     }
+    if (rest === 'bcx') {
+      // PRS-1 — ✖ Close: the business card was a peek, not a chat resident.
+      await bot.deleteMessage(chatId, messageId).catch(() => {});
+      return;
+    }
+    if (rest.startsWith('bc:')) {
+      // PRS-1 — 📇 Business card: the photo kept with the request that added
+      // this customer, shown under the card. Region-scoped like the card.
+      const customerName = await cbCustomerName(rest.slice(3));
+      const c = await customersRepo.findByName(customerName);
+      const map = await region.regionMap();
+      if (!c || !region.mayTouch(await cdScope(map), c, map.placeRegion)) {
+        await bot.sendMessage(chatId, 'That customer is not in your region.');
+        return;
+      }
+      const card = await require('../services/prospectDoor').cardFor(c.name);
+      if (!card) { await bot.sendMessage(chatId, `No business card is kept for ${c.name}.`); return; }
+      const caption = `📇 Business card · ${c.name}${card.at ? ` · added ${fmtDate(card.at)}` : ''}`;
+      const opts = { caption, reply_markup: { inline_keyboard: [[{ text: '✖ Close', callback_data: 'cd:bcx' }]] } };
+      const asDoc = card.kind === 'document';
+      try {
+        if (asDoc) await bot.sendDocument(chatId, card.fileId, opts); else await bot.sendPhoto(chatId, card.fileId, opts);
+      } catch (e) {
+        // A stored kind can be wrong (a picture sent as a File): try the other sender.
+        try {
+          if (asDoc) await bot.sendPhoto(chatId, card.fileId, opts); else await bot.sendDocument(chatId, card.fileId, opts);
+        } catch (e2) {
+          logger.warn(`cd:bc business card for ${c.name}: ${e.message} / ${e2.message}`);
+          await bot.sendMessage(chatId, 'The business card could not be shown right now. Try again in a minute.');
+        }
+      }
+      return;
+    }
     if (rest.startsWith('cs:') || rest.startsWith('css:')) {
       // CRM-R1 — re-place a prospect: admins, or the staff of their region.
       const isPick = rest.startsWith('css:');
@@ -10519,6 +10723,17 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
           break;
         }
         await startAddCustomerFlow(bot, chatId, uid, messageId);
+        break;
+      }
+      case 'add_prospect': {
+        // PRS-1 — the short path into the same door; the same freeze applies.
+        const prsSettings = await settingsRepo.getAll().catch(() => ({}));
+        if (Number(prsSettings.CUSTOMER_CREATION_ENABLED ?? 1) !== 1) {
+          await bot.sendMessage(chatId,
+            '🔒 Adding customers is paused for now (list cleanup in progress). Nothing was opened.');
+          break;
+        }
+        await startAddProspect(bot, chatId, uid, messageId);
         break;
       }
       case 'business_glance': {

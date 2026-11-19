@@ -799,6 +799,18 @@ or receipt is no longer thrown away). The name is checked at the name step
 for every customer entry: an existing customer's name, or frozen creation,
 is refused there. Spec: `specs/CON-2_ONE_CUSTOMER_DOOR.md`.
 
+**Amended 19-Nov-2026 (PRS-1, owner: "go ahead with the prospect door as
+per your own recommendation"):** 🆕 *Add Prospect* is a second TILE, never a
+second door (§12b). It opens this door's own session with the kind set to
+Customer and asks the short path — name, phone, business card, store —
+then the same confirm card, the same `add_contact` request and the same
+admin decision. A prospect carries a phone number OR a business card; the
+card is a photo kept on the request's own row (no sheet column) and shown
+from the customer card while they have not bought. Marketers, salesmen and
+the Sales / Marketing departments are offered the tile without a sheet
+edit. A marketer's typed words stay ignored everywhere except the answers
+of a prospect door they opened. Spec: `specs/PRS-1_ADD_PROSPECT.md`.
+
 ## 14 · Removing a person is a status flip, never a deletion
 
 **Locked 16-Aug-2026** (owner, after the removal impact analysis): *"I can
@@ -1281,4 +1293,6 @@ Spec: `specs/SSA-1_SALES_ACCESS.md`. Code: `src/services/salesAccessService.js`.
 | 15-Nov-2026 | The Payment Received confirm card and the PRC-1 / EXP-1 notes said ONE admin approves while the gate (`risk/evaluate.js`) has always asked for two — the card promised less than the bot did. Owner asked "one or two?" and ruled *"Two"*: a customer's payment received and an office-expense batch each take two admin approvals (an admin's own entry: one other admin). The code was right; the words were corrected | §APG (`specs/PRC-1_PAYMENT_RECEIVED_AND_REVERT.md` Approval) |
 | 16-Nov-2026 | A customer's payment received went to every admin at once and needed its amount at entry, while the employee often knows WHO should check it and sometimes not HOW MUCH was paid. Owner: *"the employee will select the admin from the admin list to send for approval"*, *"if the amount is known … I will attach the amount also"*, then *"Go with the recommendation"*: the named admin is asked first, two approvals stay, never stuck on one person, a blank amount is typed at the first approval and checked by the second | §21 (PRC-2: `src/services/askedApprover.js`, `src/flows/paymentReceivedFlow.js`; `specs/PRC-2_ASK_AN_ADMIN.md`) |
 | 04-Nov-2026 | On a sale card a bale the seller loaded WHOLE (a bare typed number, 📦 Take whole bale) and still whole at submit is ONE line and one B (`481 · 150 yd`, `10B · 1,500 yd`), whichever door raised it; a than dropped from it un-wholes the bale (its thans print one per line, `9B + 4t`); a bale typed as `6189/5` stays a than line; a flagged than keeps its bale than by than. The request still carries every than; nothing in execution changes. Owner, on Abdul's 50-line card: "It is not the same way it was coming before"; layout shown; "Go". | SELL-T3e (`approvalCards.foldWholeBales`; `specs/SELL-T3_TYPED_THAN_LIST.md`) |
+| 19-Nov-2026 | A marketer who met a new buyer had no way to record them (one tile, typed words ignored), a salesperson had an eight-question form, and the business card stayed in a pocket. Owner: "go ahead with the prospect door as per your own recommendation" | §12b amendment (PRS-1) |
+
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

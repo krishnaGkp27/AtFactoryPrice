@@ -868,6 +868,8 @@ function docPeek(aj) {
   if (aj.sale_doc_file_id) return { fileId: aj.sale_doc_file_id, label: '📄 Sales bill', asPhoto: aj.sale_doc_type === 'photo' };
   if (aj.return_photo_file_id) return { fileId: aj.return_photo_file_id, label: '📎 Returned goods', asPhoto: aj.return_photo_type !== 'document' };
   if (aj.bill_file_id) return { fileId: aj.bill_file_id, label: '📄 Bill', asPhoto: aj.bill_file_type !== 'document' };
+  // PRS-1 — a prospect's business card.
+  if (aj.card_file_id) return { fileId: aj.card_file_id, label: '📇 Business card', asPhoto: aj.card_file_type !== 'document' };
   return null;
 }
 
@@ -1486,6 +1488,7 @@ module.exports = {
   _internals: {
     categoryOf, ageDays, ageDot, CATEGORIES, TRANSFER_ACTIONS, STALE_DAYS,
     saleGoods, // SELL-T3e
+    docPeek, // PRS-1 — the one attachment a card can show
     // DEC-1
     recentDecided, decidedChip, decidedAt, DECIDED_MAX,
     _resetResolvedCache: () => { _resolvedCache = { at: 0, rows: null }; },

@@ -453,6 +453,9 @@ function buildAddContactCard(aj) {
   const bits = [`🏷 typed as: ${aj.type || 'other'}`];
   if (aj.phone) bits.push(`📞 ${aj.phone}`);
   text += `\n${bits.join(' · ')}`;
+  // PRS-1 — raised from the prospect door: a buyer who has not bought yet,
+  // and whether their business card rides with the request.
+  if (aj.prospect) text += `\n🆕 Prospect · no sale yet${aj.card_file_id ? ' · 📇 business card attached' : ''}`;
   if (aj.address) text += `\n🏠 ${aj.address}`;
   // CON-1 — the customer-only answers, shown only when the flow collected
   // them (CARD-3: a line appears when it has something to say).

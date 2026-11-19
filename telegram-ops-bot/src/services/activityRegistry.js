@@ -185,6 +185,11 @@ const ACTIVITIES = [
   // carries the CNET-2 triage. The `add_customer` code is kept as the
   // tile's identity so a department CSV listing it keeps working.
   { code: 'add_customer',          label: 'Add Contact',               icon: '➕', callback: 'act:add_customer',       hub: 'crm' },
+  // PRS-1 (19-Nov-2026) — the SHORT path into the same door for a buyer who
+  // has not bought yet: name, phone, business card, store. Offered to
+  // marketers, salesmen and the Sales / Marketing departments without a
+  // sheet edit (prospectDoor.maySee); any other department may list it.
+  { code: 'add_prospect',          label: 'Add Prospect',              icon: '🆕', callback: 'act:add_prospect',       hub: 'crm' },
   // CUS-1 Phase E — the typo-cleanup tool: fold a duplicate into the real
   // customer (merge, not delete — owner 29-Jul). Admin-gated in the flow.
   { code: 'merge_customers',       label: 'Merge Customers',           icon: '🔀', callback: 'act:merge_customers',    hub: 'crm' },

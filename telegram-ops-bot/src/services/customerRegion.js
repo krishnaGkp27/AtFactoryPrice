@@ -163,14 +163,18 @@ function storesLine(c) {
   return `🏙 ${stores.join(' · ')}${hasBought(c) ? '' : ' · provisional'}`;
 }
 
-/** Who raised the approved add_contact for this name, best-effort. */
+/**
+ * Who raised the approved add_contact for this name, best-effort — and
+ * (PRS-1) the business card that request carries, when it has one.
+ * @returns {Promise<{by: string, at: string, card: {fileId: string, kind: string}|null}|null>}
+ */
 async function addedBy(name) {
   try {
     const approvalQueueRepository = require('../repositories/approvalQueueRepository');
-    const rows = await approvalQueueRepository.getAll();
-    const hit = rows
-      .filter((r) => r && r.status === 'approved' && r.actionJSON && r.actionJSON.action === 'add_contact' && norm(r.actionJSON.name) === norm(name))
-      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))[0];
+    const prospectDoor = require('./prospectDoor');
+    // An approved request is a decided row. (This read used to call a
+    // repository function that does not exist, so the line never printed.)
+    const hit = prospectDoor.approvedRequestFor(await approvalQueueRepository.getResolved(), name);
     if (!hit) return null;
     let label = String(hit.user || '');
     try {
@@ -178,7 +182,7 @@ async function addedBy(name) {
       const u = await usersRepository.findByUserId(String(hit.user));
       if (u && u.name) label = u.name;
     } catch (_) { /* id */ }
-    return { by: label, at: hit.createdAt || '' };
+    return { by: label, at: hit.createdAt || '', card: prospectDoor.cardOfRow(hit) };
   } catch (_) { return null; }
 }
 
