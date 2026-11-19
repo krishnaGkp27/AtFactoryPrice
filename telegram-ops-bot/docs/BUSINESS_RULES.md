@@ -809,7 +809,9 @@ card is a photo kept on the request's own row (no sheet column) and shown
 from the customer card while they have not bought. Marketers, salesmen and
 the Sales / Marketing departments are offered the tile without a sheet
 edit. A marketer's typed words stay ignored everywhere except the answers
-of a prospect door they opened. Spec: `specs/PRS-1_ADD_PROSPECT.md`.
+of a flow they opened from one of their own tiles: the prospect door, and
+the typed steps of 💳 Payments (which the view-only guard had swallowed
+since PAY-1 — fixed the same day). Spec: `specs/PRS-1_ADD_PROSPECT.md`.
 
 ## 14 · Removing a person is a status flip, never a deletion
 

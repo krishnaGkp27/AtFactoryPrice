@@ -3881,6 +3881,12 @@ async function handleMessage(bot, msg) {
       const liveDoor = sessionStore.get(userId);
       if (liveDoor && liveDoor.type === 'add_customer_flow' && liveDoor.prospect
         && await handleAddCustomerFlowText(bot, chatId, userId, text)) return;
+      // PAY-1 — "a field-role user can ask to be paid too", and the payment
+      // flow's steps are typed (account number, amount, reason). This guard
+      // sat in front of them, so a marketer could open 💳 Payments and never
+      // finish a request. A line the flow does not take is still ignored.
+      if (liveDoor && liveDoor.type === 'payment_flow'
+        && await require('../flows/paymentFlow').handleText(bot, chatId, userId, text)) return;
       await bot.sendMessage(chatId, '👋 Tap *🧵 My Collection* to see the designs and quantities available in your warehouse.', { parse_mode: 'Markdown' });
       await buildGreetingMenu(bot, chatId, userId);
       return;
