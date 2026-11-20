@@ -8284,7 +8284,10 @@ async function runS54() {
     // partial apply (a than re-sold while the request waited) at the set's
     // average, and would pay an unpriced survivor instead of raising the
     // RET-3 loud zero. Each surviving row's own booked rate is the truth.
-    const rnRate = /const credit = returnCreditFor\(\{\}, results\);/.test(rnExecBody)
+    // RET-8 — the surviving rows may first be priced by returnRate.priceRows
+    // (a than with NO rate of its own takes the admin's entered fill); the
+    // request override is still never passed.
+    const rnRate = /const credit = returnCreditFor\(\{\}, (results|priced\.rows)\);/.test(rnExecBody)
       && !/returnCreditFor\(aj, results\)/.test(rnExecBody);
     // §5 — one printed number can sit in two containers of one store and the
     // request cannot yet say which (spec Q1 open). The executor groups the

@@ -591,6 +591,8 @@ test('RET-4 · submit queues ONE return_thans request with the owner-locked payl
     yards: 60,
     design: 'Cashmere',
     shade: 'Blue',
+    // RET-8 — each than's own rate rides the request, so a than with none is a gap.
+    thanRates: [{ thanNo: 1, yards: 30, rate: 2500 }, { thanNo: 4, yards: 30, rate: 2500 }],
   });
 
   // ANL-2 — approval_queued is the completion signal, and it carries the

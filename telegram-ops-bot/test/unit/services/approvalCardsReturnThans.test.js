@@ -93,9 +93,13 @@ test('a roster lookup failure falls back to counting in thans instead of blockin
 });
 
 test('no rate on record replaces the money line with the warning, never a silent ₦0', async () => {
+  // RET-8 — unsigned: the first approving admin is asked for the rate.
   const text = await approvalCards.buildReturnThansCard({ ...AJ, pricePerYard: 0 });
   assert.doesNotMatch(text, /Credits/);
-  assert.match(text, /⚠️ No rate on record — the stock comes back, but NO credit will post\./);
+  assert.match(text, /⚠️ No rate on the sale record: ABBA · Cashmere · 2 thans\. The admin who approves first is asked for it\./);
+  // Signed before any rate was asked (a request from before RET-8): the old sentence stays.
+  const signed = await approvalCards.buildReturnThansCard({ ...AJ, pricePerYard: 0, approvals: ['777'] });
+  assert.match(signed, /⚠️ No rate on record — the stock comes back, but NO credit will post\./);
 });
 
 test('the signature line counts what the row carries — never a static "of 2"', async () => {

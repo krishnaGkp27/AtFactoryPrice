@@ -73,6 +73,8 @@ function trailOf(aj) {
     return a.signoffs.map((s) => ({
       id: String(s.id || ''), name: String(s.name || ''), at: s.at || '',
       ...(s.amount !== undefined && s.amount !== null && s.amount !== '' ? { amount: Number(s.amount) } : {}),
+      // RET-8 — a return's signature keeps the rate fills it was given for.
+      ...(s.ratePrint ? { ratePrint: String(s.ratePrint) } : {}),
     }));
   }
   return (Array.isArray(a.approvals) ? a.approvals : []).map((id) => ({ id: String(id), name: '', at: '' }));

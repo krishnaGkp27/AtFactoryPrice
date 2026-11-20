@@ -307,6 +307,9 @@ function buildActionJSON(session) {
     yards: credit.yards,
     design: String(session.design || ''),
     shade: String(session.shade || ''),
+    // RET-8 — each than's own rate, so a than with none is a gap the
+    // approving admin is asked about (the set's average above cannot say).
+    thanRates: rows.map((t) => ({ thanNo: Number(t.thanNo), yards: Number(t.yards) || 0, rate: Number(t.pricePerYard) || 0 })),
   };
 }
 
@@ -538,8 +541,8 @@ async function showConfirm(bot, chatId, userId, opts = {}) {
     lines.push(`💰 Credits ${mdEscape(session.customer)} *${money.sale(credit.amount)}* `
       + `(${fmtQty(credit.yards)} yds × ${money.saleRate(credit.rate)})`);
   } else {
-    lines.push('⚠️ No rate on record for these thans — the stock comes back, but NO credit '
-      + 'posts until a rate exists.');
+    // RET-8 — the approving admin is asked for the missing rate.
+    lines.push('⚠️ No rate on record for these thans: the approving admin is asked for the rate.');
   }
   lines.push('');
   if (opts.note) { lines.push(opts.note); lines.push(''); }

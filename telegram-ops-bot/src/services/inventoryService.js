@@ -46,6 +46,25 @@ function returnCreditFor(aj, rows) {
   return { yards, amount, rate: yards > 0 && amount > 0 ? amount / yards : 0 };
 }
 
+/**
+ * RET-8 — the admins' line naming the rate entered for a return's gaps:
+ * `✏️ solder madam · 44200 at 1,450/yd, entered by Musa` (one line per
+ * fill used), or `… · 44200: no credit — chosen by Musa`. Null when no fill
+ * was used.
+ */
+function rateNoteFor(aj, used) {
+  const list = Array.isArray(used) ? used : [];
+  if (!list.length) return null;
+  const by = (aj && aj.rateFillBy && (aj.rateFillBy.name || aj.rateFillBy.id)) || 'an admin';
+  return list.map((f) => {
+    const r = Number(f.rate) || 0;
+    const rate = money.saleRate(r, { fraction: Number.isInteger(r) ? 0 : 2 });
+    return f.noCredit || !(r > 0)
+      ? `✏️ ${f.customer || 'the buyer'} · ${f.design || '—'}: no credit — chosen by ${by}`
+      : `✏️ ${f.customer || 'the buyer'} · ${f.design || '—'} at ${rate}, entered by ${by}`;
+  }).join('\n');
+}
+
 async function resolveReturnCustomer(soldTo) {
   const raw = String(soldTo || '').trim();
   if (!raw) return { name: '', id: '' };
@@ -397,6 +416,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   // re-approved). Null for branches that have no custom message.
   let customMessage = null;
   let creditNote = null; // RET-3 — what a return credited, shown on the approve reply
+  let rateNote = null; // RET-8 — the rate an admin entered for a gap, on the admins' reply only
   // PAY-2 §2 C — the payment executor's own closing line ("approved by
   // Ajeet ‖ John — now with finance to pay"), delivered by approvalEvents
   // the way the RET-3 credit note is. Null for every other action.
@@ -649,7 +669,13 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // and a survivor with NO rate on record would be paid the average instead
     // of triggering the loud zero. Each surviving row's own booked rate is the
     // truth; for a set that applies in full the two agree exactly.
-    const credit = returnCreditFor({}, results);
+    // RET-8 — a than with no rate of its own is credited at the rate the
+    // approving admin entered for this buyer and design; a recorded rate is
+    // never replaced, and "no credit" leaves it at nothing, as before.
+    const retRate = require('./returnRate');
+    const priced = retRate.priceRows(aj, results, { customer: aj.customer, customerId: aj.customerId, design: aj.design });
+    const credit = returnCreditFor({}, priced.rows);
+    rateNote = rateNoteFor(aj, priced.used);
     await transactionsRepository.append({
       user: item.user, action: 'return_thans', design: results[0]?.design, color: results[0]?.shade,
       qty: totalYards, before: 'sold', after: 'available', status: 'approved',
@@ -735,12 +761,20 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
           + `${skipped.length ? ` (${skipped.map((sk) => `${sk.tok}: ${sk.why}`).join('; ')})` : ''}.`,
       };
     }
+    // RET-8 — each flipped than priced: its own rate when the row has one
+    // (always), else the fill the approving admin entered for its buyer and
+    // design, else nothing (as before).
+    const retRate = require('./returnRate');
+    const usedFills = new Map();
     const byBuyer = new Map();
     for (const f of flipped) {
       const k = String(f.it.customerId || '') || normName(f.it.customer || f.r.soldToPrior || '');
       if (!byBuyer.has(k)) byBuyer.set(k, { name: f.it.customer || f.r.soldToPrior || '', rows: [] });
-      byBuyer.get(k).rows.push(f.r);
+      const priced = retRate.priceRows(aj, [f.r], f.it);
+      for (const u of priced.used) usedFills.set(u.key, u);
+      byBuyer.get(k).rows.push(priced.rows[0]);
     }
+    rateNote = rateNoteFor(aj, [...usedFills.values()]);
     const notes = [];
     const booked = [];
     let idx = 0;
@@ -2290,7 +2324,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
   }
   await auditLogRepository.append('approval_approved', auditPayload, approvedBy);
   // H6 — erpFailures non-empty means stock moved but books did not.
-  return { ok: true, bundleReport, message: customMessage, erpFailures, invoice, approver: approverLabel, creditNote, note: paymentNote || closingNote };
+  return { ok: true, bundleReport, message: customMessage, erpFailures, invoice, approver: approverLabel, creditNote, rateNote, note: paymentNote || closingNote };
 }
 
 /**

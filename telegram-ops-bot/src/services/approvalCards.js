@@ -638,7 +638,15 @@ async function buildReturnThansCard(aj) {
   text += `\n\nΣ ${counts} · ${fmtQty(yards)} yd`;
   text += '\n(bale/than · #shade)';
   const rate = Number(aj.pricePerYard) || 0;
-  if (rate > 0 && yards > 0) {
+  const signedSoFar = Array.isArray(aj.approvals) ? aj.approvals.length : 0;
+  const rr = require('./returnRate');
+  const gaps = rr.gapsOf(aj);
+  if (gaps.length && (rr.fillsOf(aj).length || !signedSoFar)) {
+    // RET-8 — a than with no rate on the sale record: the first approving
+    // admin is asked for it; once entered the card shows the credit that
+    // will post and who entered the rate.
+    text += await returnRateLines(aj, aj.customer, gaps, `\n💰 Credits ${aj.customer || 'the buyer'} `);
+  } else if (rate > 0 && yards > 0) {
     const amount = Math.round(rate * yards);
     // CUR-1 C3 — a sale reversed at the booked Inventory rate: side B, bare.
     text += `\n💰 Credits ${aj.customer || 'the buyer'} ${money.sale(amount)}`
@@ -792,6 +800,53 @@ async function withLiveReturnFacts(aj) {
   }
 }
 
+/**
+ * RET-8 — the money lines for one buyer whose return has a gap (a than with
+ * no rate on the sale record):
+ *   no fill yet   → the credit of the thans that do carry a rate (if any),
+ *                   then `⚠️ No rate on the sale record: who · design · n
+ *                   thans. The admin who approves first is asked for it.`
+ *   filled        → the credit that will post (rated + entered), then
+ *                   `   44200 at 1,450/yd — entered by Musa`, or
+ *                   `⚠️ who · 44200 · 6 thans: no credit — chosen by Musa`
+ * @param {object} aj the request
+ * @param {string} customer the buyer's name as the card prints it
+ * @param {Array<object>} gaps this buyer's gaps (returnRate.gapsOf)
+ * @param {string} lead the money line's opening (`\n💰 ABBA `)
+ * @param {string} [outstandingJoin] how the outstanding follows the amount
+ *   (` · outstanding ` on the bundle card; a new line on the one-bale card)
+ */
+async function returnRateLines(aj, customer, gaps, lead, outstandingJoin = '\nOutstanding ') {
+  const rr = require('./returnRate');
+  const who = customer || 'the buyer';
+  const buyer = rr.creditByBuyer(aj).find((b) => gaps.length && b.key === rr.buyerKey(gaps[0])) || { rated: 0, total: 0 };
+  const filled = rr.fillsOf(aj).length > 0;
+  const amount = filled ? buyer.total : buyer.rated;
+  const by = (aj.rateFillBy && (aj.rateFillBy.name || aj.rateFillBy.id)) || 'an admin';
+  let text = '';
+  if (amount > 0) {
+    text += `${lead}${money.sale(amount)}`;
+    try {
+      const { outstandingAsOfToday } = await require('./accountingService').getCustomerLedger(customer);
+      const now = Number(outstandingAsOfToday);
+      if (Number.isFinite(now)) text += `${outstandingJoin}${money.sale(now)} → ${money.sale(now - amount)}`;
+    } catch (_) { /* the balance is omitted, never guessed */ }
+  }
+  const thansWord = (n) => `${n} than${n === 1 ? '' : 's'}`;
+  for (const g of gaps) {
+    const fill = rr.fillFor(aj, g.key);
+    const r = rr.fillRate(fill);
+    if (!filled) {
+      text += `\n⚠️ No rate on the sale record: ${who} · ${g.design || '—'} · ${thansWord(g.thans)}. The admin who approves first is asked for it.`;
+    } else if (r > 0) {
+      text += `\n   ${g.design || '—'} at ${money.saleRate(r, { fraction: Number.isInteger(r) ? 0 : 2 })} — entered by ${by}`;
+    } else {
+      text += `\n⚠️ ${who} · ${g.design || '—'} · ${thansWord(g.thans)}: no credit — chosen by ${by}`;
+    }
+  }
+  return text;
+}
+
 const RETURN_COND_SHORT = { good: '✅ Good', damaged: '⚠️ Damaged', cut: '⚠️ Cut / short', other: '⚠️ Condition noted' };
 
 /**
@@ -818,9 +873,20 @@ async function buildReturnBundleCard(aj, opts = {}) {
   const lines = await returnBundleLines(aj);
   if (lines.length) text += `\n\n${lines.join('\n')}`;
   text += '\n';
+  const rr = require('./returnRate');
+  const gapsAll = rr.gapsOf(aj);
+  const filledAny = rr.fillsOf(aj).length > 0;
+  const signedSoFar = Array.isArray(aj.approvals) ? aj.approvals.length : 0;
   for (const g of groups) {
     const amount = Math.round(Number(g.amount) || 0);
     const who = g.customer || 'the buyer';
+    const myGaps = gapsAll.filter((x) => rr.buyerKey(x) === buyerKey(g));
+    if (myGaps.length && (filledAny || !signedSoFar)) {
+      // RET-8 — the gap is asked of the first approving admin; once
+      // entered, the buyer's line is the credit that will post.
+      text += await returnRateLines(aj, g.customer, myGaps, `\n💰 ${who} `, ' · outstanding ');
+      continue;
+    }
     if (amount > 0) {
       let line = `\n💰 ${who} ${money.sale(amount)}`;
       try {

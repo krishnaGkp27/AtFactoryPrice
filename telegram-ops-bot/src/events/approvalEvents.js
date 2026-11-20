@@ -1347,8 +1347,9 @@ async function applyEnrichmentText(bot, chatId, adminId, state, text) {
 
   if (state.step === 'rate') {
     const rateByDesign = {};
-    if (/^\d+(\.\d+)?$/.test(t)) {
-      const single = parseFloat(t);
+    // RET-8 — the one typed-rate reader, shared with a return's rate step.
+    const single = require('../utils/rateInput').parseRateNumber(t);
+    if (single !== null) {
       if (isNaN(single) || single < 0) {
         await bot.sendMessage(chatId, 'Please enter a valid number for the rate per yard.');
         return true;
@@ -2252,6 +2253,25 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
     if (seam.stop) return { asked: true }; // the inbox keeps its card as it is
   }
 
+  // RET-8 (owner, 20-Nov-2026) — a return whose sale record has no rate for
+  // some thans: the admin giving the FIRST approval types the rate (or says
+  // "no credit" on purpose). The PRC-2 shape, for a rate: the same
+  // per-request lock, outside the two-admin gate's try; the rate step opens
+  // and records nothing; its ✅ chip re-enters here with `opts.rateFill`,
+  // saved on the row before the gate records this admin's signature; a
+  // second admin's tap shows the entered rate first and only its chip
+  // (`opts.rateChecked`) signs. A return with no gap, and a return signed
+  // before any fill existed, pass straight through as before.
+  if (action === 'approve' && item && item.actionJSON
+    && require('../services/returnRate').stepState(item.actionJSON) !== 'none') {
+    if (!(opts && opts._retLocked)) {
+      return require('../utils/asyncMutex').runExclusive(`ret-rate:${requestId}`,
+        () => handleApprovalCallback(bot, callbackQuery, action, { ...(opts || {}), _retLocked: true }));
+    }
+    const seam = await require('../flows/returnRateStep').rateSeam(bot, callbackQuery, requestId, item, opts || {});
+    if (seam.stop) return { asked: true }; // the inbox keeps its card as it is
+  }
+
   // DUAL-1 (specs/DUAL-1_TWO_ADMIN_APPROVAL.md) — inventory + finance
   // actions must involve TWO admins before execution. An admin requester
   // counts as the first (the H1 guard above already forces a different
@@ -2309,6 +2329,11 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           const mySign = progressMod.signoff(adminId, signerLabel);
           // PRC-2 review 1 — a payment received's signature names the amount it is given for.
           if (actName === 'record_payment' && Number(item.actionJSON.amount) > 0) mySign.amount = Number(item.actionJSON.amount);
+          // RET-8 — a return's signature names the rate fills it is given for.
+          const retRate = require('../services/returnRate');
+          if (retRate.isReturn(item.actionJSON) && retRate.fillsOf(item.actionJSON).length) {
+            mySign.ratePrint = retRate.printOf(retRate.fillsOf(item.actionJSON));
+          }
           const trail = [...progressMod.trailOf(item.actionJSON), mySign];
           // DUAL-1b (11-Nov-2026) — a first signature that cannot be SAVED
           // stops here. The outer catch falls back to single approval (house
@@ -2324,7 +2349,11 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           const widenNow = !!askedRaw && askedRaw !== String(item.user) && !item.actionJSON.askWidenedAt;
           // An amount typed at THIS tap (PRC-2 R3): every other admin's card
           // still says "not entered", so each of them gets the full card.
-          const amountNow = !!(item.actionJSON.amountBy && String(item.actionJSON.amountBy.id) === adminId);
+          // RET-8 — the same for a return's rate entered at this tap: the
+          // other admins' cards still show no credit for the gap.
+          const amountNow = !!(item.actionJSON.amountBy && String(item.actionJSON.amountBy.id) === adminId)
+            || (retRate.isReturn(item.actionJSON) && retRate.fillsOf(item.actionJSON).length > 0
+              && !!item.actionJSON.rateFillBy && String(item.actionJSON.rateFillBy.id) === adminId);
           const widenedAt = widenNow ? new Date().toISOString() : '';
           try {
             await approvalQueueRepository.updateActionJSON(requestId, {
@@ -2433,6 +2462,23 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
       try {
         await bot.answerCallbackQuery(callbackQuery.id, {
           text: '⚠️ The approvals on this payment were given for different amounts — nothing was recorded. Reject it and raise it again.',
+          show_alert: true,
+        });
+      } catch (_) { /* stale query */ }
+      return { asked: true };
+    }
+  }
+
+  // RET-8 §3 — the completing approval of a return with rate fills goes
+  // through only when every signature was given for the fills the row now
+  // carries. Outside the gate's try (no fallback), fail-closed.
+  if (action === 'approve' && item && item.actionJSON && require('../services/returnRate').isReturn(item.actionJSON)) {
+    const problem = require('../services/returnRate').signedPrintProblem(item.actionJSON);
+    if (problem) {
+      logger.error(`RET-8 ${requestId}: signatures disagree on the rate (${problem}) — nothing recorded`);
+      try {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: '⚠️ The approvals on this return were given for a different rate — nothing was recorded. Reject it and raise it again.',
           show_alert: true,
         });
       } catch (_) { /* stale query */ }
@@ -2551,6 +2597,9 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
         }
         // RET-3 — a return says what it credited, on both sides.
         const creditTail = result.creditNote ? `\n${result.creditNote}` : '';
+        // RET-8 — the rate an admin entered for a gap, named on the admins'
+        // reply only (the requester's card carries the credit, as before).
+        const rateTail = result.rateNote ? `\n${result.rateNote}` : '';
         // PAY-2 §2 C — the executor's own closing line (which pair approved a
         // payment, and that it is now with finance) rides the same way.
         const noteTail = result.note ? `\n${result.note}` : '';
@@ -2563,7 +2612,7 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
         if (cardKb.flat().some((b) => b && (b.callback_data === `approve:${requestId}` || b.callback_data === `abx:ok:${requestId}`))) {
           try { await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: cardMsg.message_id }); } catch (_) { /* stale card */ }
         }
-        await bot.sendMessage(chatIdCb, approvedMsg + creditTail + noteTail);
+        await bot.sendMessage(chatIdCb, approvedMsg + creditTail + rateTail + noteTail);
         // APG-1 — the requester's closing card: every signer by name and
         // time, the count the request needed, then what the approval did.
         await notifyEmployee(bot, requestingUser, requestId,

@@ -510,7 +510,8 @@ async function showConfirm(bot, chatId, userId, opts = {}) {
     creditLine(aj),
   ];
   if (aj.groups.some((g) => g.amount <= 0 || g.noRateThans)) {
-    parts.push('⚠️ Thans without a rate come back to stock, but NO credit posts for them until a rate exists.');
+    // RET-8 — the approving admin is asked for the missing rate.
+    parts.push('⚠️ Thans without a rate: the approving admin is asked for the rate.');
   }
   parts.push('');
   if (opts.note) { parts.push(opts.note); parts.push(''); }
@@ -717,8 +718,12 @@ async function handleCallback(bot, callbackQuery) {
     } catch (_) { /* stale query id */ }
   };
 
+  // RET-8 — the approving admin's rate step: session-free chips, re-checked
+  // on every tap (returnRateStep). Before the session guard below.
+  if (await require('./returnRateStep').handleCallback(bot, callbackQuery, data.slice(NS.length))) return true;
+
   const session = sessionStore.get(userId);
-  if (!session || session.type !== SESSION_TYPE) {
+  if (!session || session.type !== SESSION_TYPE || session.step === 'admin_rate') {
     await ack(EXPIRED_ALERT, true);
     return true;
   }
@@ -868,6 +873,8 @@ async function handleText(bot, msg) {
   const chatId = msg.chat.id;
   const text = String(msg.text || '').trim();
   if (!text) return false;
+  // RET-8 — the approving admin types the rate a return's sale record lacks.
+  if (session.step === 'admin_rate') return require('./returnRateStep').handleText(bot, msg, session);
 
   if (session.step === 'more' || session.step === 'review' || session.step === 'open') {
     // RET-7 — the same one way on the open card: numbers only (`614/1`, or
