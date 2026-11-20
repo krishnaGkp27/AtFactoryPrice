@@ -152,3 +152,75 @@ test('RET-7: on the open return card the rule is the same — numbers only; anot
   }
   assert.equal(sessionStore.get(EMP).bales.length, 2);
 });
+
+// ── the independent check of RET-7 (same day) ───────────────────────────────
+
+const { cb } = require('../helpers/charFixture');
+
+test('RET-7: what stands in front of the word is not wording — "/return", "please return", an emoji', async () => {
+  for (const line of ['/return 631/1', 'Please return 631/1 to Abba', 'pls return 631/1', 'Kindly return 631/1', '↩️ Return 631/1 to Idumota']) {
+    const { text, session } = await type(line);
+    assert.equal(text, FORMAT, line);
+    assert.ok(!session, line);
+  }
+});
+
+test('RET-7: a full stop at the end is not wording; a piece that cannot be read is named', async () => {
+  const stop = await type('Return 631/1+2, 614.');
+  assert.equal(stop.session && stop.session.type, 'return_bundle_flow');
+  assert.ok(stop.text.includes('631/1 · 30 yd') && stop.text.includes('631/2 · 30 yd'));
+  assert.doesNotMatch(stop.text, /Could not read/);
+  // in the one format, but its only piece cannot be read: the card says which piece
+  const bad = await type('Return 631/5-3');
+  assert.equal(bad.text, `❓ Could not read: 631/5-3\n\n${FORMAT}`);
+  assert.ok(!bad.session);
+  // read in part: the card opens and says so at the TOP
+  const part = await type('Return 631-635');
+  assert.match(part.text, /^↩️ \*Return\*[^\n]*\n[^\n]*\n\n⚠️ \*Part of your line was not read\.\* Check the list before you continue\./);
+  assert.match(part.text, /❓ Could not read: `-635`/);
+});
+
+test('RET-7: one return at a time — a new Return line never throws away the one under way', async () => {
+  const { bot } = await type('Return 631/1');
+  await controller.handleMessage(bot, message('614/1'));
+  const cardId = sessionStore.get(EMP).flowMessageId;
+  await controller.handleCallbackQuery(bot, cb('rb:go', EMP, cardId));            // → the date step
+  const before = JSON.stringify(sessionStore.get(EMP).bales.map((b) => b.packageNo));
+  const step = sessionStore.get(EMP).step;
+  assert.notEqual(step, 'review');
+  // a condition / confirm step: the line is refused and the return stays
+  sessionStore.get(EMP).step = 'confirm';
+  await controller.handleMessage(bot, message('Return 700'));
+  assert.equal(lastText(bot), '↩️ You have a return open. Finish it, or tap ❌ Cancel on it. Then type the new line.');
+  assert.equal(sessionStore.get(EMP).step, 'confirm');
+  assert.equal(JSON.stringify(sessionStore.get(EMP).bales.map((b) => b.packageNo)), before, 'the bales of the open return are untouched');
+  await controller.handleMessage(bot, message('Return package 700 to Idumota'));
+  assert.equal(lastText(bot), '↩️ You have a return open. Finish it, or tap ❌ Cancel on it. Then type the new line.');
+  // a condition NOTE may begin with the word: it is the note
+  sessionStore.get(EMP).step = 'condition_note';
+  await controller.handleMessage(bot, message('Returned wet, two thans stained'));
+  assert.equal(sessionStore.get(EMP).conditionNote, 'Returned wet, two thans stained');
+});
+
+test('RET-7: on the open card — a Sell line is not the card\'s; the 🔎 Open step takes numbers too', async () => {
+  const { bot } = await type('Return 631/1');
+  assert.equal(await returnBundleFlow.handleText(bot, message('Sell 614/1')), false, 'a sale typed here goes to the sell door, never into the return');
+  assert.equal(await returnBundleFlow.handleText(bot, message('Sell 614/1 to Abba')), false);
+  assert.equal(sessionStore.get(EMP).bales.length, 1);
+  // wordings the outside door refuses are refused here as well
+  for (const l of ['Return: 614/1', 'Returned 614/1 to Abba', 'Return 700 to Idumota']) {
+    await controller.handleMessage(bot, message(l));
+    assert.match(lastText(bot), /❓ Numbers only here/, l);
+    assert.equal(sessionStore.get(EMP).bales.length, 1, l);
+  }
+  // 🔎 Open a bale, then type one more: added, back on the list
+  const cardId = sessionStore.get(EMP).flowMessageId;
+  await controller.handleCallbackQuery(bot, cb('rb:o:0', EMP, cardId));
+  assert.equal(sessionStore.get(EMP).step, 'open');
+  await controller.handleMessage(bot, message('614/1'));
+  assert.equal(sessionStore.get(EMP).bales.length, 2);
+  assert.match(lastText(bot), /➕ Added 1 bale/);
+  // the whole one line typed on the card is the one line
+  await controller.handleMessage(bot, message('Return 700'));
+  assert.equal(sessionStore.get(EMP).bales.length, 3);
+});

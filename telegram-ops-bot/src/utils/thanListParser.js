@@ -63,10 +63,11 @@ function looksLikeThanList(raw) {
  * the verb and at least one number.
  */
 function looksLikeReturnList(raw) {
-  const t = String(raw || '').trim();
-  // Only the pure list: numbers, commas, `/`, `+`, `-`, `x`.
-  return PURE_RETURN_LIST.test(t);
+  // Only the pure list: numbers, commas, `/`, `+`, `-`, `x`. A full stop at
+  // the very end is not wording (phone keyboards add one) and is set aside.
+  return PURE_RETURN_LIST.test(dropEndStop(raw));
 }
+const dropEndStop = (raw) => String(raw || '').trim().replace(/\s*\.+$/, '');
 const PURE_RETURN_LIST = /^return\s+\d[\d\s,/+x-]*$/i;
 
 /**
@@ -80,7 +81,10 @@ const PURE_RETURN_LIST = /^return\s+\d[\d\s,/+x-]*$/i;
  * @returns {boolean}
  */
 function isReturnLine(raw) {
-  return /^return(?:s|ed|ing)?(?![a-z])/i.test(String(raw || '').trim());
+  // What stands in front of the word is not wording either: a slash
+  // ("/return"), an emoji, "please" / "pls" / "kindly".
+  const t = String(raw || '').trim().replace(/^[^\p{L}\p{N}]+/u, '').replace(/^(?:please|pls|plz|kindly)\b[\s,]*/i, '');
+  return /^return(?:s|ed|ing)?(?![a-z])/i.test(t);
 }
 
 /**
@@ -206,7 +210,8 @@ function readItem(s) {
  *            ignoredCustomer:string, ignoredDate:string}}
  */
 function parseThanList(raw) {
-  const text = String(raw || '').trim();
+  // RET-7 — a full stop ending the one return line is set aside (see looksLikeReturnList).
+  const text = /^return\b/i.test(String(raw || '').trim()) ? dropEndStop(raw) : String(raw || '').trim();
   const items = [];
   const bad = [];
   const tailBits = [];

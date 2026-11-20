@@ -48,7 +48,7 @@ const { fmtQty } = require('../utils/format');
 const money = require('../utils/money');
 const fmtDate = require('../utils/formatDate');
 const logger = require('../utils/logger');
-const { parseThanList, looksLikeReturnList } = require('../utils/thanListParser');
+const { parseThanList, looksLikeReturnList, isReturnLine } = require('../utils/thanListParser');
 
 const SESSION_TYPE = 'return_bundle_flow';
 const NS = 'rb:';
@@ -534,13 +534,20 @@ function formatCardText() {
 
 /** Answer a Return message that is not the one line. Always true (the controller stops). */
 async function sendFormatCard(bot, chatId, userId, text) {
+  // The line WAS the one way but a piece of it cannot be read ("Return
+  // 631/5-3"): say which piece, above the card.
+  let unread = '';
+  if (looksLikeReturnList(text)) {
+    const bad = (parseThanList(text).bad || []).slice(0, 4).map((b) => String(b).slice(0, 30));
+    if (bad.length) unread = `❓ Could not read: ${bad.join(', ')}\n\n`;
+  }
   try {
     require('../services/usageTracker').track({
       userId: String(userId || ''), surface: 'nlp', feature: 'return', event: 'nlp_hint',
       meta: { head: String(text || '').slice(0, 40) },
     });
   } catch (_) { /* usage is best-effort */ }
-  await bot.sendMessage(chatId, formatCardText(), {
+  await bot.sendMessage(chatId, `${unread}${formatCardText()}`, {
     reply_markup: { inline_keyboard: [[{ text: '🏠 Menu', callback_data: 'act:__back__' }]] },
   });
   return true;
@@ -579,9 +586,14 @@ async function startWithLine(bot, chatId, userId, parsed, { messageId = null } =
     returnedOn: '', calYm: '', maxDaysBack: 0,
     condition: '', conditionNote: '', photoFileId: '', photoKind: '',
   });
-  await showReview(bot, chatId, uid, parsed.commaThanHint
-    ? { note: '_For several thans of one bale use_ `1100/1+2+3` _(a comma always means a new bale)._' }
-    : {});
+  const startNotes = [];
+  // RET-7 — a piece of the line that was not read is said at the TOP of the
+  // card, so "Return 631-635" is not sent on as bale 631 alone by mistake.
+  if (Array.isArray(parsed.bad) && parsed.bad.length) {
+    startNotes.push('⚠️ *Part of your line was not read.* Check the list before you continue.');
+  }
+  if (parsed.commaThanHint) startNotes.push('_For several thans of one bale use_ `1100/1+2+3` _(a comma always means a new bale)._');
+  await showReview(bot, chatId, uid, startNotes.length ? { note: startNotes.join('\n') } : {});
   return true;
 }
 
@@ -824,14 +836,15 @@ async function handleText(bot, msg) {
   const text = String(msg.text || '').trim();
   if (!text) return false;
 
-  if (session.step === 'more' || session.step === 'review') {
-    // RET-7 — the same one way on the open card: numbers only. A line that
-    // opens with a WORD is for another door (Stock …, Transfer …) and goes
-    // there; a line that opens with a number but carries words is refused
-    // here, said, and nothing is added.
-    const body = text.replace(/^(?:return(?:s|ed|ing)?|sell)\b[\s:,-]*/i, '').trim();
-    if (!/^\d/.test(body)) return false;
-    const line = `return ${body}`;
+  if (session.step === 'more' || session.step === 'review' || session.step === 'open') {
+    // RET-7 — the same one way on the open card: numbers only (`614/1`, or
+    // the whole line `Return 614/1`). A line that opens with any other WORD
+    // is for another door (Sell …, Stock …, Transfer …) and goes there; a
+    // line that opens with a number or with Return but carries words is
+    // refused here, said, and nothing is added.
+    const opensReturn = isReturnLine(text);
+    if (!opensReturn && !/^\d/.test(text)) return false;
+    const line = opensReturn ? text : `return ${text}`;
     if (!looksLikeReturnList(line)) {
       await dropBelow(bot, chatId, userId, session);
       await showReview(bot, chatId, userId, { note: '❓ Numbers only here, like `631/1+2+3, 614`. Nothing was added.' });
@@ -849,6 +862,13 @@ async function handleText(bot, msg) {
     sessionStore.set(userId, session);
     await dropBelow(bot, chatId, userId, session);
     await showReview(bot, chatId, userId, { note: added ? `➕ Added ${plural(added, 'bale')}.` : '_Nothing new was added._' });
+    return true;
+  }
+  // RET-7 — a Return line typed while this return is past its list (date,
+  // condition, photo, confirm) used to REPLACE it without a word. It is
+  // refused: one return at a time.
+  if (looksLikeReturnList(text) || (isReturnLine(text) && !['condition_note', 'photo', 'date', 'date_cal'].includes(session.step))) {
+    await bot.sendMessage(chatId, '↩️ You have a return open. Finish it, or tap ❌ Cancel on it. Then type the new line.');
     return true;
   }
   if (session.step === 'condition_note') {
