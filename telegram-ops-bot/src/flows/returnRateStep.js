@@ -782,7 +782,11 @@ async function handleText(bot, msg, session) {
     await drawCurrent(bot, chatId, userId, session, row);
     return true;
   }
-  const rate = parseRateNumber(text);
+  // Every card prints a rate with its thousands comma (`1,450/yd`), so an
+  // admin copies it that way: `1,450` is read as 1450. Only a well-formed
+  // thousands comma — `1,45` and `14,50` are still not a rate.
+  const typed = /^\d{1,3}(,\d{3})+(\.\d+)?$/.test(text) ? text.replace(/,/g, '') : text;
+  const rate = parseRateNumber(typed);
   if (rate === null || !(rate > 0)) {
     await drawCurrent(bot, chatId, userId, session, row,
       { note: '⚠️ That is not a rate. Type a number above zero, for example 1450.' });
@@ -790,7 +794,7 @@ async function handleText(bot, msg, session) {
   }
   // Review 3 (R3-8) — the card prints a rate to two decimals; a rate with
   // more would make "rate × yards" disagree with the printed credit.
-  if (/\.\d{3,}$/.test(text)) {
+  if (/\.\d{3,}$/.test(typed)) {
     await drawCurrent(bot, chatId, userId, session, row,
       { note: '⚠️ A rate has at most two decimals, for example 3.20. Type it again.' });
     return true;

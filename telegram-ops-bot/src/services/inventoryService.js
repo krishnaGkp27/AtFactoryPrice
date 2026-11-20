@@ -878,7 +878,9 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     else creditNote = null;
     if (drifts.length) rateNote = [rateNote, ...drifts].filter(Boolean).join('\n');
     if (skipped.length) {
-      creditNote += `\n⚠️ Skipped: ${skipped.map((sk) => `${sk.tok} (${sk.why})`).join(', ')} — nothing flipped, nothing credited for them.`;
+      // With no credit line above (every ledger entry failed) the skipped
+      // thans are still named — on their own, never after a blank "null".
+      creditNote = `${creditNote ? `${creditNote}\n` : ''}⚠️ Skipped: ${skipped.map((sk) => `${sk.tok} (${sk.why})`).join(', ')} — nothing flipped, nothing credited for them.`;
     }
     await auditLogRepository.append('return_bundle', {
       requestId, returned: flipped.map((f) => `${f.it.packageNo}/${f.it.thanNo}`), skipped,

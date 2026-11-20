@@ -245,7 +245,7 @@ What he may type:
 
 | Typed | Answer |
 |---|---|
-| `1450` or `3.20` | taken |
+| `1450`, `1,450` or `3.20` | taken (a thousands comma is read; `14,50` is not a rate) |
 | `0`, a minus number, words with a digit (`rate 1450`, `at 1450`, `price 1450`) | `⚠️ That is not a rate. Type a number above zero, for example 1450.` — the step stays |
 | `1450.555` | `⚠️ A rate has at most two decimals, for example 3.20. Type it again.` |
 | `cancel` / `stop` / `not now` / `exit` | `Rate step for return R-1ACB closed — nothing was approved. The request still waits.` |

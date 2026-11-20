@@ -409,3 +409,41 @@ test('R3-2: "This return needs no rate" ends the step session', async () => {
   assert.ok(toasts(bot).some((t) => /needs no rate/.test(t)));
   assert.equal(sessionStore.get(A1), null);
 });
+
+// ── Final read-through before the deploy (20-Nov-2026) ─────────────────────
+
+test('final check: a rate typed with its thousands comma is read; a malformed comma is not', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = seed(bundleAJ(SOLDER.slice(0, 2)));
+  await openStep(bot, A1, id);
+  let from = bot.calls.length;
+  await controller.handleMessage(bot, msg(A1, '14,50'));
+  assert.match(textsTo(bot, A1, from).join('\n'), /That is not a rate/);
+  assert.doesNotMatch(lastScreen(bot, A1, from).text, /check the credit/);
+  from = bot.calls.length;
+  await controller.handleMessage(bot, msg(A1, '1,450'));
+  assert.match(lastScreen(bot, A1, from).text, /1,450\/yd → credit 87,000\b/);
+  from = bot.calls.length;
+  await controller.handleCallbackQuery(bot, cb(chip(lastScreen(bot, A1).chips, /Change rate/), A1, 1));
+  await controller.handleMessage(bot, msg(A1, '1,450.555'));
+  assert.match(textsTo(bot, A1, from).join('\n'), /A rate has at most two decimals/);
+});
+
+test('final check: every ledger entry refused and a than skipped — the skipped line stands alone, never after "null"', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = seed(bundleAJ());
+  const realRecord = accountingService.recordReturn;
+  accountingService.recordReturn = async () => { throw new Error('ledger down'); };
+  try {
+    const { reply } = await typedThenSecond(bot, id, ['1450'], async () => {
+      const r = fake._store.get('Inventory').find((x) => x[0] === '9301' && x[5] === '1');
+      r[7] = 'available'; r[11] = '';
+    });
+    assert.equal(statusOf(id), 'approved');
+    assert.match(reply, /⚠️ Skipped: 9301\/1/);
+    assert.doesNotMatch(reply, /null/);
+    assert.match(reply, /FAILED/);
+  } finally { accountingService.recordReturn = realRecord; }
+});
