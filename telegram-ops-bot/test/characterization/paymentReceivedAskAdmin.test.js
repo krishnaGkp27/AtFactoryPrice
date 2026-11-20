@@ -885,11 +885,13 @@ test('PRC-2 #8: 👥 Any admin — the card, its recipients and the receipt exac
     'Record Payment Request', 'Customer: ABBA', 'Amount: 50,000', 'Method: Bank — Zenith', `Date: ${fmtDate(todayInLagos())}`,
     'Outstanding today: 120,000', 'After this payment: 70,000',
   ].join('\n');
-  // CARD-9 — the short reference on the header; the two-admin boilerplate
-  // reason prints no line; no "Use buttons below" footer.
+  // CARD-9 — the short reference on the header; no "Use buttons below"
+  // footer. Review 1 (R1-6): the payment card has no signed-so-far line of
+  // its own, so the two-admin sentence still tells the first admin their
+  // tap does not complete it.
   assert.equal(rowOf(id)[3], 'All payment operations require two-admin approval.');
-  assert.equal(approvalCards.reasonFact(rowOf(id)[3]), '');
-  const expected = `🔔 *Approval required* · ${esc(approvalCards.shortRequestRef(id))}\nFrom: Abdul\n\n${esc(legacyCard)}`;
+  assert.equal(approvalCards.reasonFact(rowOf(id)[3]), rowOf(id)[3]);
+  const expected = `🔔 *Approval required* · ${esc(approvalCards.shortRequestRef(id))}\nFrom: Abdul\n\n${esc(legacyCard)}\n\n_${esc(rowOf(id)[3])}_`;
   for (const a of ADMINS) {
     const cards = cardsTo(bot, a);
     assert.equal(cards.length, 1, `${a} gets the card`);

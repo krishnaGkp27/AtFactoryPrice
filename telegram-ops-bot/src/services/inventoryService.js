@@ -676,6 +676,17 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const priced = retRate.priceRows(aj, results, { customer: aj.customer, customerId: aj.customerId, design: aj.design });
     const credit = returnCreditFor({}, priced.rows);
     rateNote = rateNoteFor(aj, priced.used);
+    {
+      // Review 1 (R1-2) — a gap than whose sale row has gained a rate since
+      // the raise is credited at that rate, not the fill: say so when the
+      // booked credit differs from the one the approvals were given for.
+      const storedRate = new Map((Array.isArray(aj.thanRates) ? aj.thanRates : []).map((t) => [String(t.thanNo), Number(t.rate) || 0]));
+      const ownRate = results
+        .filter((r) => storedRate.has(String(r.thanNo)) && !(storedRate.get(String(r.thanNo)) > 0) && Number(r.pricePerYard) > 0)
+        .map((r) => ({ tok: `${aj.packageNo}/${r.thanNo}`, rate: Number(r.pricePerYard) }));
+      const drift = retRate.driftNote(aj, { customer: aj.customer, customerId: aj.customerId }, credit.amount, ownRate);
+      if (drift) rateNote = rateNote ? `${rateNote}\n${drift}` : drift;
+    }
     await transactionsRepository.append({
       user: item.user, action: 'return_thans', design: results[0]?.design, color: results[0]?.shade,
       qty: totalYards, before: 'sold', after: 'available', status: 'approved',
@@ -689,7 +700,13 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // distinct, which `RT-`/`RP-` could not.
     try {
       await erpEmitAsync('return', { type: 'return_thans', packageNo: aj.packageNo, thanNos, yards: totalYards, pricePerYard: credit.rate, design: results[0]?.design, shade: results[0]?.shade, warehouse: aj.warehouse || results[0]?.warehouse, userId: item.user, txnId: `RN-${aj.packageNo}-${requestId}`, customer: returnCust.name, customerId: returnCust.id });
-      if (credit.amount > 0) creditNote = `↩️ Credited ${money.sale(credit.amount)} to ${returnCust.name || 'the buyer'} (${results.length} than${results.length === 1 ? '' : 's'}, ${totalYards} yds × ${money.saleRate(credit.rate)}).`;
+      // Review 1 (R1-12) — when an admin entered the rate, the rate is named
+      // on the admins' reply only (rateNote, §6d); the requester's copy of
+      // this line carries the credit, as before RET-8.
+      if (credit.amount > 0) {
+        creditNote = `↩️ Credited ${retRate.amountText(credit.amount)} to ${returnCust.name || 'the buyer'} (${results.length} than${results.length === 1 ? '' : 's'}, ${totalYards} yds`
+          + `${priced.used.length ? '' : ` × ${money.saleRate(credit.rate)}`}).`;
+      }
       else await recordErpFailure('return credit (return_thans)', new Error(`no rate on record for Bale ${aj.packageNo} thans ${thanNos.join(', ')} — stock returned, credit NOT posted; post it manually`));
     } catch (e) { await recordErpFailure('return credit (return_thans)', e); }
     if (skipped.length) {
@@ -769,12 +786,18 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const byBuyer = new Map();
     for (const f of flipped) {
       const k = String(f.it.customerId || '') || normName(f.it.customer || f.r.soldToPrior || '');
-      if (!byBuyer.has(k)) byBuyer.set(k, { name: f.it.customer || f.r.soldToPrior || '', rows: [] });
+      if (!byBuyer.has(k)) byBuyer.set(k, { name: f.it.customer || f.r.soldToPrior || '', buyer: f.it, rows: [], ownRate: [] });
       const priced = retRate.priceRows(aj, [f.r], f.it);
       for (const u of priced.used) usedFills.set(u.key, u);
       byBuyer.get(k).rows.push(priced.rows[0]);
+      // Review 1 (R1-2) — a gap than (no rate when raised) whose sale row
+      // carries one now is credited at it, never at the fill.
+      if (!(Number(f.it.pricePerYard) > 0) && Number(f.r.pricePerYard) > 0) {
+        byBuyer.get(k).ownRate.push({ tok: `${f.it.packageNo}/${f.it.thanNo}`, rate: Number(f.r.pricePerYard) });
+      }
     }
     rateNote = rateNoteFor(aj, [...usedFills.values()]);
+    const drifts = [];
     const notes = [];
     const booked = [];
     let idx = 0;
@@ -784,6 +807,8 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       const returnCust = await resolveReturnCustomer(g.name);
       const totalYards = g.rows.reduce((sum, t) => sum + (Number(t.yards) || 0), 0);
       const credit = returnCreditFor({}, g.rows);
+      const drift = retRate.driftNote(aj, g.buyer, credit.amount, g.ownRate);
+      if (drift) drifts.push(drift);
       const pkgs = [...new Set(g.rows.map((t) => String(t.packageNo)))];
       await transactionsRepository.append({
         user: item.user, action: 'return_bundle', design: g.rows[0]?.design, color: g.rows[0]?.shade,
@@ -793,7 +818,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       });
       try {
         await erpEmitAsync('return', { type: 'return_bundle', packageNo: pkgs.join(', '), thanNos: g.rows.map((t) => t.thanNo), yards: totalYards, pricePerYard: credit.rate, design: g.rows[0]?.design, shade: g.rows[0]?.shade, warehouse: g.rows[0]?.warehouse, userId: item.user, txnId: `RB-${requestId}-${idx}`, customer: returnCust.name, customerId: returnCust.id });
-        if (credit.amount > 0) notes.push(`${returnCust.name || 'the buyer'} ${money.sale(credit.amount)} (${g.rows.length} than${g.rows.length === 1 ? '' : 's'}, ${totalYards} yd)`);
+        if (credit.amount > 0) notes.push(`${returnCust.name || 'the buyer'} ${retRate.amountText(credit.amount)} (${g.rows.length} than${g.rows.length === 1 ? '' : 's'}, ${totalYards} yd)`);
         else {
           await recordErpFailure('return credit (return_bundle)', new Error(`no rate on record for ${returnCust.name || g.name}: ${g.rows.map((t) => `${t.packageNo}/${t.thanNo}`).join(', ')} — stock returned, credit NOT posted; post it manually`));
           notes.push(`${returnCust.name || 'the buyer'}: no rate on record — NO credit posted`);
@@ -802,6 +827,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       booked.push({ customer: returnCust.name, customerId: returnCust.id, thans: g.rows.length, yards: totalYards, amount: credit.amount, rate: credit.rate });
     }
     creditNote = `↩️ Credited ${notes.join(' · ')}.`;
+    if (drifts.length) rateNote = [rateNote, ...drifts].filter(Boolean).join('\n');
     if (skipped.length) {
       creditNote += `\n⚠️ Skipped: ${skipped.map((sk) => `${sk.tok} (${sk.why})`).join(', ')} — nothing flipped, nothing credited for them.`;
     }

@@ -187,3 +187,34 @@ test('a DECIDED record, and a row raised after CARD-8, never read live stock', a
     assert.equal(before, 0);
   } finally { inventoryRepository.getAll = orig; }
 });
+
+test('review 1 (R1-7): a waiting row from before CARD-8 gets its HEADER count recomputed too — a bale split between two buyers is loose on both', async () => {
+  const sheet = [...[1, 2, 3].map((t) => row('631', t, 'sold', 'A')), ...[4, 5].map((t) => row('631', t, 'sold', 'B'))];
+  const it = (t, who) => ({
+    packageNo: '631', thanNo: String(t), warehouse: 'IDUMOTA', design: '44200', shade: 'BLACK',
+    arrivalBatch: 'Jul26', yards: 30, pricePerYard: 1000, soldTo: who, customer: who, customerId: '',
+  });
+  const old = {
+    action: 'return_bundle',
+    items: [it(1, 'A'), it(2, 'A'), it(3, 'A'), it(4, 'B'), it(5, 'B')],
+    wholeBales: [],
+    groups: [
+      { customer: 'A', customerId: '', thans: 3, yards: 90, amount: 90000, noRateThans: 0, qty: '3t' },
+      { customer: 'B', customerId: '', thans: 2, yards: 60, amount: 60000, noRateThans: 0, qty: '2t' },
+    ],
+    stores: ['IDUMOTA'], qty: '1B', thans: 5, yards: 150, returnedOn: '2026-11-14', condition: 'good',
+  };
+  const orig = inventoryRepository.getAll;
+  inventoryRepository.getAll = async () => sheet;
+  try {
+    const card = await approvalCards.buildCardFromActionJSON(old);
+    assert.equal(card.split('\n')[0], '↩️ Return · IDUMOTA · 5t · 150 yd · 2 customers');
+    assert.equal((card.match(/631\/\d · 30 yd/g) || []).length, 5, 'five than lines under the 5t header');
+    // A whole bale for one buyer still reads 1B on the header and one line.
+    const one = await approvalCards.buildCardFromActionJSON(legacyRow());
+    assert.equal(one.split('\n')[0].includes('· 1B · 150 yd'), true);
+    // The decided copy prints only what is stored.
+    const decided = await approvalCards.buildCardFromActionJSON(old, { decided: true });
+    assert.equal(decided.split('\n')[0], '↩️ Return · IDUMOTA · 1B · 150 yd · 2 customers');
+  } finally { inventoryRepository.getAll = orig; }
+});

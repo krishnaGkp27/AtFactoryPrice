@@ -174,3 +174,18 @@ test('PRC-2: a payment received raised twice stays a twin whoever was asked, aft
   const idx2 = duplicateIndex([pr('A', 0, { amount: 50000, amountPending: false, amountBy: { id: '1', name: 'Musa', at: at(200) } }), pr('B', 180, blank)]);
   assert.equal((idx2.get('B') || []).length, 2, 'a blank copy and the copy an admin typed the amount on');
 });
+
+test('RET-8 review 1 (R1-3): the rate an admin entered on one of two duplicated returns does not hide the pair', () => {
+  const payload = { items: [{ packageNo: '9300', thanNo: '1', pricePerYard: 0 }], returnedOn: '2026-11-19' };
+  const a = row('a', '555', 'return_bundle', payload, 0);
+  const b = row('b', '555', 'return_bundle', payload, 600);
+  assert.equal(duplicateIndex([a, b]).get('a').length, 2);
+  b.actionJSON = {
+    ...b.actionJSON,
+    rateFill: [{ key: 'CUS-S|44200', rate: 1450 }],
+    rateFillBy: { id: '777', name: 'Musa', at: '2026-11-20T10:00:00Z' },
+    approvals: ['777'], signoffs: [{ id: '777', ratePrint: 'CUS-S|44200=1450' }],
+  };
+  assert.equal(duplicateIndex([a, b]).get('a').length, 2, 'still one duplicate group');
+  assert.equal(duplicateIndex([a, b]).get('b').length, 2);
+});

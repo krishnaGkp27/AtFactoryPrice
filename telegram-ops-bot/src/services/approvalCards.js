@@ -605,7 +605,7 @@ async function buildReturnCard({ packageNo, thanNo, warehouse }) {
  * @param {object} aj queued actionJSON (specs/RET-3_RETURN_CREDIT.md Part B)
  * @returns {Promise<string>}
  */
-async function buildReturnThansCard(aj) {
+async function buildReturnThansCard(aj, opts = {}) {
   const { formatCounts } = require('./unitDisplayService');
   const thans = (Array.isArray(aj.thanNos) ? aj.thanNos : []).map(String);
   const yards = Number(aj.yards) || 0;
@@ -645,7 +645,7 @@ async function buildReturnThansCard(aj) {
     // RET-8 — a than with no rate on the sale record: the first approving
     // admin is asked for it; once entered the card shows the credit that
     // will post and who entered the rate.
-    text += await returnRateLines(aj, aj.customer, gaps, `\n💰 Credits ${aj.customer || 'the buyer'} `);
+    text += await returnRateLines(aj, aj.customer, gaps, `\n💰 Credits ${aj.customer || 'the buyer'} `, undefined, { decided: !!opts.decided });
   } else if (rate > 0 && yards > 0) {
     const amount = Math.round(rate * yards);
     // CUR-1 C3 — a sale reversed at the booked Inventory rate: side B, bare.
@@ -793,7 +793,13 @@ async function withLiveReturnFacts(aj) {
       if (new Set(pm.map(buyerKey)).size !== 1) continue;
       if (label(pm) === uds.formatCounts({ bales: 1 })) wholeBales.push(pkg);
     }
-    return { ...aj, items: filled, wholeBales };
+    // Review 1 (R1-7) — the header counts what the lines print, as
+    // returnBundleFlow.buildActionJSON does for a new row: each whole bale a
+    // B, every other than a t. The stored count was the old rule's.
+    const wholeSet = new Set(wholeBales.map(String));
+    const loose = filled.filter((it) => !wholeSet.has(String(it.packageNo))).length;
+    const qty = aj.qty ? uds.formatCounts({ bales: wholeBales.length, thans: loose }) : aj.qty;
+    return { ...aj, items: filled, wholeBales, qty };
   } catch (e) {
     logger.warn(`approvalCards: return facts not filled in — ${e.message}`);
     return aj;
@@ -816,8 +822,12 @@ async function withLiveReturnFacts(aj) {
  * @param {string} [outstandingJoin] how the outstanding follows the amount
  *   (` · outstanding ` on the bundle card; a new line on the one-bale card)
  */
-async function returnRateLines(aj, customer, gaps, lead, outstandingJoin = '\nOutstanding ') {
+async function returnRateLines(aj, customer, gaps, lead, outstandingJoin = '\nOutstanding ', opts = {}) {
   const rr = require('./returnRate');
+  // Review 1 (R1-4/9/16) — a DECIDED record states what the row holds: no
+  // instruction to an approver who will never come, no projection of
+  // today's ledger (which already holds whatever the decision posted).
+  const decided = !!(opts && opts.decided);
   const who = customer || 'the buyer';
   const buyer = rr.creditByBuyer(aj).find((b) => gaps.length && b.key === rr.buyerKey(gaps[0])) || { rated: 0, total: 0 };
   const filled = rr.fillsOf(aj).length > 0;
@@ -825,19 +835,21 @@ async function returnRateLines(aj, customer, gaps, lead, outstandingJoin = '\nOu
   const by = (aj.rateFillBy && (aj.rateFillBy.name || aj.rateFillBy.id)) || 'an admin';
   let text = '';
   if (amount > 0) {
-    text += `${lead}${money.sale(amount)}`;
-    try {
-      const { outstandingAsOfToday } = await require('./accountingService').getCustomerLedger(customer);
-      const now = Number(outstandingAsOfToday);
-      if (Number.isFinite(now)) text += `${outstandingJoin}${money.sale(now)} → ${money.sale(now - amount)}`;
-    } catch (_) { /* the balance is omitted, never guessed */ }
+    text += `${lead}${rr.amountText(amount)}`;
+    if (!decided) {
+      try {
+        const { outstandingAsOfToday } = await require('./accountingService').getCustomerLedger(customer);
+        const now = Number(outstandingAsOfToday);
+        if (Number.isFinite(now)) text += `${outstandingJoin}${rr.amountText(now)} → ${rr.amountText(now - amount)}`;
+      } catch (_) { /* the balance is omitted, never guessed */ }
+    }
   }
   const thansWord = (n) => `${n} than${n === 1 ? '' : 's'}`;
   for (const g of gaps) {
     const fill = rr.fillFor(aj, g.key);
     const r = rr.fillRate(fill);
     if (!filled) {
-      text += `\n⚠️ No rate on the sale record: ${who} · ${g.design || '—'} · ${thansWord(g.thans)}. The admin who approves first is asked for it.`;
+      text += `\n⚠️ No rate on the sale record: ${who} · ${g.design || '—'} · ${thansWord(g.thans)}.${decided ? '' : ' The admin who approves first is asked for it.'}`;
     } else if (r > 0) {
       text += `\n   ${g.design || '—'} at ${money.saleRate(r, { fraction: Number.isInteger(r) ? 0 : 2 })} — entered by ${by}`;
     } else {
@@ -884,7 +896,7 @@ async function buildReturnBundleCard(aj, opts = {}) {
     if (myGaps.length && (filledAny || !signedSoFar)) {
       // RET-8 — the gap is asked of the first approving admin; once
       // entered, the buyer's line is the credit that will post.
-      text += await returnRateLines(aj, g.customer, myGaps, `\n💰 ${who} `, ' · outstanding ');
+      text += await returnRateLines(aj, g.customer, myGaps, `\n💰 ${who} `, ' · outstanding ', { decided: !!opts.decided });
       continue;
     }
     if (amount > 0) {
@@ -1510,7 +1522,7 @@ async function buildCardFromActionJSON(aj, opts = {}) {
     if (aj.action === 'sell_package') return await buildSellPackageCard(aj, opts);
     // RET-4 — the second signer's inbox and the reminder sweep rebuild the
     // SAME card from the sheet row, than numbers and buyer included.
-    if (aj.action === 'return_thans') return await buildReturnThansCard(aj);
+    if (aj.action === 'return_thans') return await buildReturnThansCard(aj, opts);
     if (aj.action === 'return_bundle') return await buildReturnBundleCard(aj, opts); // RET-5 · CARD-8
     if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj, opts);
     if (aj.action === 'supply_request') return buildSupplyRequestCard(aj, opts);
@@ -1593,23 +1605,36 @@ async function buildCardFromActionJSON(aj, opts = {}) {
  * @param {string} reason
  * @returns {string}
  */
-// CARD-9 (owner, 20-Nov-2026) — "two-admin" / "2-admin" is boilerplate too:
-// every dual-admin card already carries its own "n signed so far" line.
-// "2nd admin" is NOT in the list on purpose (it still prints, as before).
-const BOILERPLATE_REASON = /\b(requires?|require)\s+(a\s+|an\s+)?(admin|second admin|dual[- ]admin|two[- ]admin|2[- ]admin|manager)?\s*approval\b/i;
+const BOILERPLATE_REASON = /\b(requires?|require)\s+(a\s+|an\s+)?(admin|second admin|dual[- ]admin|manager)?\s*approval\b/i;
+// CARD-9 (owner, 20-Nov-2026) — the "two-admin" / "2-admin" sentence is
+// boilerplate ONLY on a card that says so itself: the two return cards print
+// "🔏 Dual-admin return — n signed so far." (review 1, R1-6: a payment, an
+// office-expense batch, a goods receipt … have no such line, so on them the
+// sentence is the only place the admin learns their tap will not complete
+// the request — it stays). "2nd admin" is not matched either (as before).
+const TWO_ADMIN_REASON = /\b(requires?|require)\s+(two[- ]admin|2[- ]admin)\s*approval\b/i;
+/** The request types whose card carries its own signed-so-far line. */
+const OWN_SIGNATURE_LINE_ACTIONS = new Set(['return_thans', 'return_bundle']);
+function printsOwnSignatureLine(action) {
+  return OWN_SIGNATURE_LINE_ACTIONS.has(String(action || ''));
+}
 /**
  * CARD-9 — the part of a riskReason that is a fact about THIS request, or
  * '' when every sentence was boilerplate. The approval message prints a
  * reason line only when this is non-empty.
  *
  * @param {string} reason
+ * @param {{ownSignatureLine?: boolean}} [opts] true when the card itself says
+ *   how many admins signed (printsOwnSignatureLine) — then the two-admin
+ *   sentence repeats it and is dropped too
  * @returns {string}
  */
-function reasonFact(reason) {
+function reasonFact(reason, opts = {}) {
+  const dropTwoAdmin = !!(opts && opts.ownSignatureLine);
   return String(reason || '')
     .split(/(?<=\.)\s+|\n+/)
     .map((s) => s.trim())
-    .filter((s) => s && !BOILERPLATE_REASON.test(s))
+    .filter((s) => s && !BOILERPLATE_REASON.test(s) && !(dropTwoAdmin && TWO_ADMIN_REASON.test(s)))
     .join(' ');
 }
 function shortReason(reason) {
@@ -1667,6 +1692,7 @@ module.exports = {
   enrichBundleItems,
   shortReason,
   reasonFact, // CARD-9
+  printsOwnSignatureLine, // CARD-9 review 1
   shortRequestRef,
   shortTransferRef,
   buildAddWarehouseCard,

@@ -2017,7 +2017,6 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
   // CARD-9 (owner, 20-Nov-2026) — no "Sent for approval" filler: when no
   // fact survives, the message carries no reason line at all.
   const cardsMod = require('../services/approvalCards');
-  const fact = cardsMod.reasonFact(riskReason);
   // CARD-9 — the short reference rides the header; the raw id stays in the
   // buttons' callback_data only. A TR- transfer id reads "24Jul·03".
   const shortRef = cardsMod.shortTransferRef(requestId);
@@ -2028,6 +2027,7 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
   // and never saw it. Flag loudly, never suppress — a silent drop could eat
   // a genuine repeat order, and that is a worse failure than a warning line.
   let dupeLine = '';
+  let dupePlain = '';
   let queueRow = null; // PAY-2 — the row being notified, from the read below
   try {
     const { duplicateIndex } = require('../utils/duplicateApprovals');
@@ -2037,11 +2037,20 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
     const group = index.get(String(requestId)) || [];
     const others = group.filter((r) => String(r.requestId) !== String(requestId));
     if (others.length) {
-      const refs = others.slice(0, 3)
-        .map((r) => esc(cardsMod.shortTransferRef(r.requestId))).join(', ');
+      const plainRefs = others.slice(0, 3).map((r) => cardsMod.shortTransferRef(r.requestId));
+      const refs = plainRefs.map((r) => esc(r)).join(', ');
       dupeLine = `⚠️ *Possible duplicate* — same request also pending as ${refs}\\. Approve ONE, reject the rest\\.\n\n`;
+      // CARD-9 review 1 (R1-8) — the plain fallback carries the warning too.
+      dupePlain = `⚠️ Possible duplicate — same request also pending as ${plainRefs.join(', ')}. Approve ONE, reject the rest.\n\n`;
     }
   } catch (_) { /* the flag is best-effort; the card must always send */ }
+  // CARD-9 review 1 (R1-6) — the two-admin sentence is dropped only when the
+  // card itself says how many signed (the return cards). On every other
+  // card, and when the row could not be read, it stays: it is the only
+  // place the first admin learns their tap does not complete the request.
+  const ownSignatureLine = !!(queueRow && queueRow.actionJSON
+    && cardsMod.printsOwnSignatureLine(queueRow.actionJSON.action));
+  const fact = cardsMod.reasonFact(riskReason, { ownSignatureLine });
   // APG-1 — the gate's 🔔 reminder goes only to admins who have not signed.
   const excludeIds = new Set((opts && Array.isArray(opts.excludeIds) ? opts.excludeIds : []).map(String));
   const text = `${noteLine}${dupeLine}🔔 *Approval required* · ${esc(shortRef)}\nFrom: ${esc(userLabel)}\n\n${esc(actionSummary)}${fact ? `\n\n_${esc(fact)}_` : ''}`;
@@ -2081,8 +2090,11 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
     } catch (e) {
       logger.error('Failed to notify admin', adminId, e.message);
       try {
-        // CARD-9 — the same frame as the MarkdownV2 text, unescaped.
-        const plain = `🔔 Approval required · ${shortRef}\nFrom: ${userLabel}\n\n${actionSummary}${fact ? `\n\n${fact}` : ''}`;
+        // CARD-9 — the same frame as the MarkdownV2 text, unescaped: the
+        // note above the card and the duplicate warning included (review 1,
+        // R1-8 — they are what the deciding admin must not miss).
+        const plainNote = opts && opts.prependNote ? `${opts.prependNote}\n\n` : '';
+        const plain = `${plainNote}${dupePlain}🔔 Approval required · ${shortRef}\nFrom: ${userLabel}\n\n${actionSummary}${fact ? `\n\n${fact}` : ''}`;
         await bot.sendMessage(adminId, plain, { reply_markup: keyboard });
         sent += 1;
       } catch (e2) {

@@ -74,6 +74,28 @@ const liveStep = (uid, requestId) => {
   return s && s.type === SESSION_TYPE && s.step === STEP && (!requestId || s.requestId === requestId) ? s : null;
 };
 
+/**
+ * Review 1 (R1-1) — the requester may not enter the rate on their own
+ * request, by the same rule as the H1 self-approval guard
+ * (approvalEvents.handleApprovalCallback): refused while ANOTHER admin
+ * exists to review it (Railway ADMIN_IDS and the Users-sheet admins); a
+ * sole admin may, or nothing they raise could ever clear. Like H1, a failed
+ * enumeration does not block.
+ */
+function ownRequestRefused(row, uid) {
+  if (!row || String(row.user) !== String(uid)) return false;
+  try {
+    const envAdmins = config.access.adminIds.map(String);
+    let sheetAdmins = [];
+    try { sheetAdmins = (require('../middlewares/auth')._internals.snapshotAdmins() || []).map(String); } catch (_) { /* cache not ready */ }
+    return [...new Set([...envAdmins, ...sheetAdmins])].some((id) => id !== String(uid));
+  } catch (e) {
+    logger.warn(`RET-8: own-request check could not enumerate admins: ${e.message}`);
+    return false;
+  }
+}
+const OWN_REQUEST = '🔒 You cannot enter the rate on your own request — a second admin must.';
+
 /* ── texts ────────────────────────────────────────────────────────────── */
 
 function promptText(requestId, gaps, gi, note = '') {
@@ -112,21 +134,21 @@ async function creditBlocks(aj, fills) {
     for (const { gap, fill } of b.gaps) {
       lines.push(`${gap.customer || 'the buyer'} · ${gap.design || '—'} · ${plural(gap.thans, 'than')} · ${fmtQty(gap.yards)} yd`);
       const r = returnRate.fillRate(fill);
-      lines.push(r > 0 ? `${rateText(r)} → credit ${money.sale(Math.round(gap.yards * r))}` : 'no credit');
+      lines.push(r > 0 ? `${rateText(r)} → credit ${returnRate.amountText(gap.yards * r)}` : 'no credit');
     }
-    if (b.rated > 0 || b.gaps.length > 1) lines.push(`Credit for ${b.customer || 'the buyer'} on this return: ${money.sale(b.total)}`);
+    if (b.rated > 0 || b.gaps.length > 1) lines.push(`Credit for ${b.customer || 'the buyer'} on this return: ${returnRate.amountText(b.total)}`);
     try {
       const { outstandingAsOfToday } = await require('../services/accountingService').getCustomerLedger(b.customer);
       const now = Number(outstandingAsOfToday);
       // Omitted, never guessed, when the ledger cannot be read.
-      if (Number.isFinite(now)) lines.push(`Outstanding ${money.sale(now)} → ${money.sale(now - b.total)}`);
+      if (Number.isFinite(now)) lines.push(`Outstanding ${returnRate.amountText(now)} → ${returnRate.amountText(now - b.total)}`);
     } catch (_) { /* the line is left out */ }
     blocks.push(lines.join('\n'));
   }
   return blocks;
 }
 
-const totalCredit = (aj, fills) => returnRate.creditByBuyer(aj, fills).reduce((s, b) => s + b.total, 0);
+const totalCredit = (aj, fills) => returnRate.round2(returnRate.creditByBuyer(aj, fills).reduce((s, b) => s + b.total, 0));
 
 async function checkText(row, fills) {
   const { required, signed } = approvalCount(row);
@@ -171,7 +193,7 @@ function secondCheckKeyboard(row) {
   const total = totalCredit(aj, fills);
   const hash = returnRate.hashOf(returnRate.printOf(fills));
   return [
-    [{ text: total > 0 ? `✅ Approve · credit ${money.sale(total)}` : '✅ Approve · no credit', callback_data: `${NS}rk:${row.requestId}:${hash}` }],
+    [{ text: total > 0 ? `✅ Approve · credit ${returnRate.amountText(total)}` : '✅ Approve · no credit', callback_data: `${NS}rk:${row.requestId}:${hash}` }],
     [{ text: '✖ Not now', callback_data: `${NS}rx:${row.requestId}` }],
   ];
 }
@@ -206,6 +228,9 @@ async function draw(bot, chatId, uid, session, text, rows, { editId = null } = {
   }
   if (session) {
     session.flowMessageId = messageId || null;
+    // Review 1 (R1-13) — when the step was last on screen: a sale wizard
+    // touched after it takes the admin's typed replies instead.
+    session.touchedAt = Date.now();
     sessionStore.set(uid, session);
   }
   return messageId;
@@ -245,6 +270,9 @@ async function drawCurrent(bot, chatId, uid, session, row, { editId = null, note
 async function openStep(bot, chatId, adminId, row, { cardMessageId = null, editMessageId = null, keep = false } = {}) {
   const live = sessionStore.get(adminId);
   const mine = live && live.type === SESSION_TYPE && live.step === STEP;
+  // Review 1 (R1-14) — one person has one open flow. The other one comes
+  // down (NAV-1), and the admin is told which, never silently.
+  const closed = live && !mine ? closedFlowWords(live) : '';
   if (live && !mine) {
     try { await require('../services/sessionJanitor').leaveFlow(bot, adminId, cardMessageId || editMessageId); } catch (_) { /* best-effort */ }
   }
@@ -257,7 +285,18 @@ async function openStep(bot, chatId, adminId, row, { cardMessageId = null, editM
     cardMessageId: cardMessageId || (mine && live.requestId === row.requestId ? live.cardMessageId : null) || null,
   };
   sessionStore.set(adminId, session);
-  await drawCurrent(bot, chatId, adminId, session, row, { editId: editMessageId });
+  await drawCurrent(bot, chatId, adminId, session, row, {
+    editId: editMessageId,
+    note: closed ? `ℹ️ ${closed} was closed to open this step.` : '',
+  });
+  return { closed };
+}
+
+/** What the admin had open, in words (`Your return draft`), for the closing note. */
+function closedFlowWords(live) {
+  if (!live || !live.type) return '';
+  if (live.type === SESSION_TYPE && Array.isArray(live.bales) && live.bales.length) return 'Your own return draft';
+  return 'The screen you had open';
 }
 
 /* ── the seam (approvalEvents.handleApprovalCallback) ─────────────────── */
@@ -333,7 +372,9 @@ async function rateSeam(bot, callbackQuery, requestId, item, opts = {}) {
 
   // state === 'ask' — no signature, no fill yet.
   if (!proposed) {
-    await toast('Type the rate first.');
+    const live = sessionStore.get(adminId);
+    const closing = live && !(live.type === SESSION_TYPE && live.step === STEP) ? closedFlowWords(live) : '';
+    await toast(closing ? `Type the rate first. ${closing} was closed.` : 'Type the rate first.', !!closing);
     try {
       await openStep(bot, callbackQuery.message.chat.id, adminId, { ...item, requestId },
         { cardMessageId: callbackQuery.message.message_id });
@@ -408,8 +449,8 @@ async function liveForRate(bot, query, requestId) {
     if (liveStep(uid, requestId)) sessionStore.clear(uid);
     return null;
   }
-  if (String(row.user) === uid) {
-    await answer('🔒 You cannot enter the rate on your own request.', true);
+  if (ownRequestRefused(row, uid)) {
+    await answer(OWN_REQUEST, true);
     return null;
   }
   if (!returnRate.gapsOf(aj).length) {
@@ -601,15 +642,44 @@ async function handleText(bot, msg, session) {
   const chatId = msg.chat.id;
   const text = String(msg.text || '').trim();
   if (!text || text.startsWith('/')) return false;
+  // Review 1 (R1-13) — APC-1's rule for typed replies: they go to what the
+  // admin touched LAST. A sale approval wizard opened or tapped after this
+  // step was drawn takes the line (its Step 2 asks for a rate too).
+  try {
+    const wiz = require('../events/approvalEvents')._internals.activeWizard(userId, { forTyping: true });
+    const wizAt = wiz ? Number(wiz.touchedAt || wiz.startedAt || 0) : 0;
+    if (wiz && wizAt > Number(session.touchedAt || 0)) return false;
+  } catch (_) { /* no wizard registry: the step keeps the line */ }
+  // Review 1 (R1-15) — a typed way out, and a line that is plainly not a
+  // rate (a word first, or no digit at all — `Return 6189/5`, `hello`)
+  // closes the step and goes on to wherever it belongs. Nothing is approved.
+  const ref = refOf(session.requestId);
+  if (/^(cancel|stop|not now|exit)$/i.test(text) || /^\p{L}+\s+\S/u.test(text) || !/\d/.test(text)) {
+    sessionStore.clear(userId);
+    const said = `Rate step for return ${ref} closed — nothing was approved. The request still waits.`;
+    if (session.flowMessageId) {
+      try {
+        await bot.editMessageText(said, { chat_id: chatId, message_id: session.flowMessageId, reply_markup: { inline_keyboard: [] } });
+      } catch (_) { /* too old to edit */ }
+    }
+    if (/^(cancel|stop|not now|exit)$/i.test(text)) {
+      await bot.sendMessage(chatId, said);
+      return true;
+    }
+    return false;
+  }
   let row = null;
   try { row = await approvalQueueRepository.getByRequestId(session.requestId); } catch (_) { /* unreadable: said below */ }
   const st = row ? String(row.status || '').toLowerCase() : '';
   if (!row || st !== 'pending' || !returnRate.isReturn(row.actionJSON) || returnRate.stepState(row.actionJSON) !== 'ask'
-    || String(row.user) === userId || !isAdmin(userId)) {
+    || ownRequestRefused(row, userId) || !isAdmin(userId)) {
     sessionStore.clear(userId);
     let said = 'This return no longer needs a rate from you. Open 🛂 Approvals to see it.';
-    if (row && st && st !== 'pending') said = `Already ${st} — nothing to do.`;
-    else if (row && isAdmin(userId)) said = (await closedReason(bot, row, userId)) || said;
+    if (!row) said = 'That request could not be read just now — nothing was approved. Tap ✅ Approve on the card again in a minute.';
+    else if (st && st !== 'pending') said = `Already ${st} — nothing to do.`;
+    else if (!isAdmin(userId)) said = 'Only admins can approve.';
+    else if (ownRequestRefused(row, userId)) said = OWN_REQUEST;
+    else said = (await closedReason(bot, row, userId)) || said;
     await bot.sendMessage(chatId, said);
     return true;
   }

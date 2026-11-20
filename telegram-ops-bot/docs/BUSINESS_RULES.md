@@ -365,7 +365,11 @@ inventory sheet. but you can add in different sheet."*
   counts. A than that carries its own rate is always credited at it — an
   entered rate never replaces a recorded one. A return signed before this
   rule finishes as before (no credit for the gap). The entered rate is named
-  to admins only; the requester sees the credit, as before.
+  to admins only; the requester sees the credit, as before. The requester
+  may not enter the rate on their own return while another admin exists (the
+  self-approval rule; a sole admin may). When the credit booked is not the
+  credit the approvals were given for — a than's sale row gained a rate in
+  between, or a than was skipped — the admins' reply says so by name.
 - **A return is raised per SET of thans, with a date, a condition and an
   optional photo (RET-4, 04-Sep-2026).** One request (`return_thans`) lists
   the ticked thans of ONE bale in the warehouse it was SOLD from (§6 /

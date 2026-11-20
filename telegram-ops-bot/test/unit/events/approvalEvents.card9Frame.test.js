@@ -93,8 +93,10 @@ async function notify(requestId, summary, reason, bot = createFakeBot()) {
   return bot;
 }
 
+const returnRow = (id = UUID) => ({ requestId: id, user: '555', status: 'pending', actionJSON: { action: 'return_bundle', items: [] } });
+
 test('a UUID request: the short ref on the header, From next, no raw id, no Ref:, no footer — buttons keep the full id', async () => {
-  pending = [];
+  pending = [returnRow()];
   const bot = await notify(UUID, 'Return goods\nCustomer: CJE', RETURN_REASON);
   const [text] = textsTo(bot, '777');
   assert.equal(text, '🔔 *Approval required* · R\\-C677\nFrom: Abdul\n\nReturn goods\nCustomer: CJE');
@@ -117,11 +119,7 @@ test('a TR- transfer id reads as its own short form, never R-TR20', async () => 
 
 test('boilerplate reasons print no reason line — "Sent for approval" is gone too', async () => {
   for (const reason of [
-    RETURN_REASON,
     'All return operations require admin approval.',
-    'All payment operations require two-admin approval.',
-    'All office expense operations require two-admin approval.',
-    'Anything requires 2-admin approval.',
     'All sale operations require admin approval.',
     'Sample requires admin approval',
     '',
@@ -132,8 +130,62 @@ test('boilerplate reasons print no reason line — "Sent for approval" is gone t
     assert.equal(text, '🔔 *Approval required* · R\\-C677\nFrom: Abdul\n\nCard', reason);
     assert.ok(!/Sent for approval/.test(text));
   }
-  // shortReason keeps its old fallback for any other reader
-  assert.equal(approvalCards.shortReason(RETURN_REASON), 'Sent for approval');
+  // Review 1 (R1-6) — the two-admin sentence is dropped ONLY on a return,
+  // whose card prints its own "🔏 Dual-admin return — n signed so far." line.
+  for (const reason of [RETURN_REASON, 'Anything requires 2-admin approval.']) {
+    pending = [returnRow()];
+    assert.equal(approvalCards.reasonFact(reason, { ownSignatureLine: true }), '', reason);
+    const [text] = textsTo(await notify(UUID, 'Card', reason), '777');
+    assert.equal(text, '🔔 *Approval required* · R\\-C677\nFrom: Abdul\n\nCard', reason);
+  }
+  // shortReason keeps its old behaviour for any other reader: the fallback
+  // for boilerplate, and the two-admin sentence as it read before CARD-9.
+  assert.equal(approvalCards.shortReason('All return operations require admin approval.'), 'Sent for approval');
+  assert.equal(approvalCards.shortReason(RETURN_REASON), RETURN_REASON);
+});
+
+test('review 1 (R1-6): on every card without its own signed-so-far line the two-admin sentence stays', async () => {
+  const cases = [
+    ['request_payment', 'All payment operations require two-admin approval.'],
+    ['record_payment', 'All payment operations require two-admin approval.'],
+    ['record_office_expense', 'All office expense operations require two-admin approval.'],
+    ['goods_receipt', 'All goods receipt operations require two-admin approval.'],
+  ];
+  for (const [action, reason] of cases) {
+    assert.equal(approvalCards.printsOwnSignatureLine(action), false, action);
+    assert.equal(approvalCards.reasonFact(reason), reason, reason);
+    pending = [{ requestId: UUID, user: '555', status: 'pending', actionJSON: { action } }];
+    const [text] = textsTo(await notify(UUID, 'Card', reason), '777');
+    assert.equal(text, `🔔 *Approval required* · R\\-C677\nFrom: Abdul\n\nCard\n\n_${reason.replace(/[.-]/g, '\\$&')}_`, action);
+  }
+  // The row unreadable: the sentence stays (the safe side).
+  pending = [];
+  const [text] = textsTo(await notify(UUID, 'Card', RETURN_REASON), '777');
+  assert.match(text, /_All return operations require two\\-admin approval\\._$/);
+  assert.equal(approvalCards.printsOwnSignatureLine('return_bundle'), true);
+  assert.equal(approvalCards.printsOwnSignatureLine('return_thans'), true);
+});
+
+test('review 1 (R1-8): the plain fallback carries the note above the card and the duplicate warning', async () => {
+  const twin = (id) => ({
+    requestId: id, user: '555', status: 'pending', createdAt: new Date().toISOString(),
+    actionJSON: { action: 'sale_bundle', items: [{ packageNo: '6306', thanNo: '1' }], customer: '' },
+  });
+  const OTHER = '9a1b2c3d-0000-4000-8000-000000000001';
+  pending = [twin(OTHER), twin(UUID)];
+  const bot = createFakeBot();
+  bot.sendMessage = async function sendMessage(chatId, text, opts) {
+    bot.calls.push({ method: 'sendMessage', args: { chatId, text, opts } });
+    if (opts && opts.parse_mode === 'MarkdownV2') throw new Error('400: can\'t parse entities');
+    return { message_id: bot.calls.length };
+  };
+  const note = '🔏 1 of 2 — signed by Musa. Yours is the second approval.';
+  await approvalEvents.notifyAdminsApprovalRequest(bot, UUID, 'Abdul', 'Sale card', '', '555', { prependNote: note });
+  const to777 = bot.calls.filter((c) => c.method === 'sendMessage' && String(c.args.chatId) === '777');
+  assert.equal(to777.length, 2);
+  const plainText = to777[1].args.text;
+  assert.equal(plainText, `${note}\n\n⚠️ Possible duplicate — same request also pending as R-9A1B. Approve ONE, reject the rest.\n\n🔔 Approval required · R-C677\nFrom: Abdul\n\nSale card`);
+  assert.equal(unescape(stripEntities(to777[0].args.text)), plainText, 'the fallback says what the card says');
 });
 
 test('a real fact still prints, exactly as before', async () => {

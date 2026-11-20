@@ -28,6 +28,7 @@
  */
 
 const crypto = require('crypto');
+const money = require('../utils/money');
 
 const RETURN_ACTIONS = ['return_bundle', 'return_thans'];
 
@@ -73,6 +74,18 @@ function thansOf(aj) {
     return [{ ...base, yards: Number(a.yards) || 0, rate: Number(a.pricePerYard) || 0, thans: count }];
   }
   return [];
+}
+
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/**
+ * A credit as the return cards print it: whole units bare (`87,000`), a
+ * figure with kobo to two places (`30,199.80`) — the exact amount that
+ * posts, never a rounded stand-in for it.
+ */
+function amountText(n) {
+  const v = round2(n);
+  return money.sale(v, { fraction: Number.isInteger(v) ? 0 : 2 });
 }
 
 /** The gaps of a request, in the cards' order (buyer A–Z, then design). */
@@ -199,10 +212,14 @@ function creditByBuyer(aj, fills) {
     b.gaps.push({ gap: g, fill: f });
   }
   const out = [...buyers.values()];
+  // Review 1 (R1-5) — kept to the kobo, never rounded part by part: the
+  // ledger posts yards × rate unrounded, so the figure a signature is given
+  // for is the figure that posts (`amountText` prints the decimals when
+  // there are any).
   for (const b of out) {
-    b.rated = Math.round(b.rated);
-    b.filled = Math.round(b.filled);
-    b.total = b.rated + b.filled;
+    b.rated = round2(b.rated);
+    b.filled = round2(b.filled);
+    b.total = round2(b.rated + b.filled);
   }
   return out.sort((a, b) => String(a.customer).localeCompare(String(b.customer)));
 }
@@ -227,6 +244,32 @@ function priceRows(aj, rows, buyer) {
     return rate > 0 ? { ...r, pricePerYard: rate } : r;
   });
   return { rows: priced, used: [...used.values()] };
+}
+
+/**
+ * Review 1 (R1-2) — the admins' line when a buyer's posted credit is not
+ * the credit the signatures were given for. A fill never replaces a
+ * recorded rate (§6d), so a gap than whose sale row has GAINED a rate
+ * since the raise is credited at that rate; a than skipped by the
+ * executor posts nothing. Either way the signed figure and the booked
+ * figure differ, and the admins are told by name. '' when they agree, or
+ * when the request carries no fills (nothing was signed for a figure).
+ * @param {object} aj the request
+ * @param {{customer?:string, customerId?:string}} buyer
+ * @param {number} posted the credit the executor booked for this buyer
+ * @param {Array<{tok:string, rate:number}>} [ownRate] gap thans credited at
+ *   a rate their sale row carries now
+ */
+function driftNote(aj, buyer, posted, ownRate = []) {
+  if (!fillsOf(aj).length) return '';
+  const b = creditByBuyer(aj).find((x) => x.key === buyerKey(buyer || {}));
+  if (!b) return '';
+  if (Math.abs(round2(posted) - b.total) < 0.01) return '';
+  const who = (buyer && (buyer.customer || buyer.soldTo)) || b.customer || 'the buyer';
+  const why = (ownRate || []).length
+    ? ` — ${ownRate.map((o) => `${o.tok} now carries its own rate on the sale record (${money.saleRate(o.rate, { fraction: Number.isInteger(Number(o.rate)) ? 0 : 2 })})`).join(', ')}, and a recorded rate is always used`
+    : '';
+  return `⚠️ ${who}: credited ${amountText(posted)}, not the ${amountText(b.total)} the approvals were given for${why}.`;
 }
 
 /** What the next tap on a pending return does about its rate. */
@@ -254,6 +297,9 @@ module.exports = {
   creditByBuyer,
   priceRows,
   stepState,
+  amountText,
+  round2,
+  driftNote,
   buyerKey,
   gapKey,
 };
