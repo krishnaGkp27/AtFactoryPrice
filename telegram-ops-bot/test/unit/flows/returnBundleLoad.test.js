@@ -8,6 +8,11 @@ const assert = require('node:assert/strict');
 const SRC = path.join(__dirname, '..', '..', '..', 'src');
 const { _internals: { loadLine, buildActionJSON } } = require(path.join(SRC, 'flows/returnBundleFlow'));
 const approvalCards = require(path.join(SRC, 'services/approvalCards'));
+const unitDisplay = require(path.join(SRC, 'services/unitDisplayService'));
+const labelFor = (rows, thanWarehouses = new Set()) => {
+  const roster = unitDisplay.buildBaleRoster(rows);
+  return (list) => unitDisplay.formatQty(list, { roster, thanWarehouses });
+};
 const designAssets = require(path.join(SRC, 'repositories/designAssetsRepository'));
 const accounting = require(path.join(SRC, 'services/accountingService'));
 
@@ -64,38 +69,42 @@ test('loadLine: `771 x3` opens the bale unticked; a than that is not sold is ref
 test('buildActionJSON groups by buyer, marks whole bales, credits at each than\'s own rate', async () => {
   const { bales } = loadLine([{ packageNo: '771' }, { packageNo: '779' }, { packageNo: '6189', thans: [5] }, { packageNo: '9300' }], SHEET);
   for (const b of bales) for (const t of b.thans) { t.customer = t.soldTo; t.customerId = t.soldTo === 'Kafaya' ? 'c1' : (t.soldTo === 'ABBA' ? 'c2' : ''); }
-  const label = (rows) => `${rows.length}t`;
+  // CARD-8 — the real rule-6c labeller (roster = every row of the sheet, no
+  // than-visible store), so the buyer line and the goods lines are judged alike.
+  const label = labelFor(SHEET);
   const aj = buildActionJSON({ bales, returnedOn: '2026-10-18', condition: 'good', photoFileId: 'ph1', photoKind: 'photo' }, label);
   assert.equal(aj.action, 'return_bundle');
   assert.equal(aj.items.length, 11);
   assert.deepEqual(aj.wholeBales, ['771', '9300'], '779 has a than on the shelf, so it is never a whole-bale line');
   assert.deepEqual(aj.groups.map((g) => [g.customer, g.thans, g.yards, g.amount, g.noRateThans, g.qty]), [
-    ['ABBA', 2, 60, 75000, 0, '2t'], ['Kafaya', 8, 240, 300000, 0, '8t'], ['Nobody Known', 1, 30, 0, 1, '1t'],
+    ['ABBA', 2, 60, 75000, 0, '2t'], ['Kafaya', 8, 240, 300000, 0, '1B + 3t'], ['Nobody Known', 1, 30, 0, 1, '1B'],
   ]);
+  assert.equal(aj.qty, '2B + 5t', 'the header counts what the lines print');
+  assert.equal(aj.storedFacts, 1);
   assert.deepEqual(aj.stores, ['Lagos']);
   assert.equal(aj.return_photo_type, 'photo');
 
   const lines = await approvalCards.returnBundleLines(aj);
-  const sp = '\u2007'; // CARD-7: serials padded with a figure space to the widest
+  // CARD-7: serials padded with a figure space to the widest PRINTED (7 lines → none)
   assert.deepEqual(lines, [
     '👤 ABBA · 2t · 60 yd',
     '9060-A',
     ' 01 - Black',
-    `  ${sp}1. 779/4 · 30 yd`,
+    `  1. 779/4 · 30 yd`,
     '77014',
     ' Shade 11',
-    `  ${sp}2. 6189/5 · 30 yd`,
-    '👤 Kafaya · 8t · 240 yd',
+    `  2. 6189/5 · 30 yd`,
+    '👤 Kafaya · 1B + 3t · 240 yd',
     '9060-A',
     ' 01 - Black',
-    `  ${sp}3. 771 · 150 yd`,
-    `  ${sp}4. 779/1 · 30 yd`,
-    `  ${sp}5. 779/2 · 30 yd`,
-    `  ${sp}6. 779/3 · 30 yd`,
-    '👤 Nobody Known · 1t · 30 yd',
+    `  3. 771 · 5 thans · 150 yd`,
+    `  4. 779/1 · 30 yd`,
+    `  5. 779/2 · 30 yd`,
+    `  6. 779/3 · 30 yd`,
+    '👤 Nobody Known · 1B · 30 yd',
     '9060-A',
     ' 01 - Black',
-    `  ${sp}7. 9300 · 30 yd`,
+    `  7. 9300 · 1 than · 30 yd`,
   ], 'a bale split between buyers prints per than under each; a whole single-buyer bale is one line');
 
   const card = await approvalCards.buildReturnBundleCard({ ...aj, qty: '2B + 3t', approvals: ['777'] });

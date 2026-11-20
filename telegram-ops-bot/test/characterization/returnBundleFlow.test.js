@@ -86,7 +86,7 @@ test('the typed line opens the review card: every buyer from the sale record, wh
   await controller.handleMessage(bot, message('Return 771, 779, 6189/5, 6210, 9999'));
   const text = lastText(bot).replace(/\\/g, '');
   assert.match(text, /^↩️ \*Return\* · 🏭 Lagos \+ Kano office\n📦 1B \+ 3t · 180 yd · 2 customers\n/);
-  assert.match(text, /👤 ABBA · 1t · 30 yd\n77014\n Shade 11\n {2}1\. 6189\/5 · 30 yd\n👤 Kafaya · 1B \+ 2t · 150 yd\n9060-A\n Shade 01\n {2}2\. 771 · 90 yd\n {2}3\. 779\/1 · 30 yd\n {2}4\. 779\/2 · 30 yd/);
+  assert.match(text, /👤 ABBA · 1t · 30 yd · sold 20-Aug-2026\n77014\n Shade 11\n {2}1\. 6189\/5 · 30 yd\n👤 Kafaya · 1B \+ 2t · 150 yd · sold 20-Aug-2026\n9060-A\n Shade 01\n {2}2\. 771 · 3 thans · 90 yd\n {2}3\. 779\/1 · 30 yd\n {2}4\. 779\/2 · 30 yd/);
   assert.match(text, /📦 Loaded with every sold than: 771, 779 — tap 🔎 Open to drop one\./);
   assert.match(text, /⚠️ \*Not loaded \(2\)\*\n• 6210 — nothing sold — all 1 than in stock\n• 9999 — not found in Inventory — check the number/);
   assert.match(text, /💰 Credits: ABBA 30,000 · Kafaya 187,500 _\(at the rates charged\)_/);
@@ -125,7 +125,7 @@ test('open → untick → date → condition → skip photo → ONE confirm card
   const bot = createFakeBot();
   const { calls, cardId } = await walkToConfirm(bot);
   const confirm = lastText(bot).replace(/\\/g, '');
-  assert.match(confirm, /^↩️ \*Confirm return\* · 🏭 Lagos \+ Kano office\n📅 Returned \*[0-9]{2}-[A-Z][a-z]{2}-[0-9]{4}\* · ✅ Good — back to stock\n\n👤 ABBA · 1t · 30 yd\n/);
+  assert.match(confirm, /^↩️ \*Confirm return\* · 🏭 Lagos \+ Kano office\n📅 Returned \*[0-9]{2}-[A-Z][a-z]{2}-[0-9]{4}\* · ✅ Good — back to stock\n\n👤 ABBA · 1t · 30 yd · sold 20-Aug-2026\n/);
   assert.match(confirm, /\nΣ 1B \+ 2t · 150 yd\n💰 Credits: ABBA 30,000 · Kafaya 150,000 _\(at the rates charged\)_\n\nApproving puts the stock back and credits each customer's account\.\nQueues dual-admin approval\.$/);
   assert.equal(kbText(bot)[0], '✅ Submit for approval');
   await controller.handleCallbackQuery(bot, cb('rb:submit', EMP, cardId));
@@ -140,7 +140,7 @@ test('open → untick → date → condition → skip photo → ONE confirm card
   assert.match(lastText(bot), /↩️ \*Return — submitted\*\n\n📦 1B \+ 2t · 150 yd · ABBA, Kafaya\n\n⏳ Waiting for two admins to sign\./);
   const dm = bot.callsTo('sendMessage').filter((c) => /Approval required/i.test(c.args.text || ''));
   assert.deepEqual(dm.map((c) => String(c.args.chatId)).sort(), [A1, A2], 'both admins got the card');
-  assert.match(dm[0].args.text.replace(/\\/g, ''), /↩️ Return · Lagos \+ Kano office · 1B \+ 2t · 150 yd · 2 customers\n📅 .* · ✅ Good\n\n👤 ABBA · 1t · 30 yd\n77014\n Shade 11\n {2}1\. 6189\/5 · 30 yd\n👤 Kafaya · 1B \+ 1t · 120 yd\n9060-A\n Shade 01\n {2}2\. 771 · 90 yd\n {2}3\. 779\/1 · 30 yd\n\n💰 ABBA 30,000/);
+  assert.match(dm[0].args.text.replace(/\\/g, ''), /↩️ Return · Lagos \+ Kano office · 1B \+ 2t · 150 yd · 2 customers\n📅 .* · ✅ Good\n\n👤 ABBA · 1t · 30 yd · sold 20-Aug-2026\n77014\n Shade 11\n {2}1\. 6189\/5 · 30 yd\n👤 Kafaya · 1B \+ 1t · 120 yd · sold 20-Aug-2026\n9060-A\n Shade 01\n {2}2\. 771 · 3 thans · 90 yd\n {2}3\. 779\/1 · 30 yd\n\n💰 ABBA 30,000/);
   assert.ok(!sessionStore.get(EMP), 'the session is over');
 });
 
@@ -183,7 +183,7 @@ test('R4: the old "Return than 2 from Bale 779" intent opens the same review car
     await controller.handleMessage(bot, message('please take back than 2 of bale 779 from Benduku'));
   } finally { intentResult = { action: 'unknown', confidence: 0 }; }
   const text = lastText(bot).replace(/\\/g, '');
-  assert.match(text, /↩️ \*Return\* · 🏭 Lagos\n📦 1t · 30 yd\n\n👤 Kafaya · 1t · 30 yd\n9060-A\n Shade 01\n {2}1\. 779\/2 · 30 yd/);
+  assert.match(text, /↩️ \*Return\* · 🏭 Lagos\n📦 1t · 30 yd\n\n👤 Kafaya · 1t · 30 yd · sold 20-Aug-2026\n9060-A\n Shade 01\n {2}1\. 779\/2 · 30 yd/);
   assert.match(text, /ℹ️ I ignored "Benduku" — the buyer comes from the sale record\./);
   assert.equal(sessionStore.get(EMP).type, 'return_bundle_flow');
 });

@@ -684,6 +684,16 @@ const uniqInOrder = (arr) => [...new Set(arr)];
 const buyerKey = (it) => String(it.customerId || '').trim()
   || String(it.customer || it.soldTo || '').trim().toUpperCase();
 
+/** CARD-8 — `· sold 02-Nov-2026` / `· sold 02-Nov-2026 to 09-Nov-2026`; nothing when no day is known. */
+function soldOnSuffix(list) {
+  const days = [...new Set((list || []).map((it) => String((it && it.soldOn) || '').slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))].sort();
+  if (!days.length) return '';
+  const first = days[0];
+  const last = days[days.length - 1];
+  return first === last ? ` · sold ${fmtDate(first)}` : ` · sold ${fmtDate(first)} to ${fmtDate(last)}`;
+}
+
 /**
  * @param {object} aj the `return_bundle` actionJSON (`items`, `groups`, `wholeBales`)
  * @param {(s:string)=>string} [esc] escaper for the caller's parse mode (plain by default)
@@ -704,43 +714,94 @@ async function returnBundleLines(aj, esc = (s) => String(s)) {
     const first = items.find((it) => String(it.design || '') === design) || {};
     names.set(design, await shadeNamesFor(design, first.arrivalBatch));
   }
-  const width = String(items.length).length;
-  let serial = 0;
-  const serialOf = () => `${String(++serial).padStart(width, ' ')}. `;
   const yardsOf = (list) => list.reduce((s, it) => s + (Number(it.yards) || 0), 0);
-  const lines = [];
+  // Built first, numbered after: the serial is padded to the widest one
+  // actually printed (CARD-7), and a whole bale prints fewer lines than thans.
+  const out = [];     // { text } or { goods } (a numbered line)
   for (const g of groups) {
     const gKey = buyerKey(g);
     const mine = items.filter((it) => buyerKey(it) === gKey);
     if (!mine.length) continue;
-    lines.push(`👤 ${esc(g.customer || '(no customer recorded)')}${g.qty ? ` · ${g.qty}` : ''} · ${fmtQty(yardsOf(mine))} yd`);
+    out.push({ text: `👤 ${esc(g.customer || '(no customer recorded)')}${g.qty ? ` · ${g.qty}` : ''} · ${fmtQty(yardsOf(mine))} yd${soldOnSuffix(mine)}` });
     for (const design of uniqInOrder(mine.map((it) => String(it.design || '')))) {
-      lines.push(esc(design || '—'));
+      out.push({ text: esc(design || '—') });
       const dm = mine.filter((it) => String(it.design || '') === design);
+      const printed = new Set();   // a whole bale is ONE line, even across two shade spellings
       for (const sh of uniqInOrder(dm.map((it) => String(it.shade || '')))) {
-        lines.push(` ${esc(shadeHeading(sh, names.get(design) || new Map()))}`);
+        const goods = [];
         const sm = dm.filter((it) => String(it.shade || '') === sh);
         for (const pkg of uniqInOrder(sm.map((it) => String(it.packageNo)))) {
-          const pm = sm.filter((it) => String(it.packageNo) === pkg);
           const allOfBale = items.filter((it) => String(it.packageNo) === pkg);
-          const isWhole = whole.has(pkg)
-            && allOfBale.every((it) => buyerKey(it) === gKey && String(it.shade || '') === sh);
+          const isWhole = whole.has(pkg) && allOfBale.every((it) => buyerKey(it) === gKey);
           if (isWhole) {
-            lines.push(`  ${serialOf()}${esc(pkg)} · ${fmtQty(yardsOf(pm))} yd`);
+            if (printed.has(pkg)) continue;
+            printed.add(pkg);
+            const pm = dm.filter((it) => String(it.packageNo) === pkg);
+            goods.push(`${esc(pkg)} · ${pm.length} than${pm.length === 1 ? '' : 's'} · ${fmtQty(yardsOf(pm))} yd`);
           } else {
-            for (const it of pm) lines.push(`  ${serialOf()}${esc(pkg)}/${esc(it.thanNo)} · ${fmtQty(it.yards)} yd`);
+            for (const it of sm.filter((x) => String(x.packageNo) === pkg)) goods.push(`${esc(pkg)}/${esc(it.thanNo)} · ${fmtQty(it.yards)} yd`);
           }
         }
+        if (!goods.length) continue;
+        out.push({ text: ` ${esc(shadeHeading(sh, names.get(design) || new Map()))}` });
+        for (const line of goods) out.push({ goods: line });
       }
     }
   }
-  return lines;
+  const width = String(out.filter((o) => o.goods != null).length).length;
+  let serial = 0;
+  return out.map((o) => (o.goods != null
+    ? `  ${String(++serial).padStart(width, ' ')}. ${o.goods}`
+    : o.text));
+}
+
+/**
+ * CARD-8 — a return raised before CARD-8 stored its whole bales by the old
+ * rule (typed bare only) and no sale day. While it is still WAITING its card
+ * may fill both in from the live sheet: one cached read, the same labeller
+ * rule as the header. Any failure — or a row already carrying the stored
+ * facts — returns the row as it is. Never used for a decided record.
+ */
+async function withLiveReturnFacts(aj) {
+  if (!aj || aj.storedFacts) return aj;
+  const items = Array.isArray(aj.items) ? aj.items : [];
+  if (!items.length) return aj;
+  try {
+    const rows = await require('../repositories/inventoryRepository').getAll();
+    if (!Array.isArray(rows) || !rows.length) return aj;
+    const uds = require('./unitDisplayService');
+    const label = await uds.createQtyLabeller(rows);
+    const up = (v) => String(v == null ? '' : v).trim().toUpperCase();
+    const rowKey = (r) => `${up(r.design)}|${up(r.packageNo)}|${up(r.arrivalBatch)}|${up(r.thanNo)}`;
+    const dayOf = new Map();
+    for (const r of rows) {
+      const d = String((r && r.soldDate) || '').slice(0, 10);
+      if (d) dayOf.set(rowKey(r), d);
+    }
+    const filled = items.map((it) => (it.soldOn ? it : { ...it, soldOn: dayOf.get(rowKey(it)) || '' }));
+    const wholeBales = [];
+    for (const pkg of uniqInOrder(filled.map((it) => String(it.packageNo)))) {
+      const pm = filled.filter((it) => String(it.packageNo) === pkg);
+      if (new Set(pm.map(buyerKey)).size !== 1) continue;
+      if (label(pm) === uds.formatCounts({ bales: 1 })) wholeBales.push(pkg);
+    }
+    return { ...aj, items: filled, wholeBales };
+  } catch (e) {
+    logger.warn(`approvalCards: return facts not filled in — ${e.message}`);
+    return aj;
+  }
 }
 
 const RETURN_COND_SHORT = { good: '✅ Good', damaged: '⚠️ Damaged', cut: '⚠️ Cut / short', other: '⚠️ Condition noted' };
 
-/** The admin card for a `return_bundle` request (DM, inbox, hourly reminder). */
-async function buildReturnBundleCard(aj) {
+/**
+ * The admin card for a `return_bundle` request (DM, inbox, hourly reminder).
+ * @param {object} aj the queued actionJSON
+ * @param {{decided?: boolean}} [opts] CARD-8 — a decided record prints only
+ *   what the row stores; a waiting row from before CARD-8 is filled in live
+ */
+async function buildReturnBundleCard(aj, opts = {}) {
+  if (!opts.decided) aj = await withLiveReturnFacts(aj);
   const items = Array.isArray(aj.items) ? aj.items : [];
   const groups = Array.isArray(aj.groups) ? aj.groups : [];
   const stores = (Array.isArray(aj.stores) && aj.stores.length
@@ -1384,7 +1445,7 @@ async function buildCardFromActionJSON(aj, opts = {}) {
     // RET-4 — the second signer's inbox and the reminder sweep rebuild the
     // SAME card from the sheet row, than numbers and buyer included.
     if (aj.action === 'return_thans') return await buildReturnThansCard(aj);
-    if (aj.action === 'return_bundle') return await buildReturnBundleCard(aj); // RET-5
+    if (aj.action === 'return_bundle') return await buildReturnBundleCard(aj, opts); // RET-5 · CARD-8
     if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj, opts);
     if (aj.action === 'supply_request') return buildSupplyRequestCard(aj, opts);
     if (aj.action === 'add_contact') return buildAddContactCard(aj);

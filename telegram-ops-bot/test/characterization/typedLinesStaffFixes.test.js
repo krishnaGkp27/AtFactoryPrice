@@ -258,8 +258,9 @@ test('Return 771 779: both bales reach the review card — the second is no long
   const text = bot.allText().replace(/\\/g, '');
   assert.equal(intentCalls, 0);
   assert.match(text, /↩️ \*Return\*/, `got: ${text}`);
-  assert.match(text, /771 · 60 yd/);
-  assert.match(text, /779 · 60 yd/);
+  // CARD-8 — Kano office counts thans (header 2t), so its lines are per than too.
+  assert.match(text, /771\/1 · 60 yd/);
+  assert.match(text, /779\/1 · 60 yd/);
   assert.equal(sessionStore.get('4242').bales.length, 2);
   sessionStore.clear('4242');
 });

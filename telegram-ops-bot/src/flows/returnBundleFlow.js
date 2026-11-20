@@ -167,10 +167,15 @@ function loadLine(items, rows, existing = []) {
       arrivalBatch: String(first.arrivalBatch || '').trim(),
       whole,
       needPick,
+      // CARD-8 — the bale's TRUE size (every than row, any status): a bale
+      // typed with thans keeps only those in `thans`, so whether the return
+      // takes the whole bale is judged against this, never against the typing.
+      rosterSize: all.length,
       inStockThans: inStock.map((r) => String(r.thanNo)).sort((a, b) => Number(a) - Number(b)),
       thans: picked.slice().sort((a, b) => Number(a.thanNo) - Number(b.thanNo)).map((r) => ({
         thanNo: String(r.thanNo), yards: Number(r.yards) || 0, shade: String(r.shade || '').trim(),
         soldTo: String(r.soldTo || '').trim(), rate: Number(r.pricePerYard) || 0,
+        soldOn: String(r.soldDate || '').trim().slice(0, 10),
         baleUid: String(r.baleUid || ''), picked: !needPick, customer: '', customerId: '',
       })),
     });
@@ -204,23 +209,41 @@ async function resolveBuyers(bales) {
 
 const buyerKey = (t) => String(t.customerId || '').trim() || pkgKey(t.customer || t.soldTo || '');
 
+/**
+ * CARD-8 — is this buyer's share of one bale the WHOLE bale? The same rule
+ * the rule-6c labeller counts a B by (unitDisplayService.formatQty: every
+ * than row of the bale, any status, taken — and not a than-visible store),
+ * so the header, the buyer line and the goods lines never disagree. With
+ * the real labeller in hand it is asked directly; without one the roster
+ * size loadLine recorded stands in for it (no than-visible stores).
+ */
+function wholeForBuyer(rows, rosterSize, label) {
+  if (!rows.length) return false;
+  if (label) return label(rows) === unitDisplayService.formatCounts({ bales: 1 });
+  return Number(rosterSize) > 0 && rows.length >= Number(rosterSize);
+}
+
 function buildActionJSON(session, label) {
   const items = [];
   const wholeBales = [];
   for (const b of session.bales || []) {
     const picked = b.thans.filter((t) => t.picked);
     if (!picked.length) continue;
-    // A whole-bale LINE (`771 · 150 yd`) means the whole bale: every sold than
-    // ticked AND nothing of it left on the shelf. A bale with a than still in
-    // stock prints per than, however it was typed.
-    if (b.whole && !b.inStockThans.length && picked.length === b.thans.length) wholeBales.push(b.packageNo);
-    for (const t of picked) {
-      items.push({
-        packageNo: b.packageNo, thanNo: t.thanNo, baleUid: t.baleUid, warehouse: b.warehouse,
-        design: b.design, shade: t.shade, arrivalBatch: b.arrivalBatch, yards: t.yards,
-        pricePerYard: t.rate, soldTo: t.soldTo, customer: t.customer || t.soldTo, customerId: t.customerId || '',
-      });
-    }
+    const bItems = picked.map((t) => ({
+      packageNo: b.packageNo, thanNo: t.thanNo, baleUid: t.baleUid, warehouse: b.warehouse,
+      design: b.design, shade: t.shade, arrivalBatch: b.arrivalBatch, yards: t.yards,
+      pricePerYard: t.rate, soldTo: t.soldTo, customer: t.customer || t.soldTo, customerId: t.customerId || '',
+      soldOn: String(t.soldOn || ''),
+    }));
+    // CARD-8 — a whole-bale LINE (`631 · 5 thans · 150 yd`) means EVERY than
+    // of the bale is on this return for ONE buyer, however it was typed
+    // (bare, 631/1+2+3+4+5, or ticked than by than). A than still on the
+    // shelf, a than unticked, or a second buyer keeps it than by than.
+    const buyers = new Set(bItems.map(buyerKey));
+    const rosterSize = b.rosterSize != null ? b.rosterSize
+      : (b.thans.length + ((b.inStockThans || []).length)); // a session from before CARD-8
+    if (buyers.size === 1 && wholeForBuyer(bItems, rosterSize, label)) wholeBales.push(b.packageNo);
+    items.push(...bItems);
   }
   const groups = [];
   for (const it of items) {
@@ -243,14 +266,24 @@ function buildActionJSON(session, label) {
     delete g._items;
     delete g.key;
   }
+  // CARD-8 — the header counts what the lines print: each whole bale a B,
+  // every other than a t (a bale split between two buyers is loose thans
+  // for each, so it is loose on the header too).
+  const wholeSet = new Set(wholeBales.map(String));
+  const looseThans = items.filter((it) => !wholeSet.has(String(it.packageNo))).length;
+  const qty = items.length ? unitDisplayService.formatCounts({ bales: wholeBales.length, thans: looseThans }) : '';
   const stores = [...new Set(items.map((it) => it.warehouse).filter(Boolean))];
   return {
     action: 'return_bundle',
     items,
     wholeBales,
+    // CARD-8 — this row's `wholeBales` and each item's `soldOn` were stored
+    // by the CARD-8 rule: the card prints them as they are and never reads
+    // live stock to fill them in (a row without the mark may be filled in).
+    storedFacts: 1,
     groups,
     stores,
-    qty: label && items.length ? label(items) : '',
+    qty: label && items.length ? qty : '',
     thans: items.length,
     yards: items.reduce((s, it) => s + (Number(it.yards) || 0), 0),
     returnedOn: String(session.returnedOn || ''),

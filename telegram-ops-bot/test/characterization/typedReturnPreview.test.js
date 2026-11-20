@@ -99,7 +99,7 @@ test('RET-5 (R4): every typed return intent opens the multi-bale review card —
   intentResult = { action: 'return_package', packageNo: 'P1', confidence: 0.9 };
   await controller.handleMessage(bot, message('Take back Bale P1'));
   const text = bot.allText().replace(/\\/g, '');
-  assert.match(text, /↩️ \*Return\*[\s\S]*👤 Benduku · 2t · 120 yd[\s\S]*1\. P1 · 120 yd/, 'the buyer comes from the sale record');
+  assert.match(text, /↩️ \*Return\*[\s\S]*👤 Benduku · 2t · 120 yd · sold 30-Jul-2026\n[\s\S]*1\. P1\/1 · 60 yd\n {2}2\. P1\/2 · 60 yd/, 'the buyer comes from the sale record; Kano office counts thans, so the lines do too (CARD-8)');
   assert.equal(q.appended.length, 0, 'nothing queued from the line itself');
   assert.equal(sessionStore.get(ADMIN).type, 'return_bundle_flow');
   assert.ok(lastKb(bot).some((b) => b.callback_data === 'rb:go'), 'the review card continues to date, condition, photo');
