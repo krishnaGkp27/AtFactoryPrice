@@ -215,6 +215,7 @@ def page2():
  <h2>What you will see</h2>
  <div class="sub2">{P("One return, from the line to the receipt. In this example the customer Soldier Madam bought bale 631 (thans 1 to 5) and bale 614 (than 1) from IDUMOTA.")}</div>
  <div class="cols3">{"".join(f'<div class="colm">{cells[i]}{cells[i + 1]}</div>' for i in (0, 2, 4))}</div>
+ <div class="cxrow"><div class="cxt">{P(f"<b>Stop at any time:</b> tap {b('❌ Cancel')}. Nothing is sent to the admins. The stock does not change.")}</div></div>
 </section>"""
 
 
@@ -235,13 +236,10 @@ def page3():
     for title, c, cap in ex:
         cells.append(f'<div class="cell"><div class="extitle">{html.escape(title)}</div>'
                      f'<div class="cap plain">{P(cap)}</div>{card(c)}</div>')
-    cx = S("cx_cancel", kind="edit")
     return f"""
 <section class="pg">
  <h2>More examples</h2>
  <div class="grid2">{"".join(cells)}</div>
- <div class="cxrow"><div class="cxt"><div class="btitle">{P(f"Stop at any time: tap {b('❌ Cancel')}")}</div>
-  <p>{P("Nothing is sent to the admins. The stock does not change.")}</p></div>{card(cx, "cxcard")}</div>
 </section>"""
 
 

@@ -176,12 +176,32 @@ as R4 says.
 
 ### On the open return card
 
-The same rule. A line typed while the card is open is added when it is
-numbers only (`614/1`). A line that opens with a number but carries words
-(`700 to Idumota`) is refused and said — `❓ Numbers only here, like
-631/1+2+3, 614. Nothing was added.` A line that opens with a word
-(`Stock 9006 black`, `Transfer 700 to Lagos`) is not the card's and goes to
-its own door.
+The same rule (the list, 🔎 Open and ➕ Add more steps). A line typed while
+the card is open is added when it is numbers only — `614/1`, or the whole
+line `Return 614/1`. A line that opens with a number or with Return but
+carries words (`700 to Idumota`, `Return 700 to Idumota`) is refused and
+said — `❓ Numbers only here, like 631/1+2+3, 614. Nothing was added.` A
+line that opens with any other word (`Sell 614/1`, `Stock 9006 black`,
+`Transfer 700 to Lagos`) is not the card's and goes to its own door.
+
+**One return at a time.** Once the return is past its list (date,
+condition, photo, confirm), a new Return line used to replace it without a
+word. It is refused now: `↩️ You have a return open. Finish it, or tap
+❌ Cancel on it. Then type the new line.` A condition note that begins with
+the word is still taken as the note.
+
+### Small things that are not wording
+
+- A full stop at the very end of the one line (phone keyboards add one).
+- What stands in front of the word: `/return …`, `please return …`,
+  `pls` / `kindly`, an emoji. These get the one-way card like any other
+  wording — they do not slip past to the AI or the chips card.
+- A line in the one format whose only piece cannot be read
+  (`Return 631/5-3`) gets the one-way card with `❓ Could not read: 631/5-3`
+  above it.
+- A line read only in part (`Return 631-635`) opens the card with
+  `⚠️ Part of your line was not read. Check the list before you continue.`
+  at the top, and the piece under `❓ Could not read`.
 
 ### Code
 
