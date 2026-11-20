@@ -105,3 +105,25 @@ test('the typed rate reader is the sale wizard\'s: decimals kept, words refused'
   assert.equal(parseRateNumber('1,450'), null);
   assert.equal(parseRateNumber('abc'), null);
 });
+
+test('review 2 (R2-2): noCreditChosen — only when every than left at nothing is a signed "no credit"', () => {
+  const buyer = { customer: 'solder madam', customerId: 'CUS-S', design: '44200' };
+  const row = { design: '44200', yards: 30, pricePerYard: 0 };
+  const chosen = rr.priceRows({ ...BUNDLE, rateFill: [{ key: 'CUS-S|44200', noCredit: true }] }, [row, row], buyer);
+  assert.equal(chosen.noCredit, 2);
+  assert.equal(chosen.unpriced, 0);
+  assert.equal(rr.noCreditChosen(chosen), true);
+  const unfilled = rr.priceRows({ ...BUNDLE }, [row], buyer);
+  assert.equal(unfilled.unpriced, 1);
+  assert.equal(rr.noCreditChosen(unfilled), false, 'a gap with no fill is still a books failure');
+  assert.equal(rr.noCreditChosen([chosen, unfilled]), false, 'one unfilled than keeps the alarm for the buyer');
+  assert.equal(rr.noCreditChosen(rr.priceRows({ ...BUNDLE }, [{ design: '44200', yards: 30, pricePerYard: 1000 }], buyer)), false, 'nothing left at zero');
+});
+
+test('review 2 (R2-4): bookedFor reads the credit stored at execution, or null', () => {
+  const aj = { creditBooked: [{ key: 'CUS-S', customer: 'solder madam', amount: 109500 }, { key: 'CUS-A', amount: 0 }] };
+  assert.equal(rr.bookedFor(aj, 'CUS-S'), 109500);
+  assert.equal(rr.bookedFor(aj, 'CUS-A'), 0);
+  assert.equal(rr.bookedFor(aj, 'CUS-X'), null);
+  assert.equal(rr.bookedFor({}, 'CUS-S'), null);
+});

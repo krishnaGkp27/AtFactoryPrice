@@ -148,7 +148,14 @@ async function creditBlocks(aj, fills) {
   return blocks;
 }
 
-const totalCredit = (aj, fills) => returnRate.round2(returnRate.creditByBuyer(aj, fills).reduce((s, b) => s + b.total, 0));
+/**
+ * Review 2 (R2-1) — the credit of the buyers the check card SHOWS (those
+ * with a gap): the one figure on the chip a second admin signs under must
+ * be on the card above it. Another buyer's rated thans on the same return
+ * are not part of the rate being checked and are not added in.
+ */
+const shownCredit = (aj, fills) => returnRate.round2(returnRate.creditByBuyer(aj, fills)
+  .filter((b) => b.gaps.length).reduce((s, b) => s + b.total, 0));
 
 async function checkText(row, fills) {
   const { required, signed } = approvalCount(row);
@@ -178,11 +185,14 @@ async function secondCheckText(row) {
   const aj = row.actionJSON || {};
   const by = (aj.rateFillBy && (aj.rateFillBy.name || aj.rateFillBy.id)) || 'An admin';
   const { required, signed } = approvalCount(row);
+  const fills = returnRate.fillsOf(aj);
+  // Review 2 (R2-1) — "typed this rate" only when a rate was typed.
+  const allNone = fills.length > 0 && fills.every((f) => !(returnRate.fillRate(f) > 0));
   return [
     `↩️ Return ${refOf(row.requestId)} · check the credit`, '',
-    (await creditBlocks(aj, returnRate.fillsOf(aj))).join('\n\n'),
+    (await creditBlocks(aj, fills)).join('\n\n'),
     '',
-    `${by} typed this rate. Check it before you approve.`,
+    allNone ? `${by} chose no credit for these. Check it before you approve.` : `${by} typed this rate. Check it before you approve.`,
     signed + 1 >= required ? 'Your approval completes the return.' : 'Your approval is recorded; another admin still signs.',
   ].join('\n');
 }
@@ -190,7 +200,7 @@ async function secondCheckText(row) {
 function secondCheckKeyboard(row) {
   const aj = row.actionJSON || {};
   const fills = returnRate.fillsOf(aj);
-  const total = totalCredit(aj, fills);
+  const total = shownCredit(aj, fills);
   const hash = returnRate.hashOf(returnRate.printOf(fills));
   return [
     [{ text: total > 0 ? `✅ Approve · credit ${returnRate.amountText(total)}` : '✅ Approve · no credit', callback_data: `${NS}rk:${row.requestId}:${hash}` }],
@@ -199,6 +209,33 @@ function secondCheckKeyboard(row) {
 }
 
 /* ── drawing ──────────────────────────────────────────────────────────── */
+
+/** The bot and chat that last drew each admin's step (for the replaced-session note). */
+const botFor = new Map();
+
+/**
+ * Review 2 (R2-5) — another flow took the admin's session while the step
+ * was open (the 🛂 inbox's ⬅ Back, a tile): the step message must not keep
+ * looking live, or a typed rate goes to whatever owns the chat now. It is
+ * rewritten to say it closed, with the chip that reopens it. Nothing was
+ * recorded: answers live in the session until ✅.
+ */
+function onStepReplaced(userId, prev) {
+  if (!prev || prev.type !== SESSION_TYPE || prev.step !== STEP || !prev.flowMessageId || !prev.requestId) return;
+  const at = botFor.get(String(userId));
+  if (!at || !at.bot) return;
+  const text = `Rate step for return ${refOf(prev.requestId)} closed — nothing was approved. The request still waits.\nTap ✏️ Type the rate to open it again.`;
+  Promise.resolve()
+    .then(() => at.bot.editMessageText(text, {
+      chat_id: at.chatId, message_id: prev.flowMessageId,
+      reply_markup: { inline_keyboard: [[
+        { text: '✏️ Type the rate', callback_data: `${NS}re:${prev.requestId}` },
+        { text: '✖ Not now', callback_data: `${NS}rx:${prev.requestId}` },
+      ]] },
+    }))
+    .catch(() => { /* too old to edit, or already gone */ });
+}
+sessionStore.onReplaced(onStepReplaced);
 
 /**
  * Draw a step screen: edit `editId` when given, else drop the previous step
@@ -226,6 +263,7 @@ async function draw(bot, chatId, uid, session, text, rows, { editId = null } = {
     });
     messageId = sent && sent.message_id;
   }
+  if (messageId) botFor.set(String(uid), { bot, chatId });
   if (session) {
     session.flowMessageId = messageId || null;
     // Review 1 (R1-13) — when the step was last on screen: a sale wizard
@@ -295,6 +333,9 @@ async function openStep(bot, chatId, adminId, row, { cardMessageId = null, editM
 /** What the admin had open, in words (`Your return draft`), for the closing note. */
 function closedFlowWords(live) {
   if (!live || !live.type) return '';
+  // Review 2 (R2-6) — the 🛂 inbox's card is the one the step answers and it
+  // stays on screen with working buttons: nothing the admin had was lost.
+  if (live.type === 'approvals_inbox_flow') return '';
   if (live.type === SESSION_TYPE && Array.isArray(live.bales) && live.bales.length) return 'Your own return draft';
   return 'The screen you had open';
 }
@@ -636,6 +677,20 @@ async function handleCallback(bot, query, rest) {
   return true;
 }
 
+/**
+ * Review 2 (R2-3) — a typed line that belongs to another door: it opens with
+ * a word of the typed script (`Return 6189/5`, `Sell …`, `Stock 9006`). Any
+ * other line with a digit (`rate 1450`, `at 1450`, `N 1450`) is a try at
+ * the rate: the step keeps it and says what a rate looks like.
+ */
+function opensAnotherDoor(text) {
+  const first = String(text || '').trim().replace(/^\/+/, '').split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
+  if (!first) return false;
+  try {
+    return Object.prototype.hasOwnProperty.call(require('../utils/typedRouter').VERBS, first);
+  } catch (_) { return false; }
+}
+
 /** The typed rate. True when the step took the message. */
 async function handleText(bot, msg, session) {
   const userId = String(msg.from.id);
@@ -654,7 +709,7 @@ async function handleText(bot, msg, session) {
   // rate (a word first, or no digit at all — `Return 6189/5`, `hello`)
   // closes the step and goes on to wherever it belongs. Nothing is approved.
   const ref = refOf(session.requestId);
-  if (/^(cancel|stop|not now|exit)$/i.test(text) || /^\p{L}+\s+\S/u.test(text) || !/\d/.test(text)) {
+  if (/^(cancel|stop|not now|exit)$/i.test(text) || !/\d/.test(text) || opensAnotherDoor(text)) {
     sessionStore.clear(userId);
     const said = `Rate step for return ${ref} closed — nothing was approved. The request still waits.`;
     if (session.flowMessageId) {

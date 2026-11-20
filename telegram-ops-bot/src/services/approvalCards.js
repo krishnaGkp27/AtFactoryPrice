@@ -831,10 +831,18 @@ async function returnRateLines(aj, customer, gaps, lead, outstandingJoin = '\nOu
   const who = customer || 'the buyer';
   const buyer = rr.creditByBuyer(aj).find((b) => gaps.length && b.key === rr.buyerKey(gaps[0])) || { rated: 0, total: 0 };
   const filled = rr.fillsOf(aj).length > 0;
-  const amount = filled ? buyer.total : buyer.rated;
+  const signedAmount = filled ? buyer.total : buyer.rated;
+  // Review 2 (R2-4) — a decided record of an executed return prints the
+  // credit that POSTED (stored on the row at execution); when it is not the
+  // figure the approvals were given for, both are named. A record without
+  // the stored figure prints what was signed for, as before.
+  const booked = decided && filled && gaps.length ? rr.bookedFor(aj, rr.buyerKey(gaps[0])) : null;
+  const amount = booked !== null ? booked : signedAmount;
   const by = (aj.rateFillBy && (aj.rateFillBy.name || aj.rateFillBy.id)) || 'an admin';
   let text = '';
-  if (amount > 0) {
+  if (booked !== null && Math.abs(booked - signedAmount) >= 0.01) {
+    text += `${lead}${rr.amountText(booked)} credited (approved for ${rr.amountText(signedAmount)})`;
+  } else if (amount > 0) {
     text += `${lead}${rr.amountText(amount)}`;
     if (!decided) {
       try {

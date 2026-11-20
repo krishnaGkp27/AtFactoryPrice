@@ -65,6 +65,23 @@ function rateNoteFor(aj, used) {
   }).join('\n');
 }
 
+/**
+ * Review 2 (R2-4) — the credit an approved return BOOKED per buyer, kept on
+ * the request's own row (`actionJSON.creditBooked`, no column) so a decided
+ * record states what posted, not only what was signed for. Written only for
+ * a request that carries entered rates (RET-8): there the two can differ.
+ * Best-effort: a refused write is logged and never undoes the return.
+ */
+async function storeBookedCredit(requestId, aj, list) {
+  if (!requestId || !Array.isArray(aj && aj.rateFill) || !aj.rateFill.length) return;
+  try {
+    await approvalQueueRepository.updateActionJSON(requestId, { creditBooked: list });
+    aj.creditBooked = list;
+  } catch (e) {
+    logger.warn(`RET-8: booked credit for ${requestId} not stored on the request: ${e.message}`);
+  }
+}
+
 async function resolveReturnCustomer(soldTo) {
   const raw = String(soldTo || '').trim();
   if (!raw) return { name: '', id: '' };
@@ -707,8 +724,14 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         creditNote = `↩️ Credited ${retRate.amountText(credit.amount)} to ${returnCust.name || 'the buyer'} (${results.length} than${results.length === 1 ? '' : 's'}, ${totalYards} yds`
           + `${priced.used.length ? '' : ` × ${money.saleRate(credit.rate)}`}).`;
       }
+      else if (retRate.noCreditChosen(priced)) {
+        // Review 2 (R2-2) — the admins chose no credit for these thans and
+        // signed it: told plainly, never as a failed book entry.
+        creditNote = `↩️ No credit to ${returnCust.name || 'the buyer'} for ${results.length} than${results.length === 1 ? '' : 's'}, ${totalYards} yds — chosen at approval.`;
+      }
       else await recordErpFailure('return credit (return_thans)', new Error(`no rate on record for Bale ${aj.packageNo} thans ${thanNos.join(', ')} — stock returned, credit NOT posted; post it manually`));
     } catch (e) { await recordErpFailure('return credit (return_thans)', e); }
+    await storeBookedCredit(requestId, aj, [{ key: retRate.buyerKey({ customer: aj.customer, customerId: aj.customerId }), customer: returnCust.name || aj.customer || '', amount: retRate.round2(credit.amount) }]);
     if (skipped.length) {
       creditNote = `${creditNote ? `${creditNote}\n` : ''}⚠️ Skipped: `
         + `${skipped.map((sk) => `#${sk.thanNo} (${sk.why})`).join(', ')} — nothing flipped, nothing credited for them.`;
@@ -786,10 +809,11 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const byBuyer = new Map();
     for (const f of flipped) {
       const k = String(f.it.customerId || '') || normName(f.it.customer || f.r.soldToPrior || '');
-      if (!byBuyer.has(k)) byBuyer.set(k, { name: f.it.customer || f.r.soldToPrior || '', buyer: f.it, rows: [], ownRate: [] });
+      if (!byBuyer.has(k)) byBuyer.set(k, { name: f.it.customer || f.r.soldToPrior || '', buyer: f.it, rows: [], ownRate: [], parts: [] });
       const priced = retRate.priceRows(aj, [f.r], f.it);
       for (const u of priced.used) usedFills.set(u.key, u);
       byBuyer.get(k).rows.push(priced.rows[0]);
+      byBuyer.get(k).parts.push(priced);
       // Review 1 (R1-2) — a gap than (no rate when raised) whose sale row
       // carries one now is credited at it, never at the fill.
       if (!(Number(f.it.pricePerYard) > 0) && Number(f.r.pricePerYard) > 0) {
@@ -819,13 +843,18 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       try {
         await erpEmitAsync('return', { type: 'return_bundle', packageNo: pkgs.join(', '), thanNos: g.rows.map((t) => t.thanNo), yards: totalYards, pricePerYard: credit.rate, design: g.rows[0]?.design, shade: g.rows[0]?.shade, warehouse: g.rows[0]?.warehouse, userId: item.user, txnId: `RB-${requestId}-${idx}`, customer: returnCust.name, customerId: returnCust.id });
         if (credit.amount > 0) notes.push(`${returnCust.name || 'the buyer'} ${retRate.amountText(credit.amount)} (${g.rows.length} than${g.rows.length === 1 ? '' : 's'}, ${totalYards} yd)`);
-        else {
+        else if (retRate.noCreditChosen(g.parts)) {
+          // Review 2 (R2-2) — no credit was the admins' signed choice for
+          // every than of this buyer that has no rate: not a books failure.
+          notes.push(`${returnCust.name || 'the buyer'}: no credit — chosen at approval (${g.rows.length} than${g.rows.length === 1 ? '' : 's'}, ${totalYards} yd)`);
+        } else {
           await recordErpFailure('return credit (return_bundle)', new Error(`no rate on record for ${returnCust.name || g.name}: ${g.rows.map((t) => `${t.packageNo}/${t.thanNo}`).join(', ')} — stock returned, credit NOT posted; post it manually`));
           notes.push(`${returnCust.name || 'the buyer'}: no rate on record — NO credit posted`);
         }
       } catch (e) { await recordErpFailure('return credit (return_bundle)', e); }
-      booked.push({ customer: returnCust.name, customerId: returnCust.id, thans: g.rows.length, yards: totalYards, amount: credit.amount, rate: credit.rate });
+      booked.push({ customer: returnCust.name, customerId: returnCust.id, thans: g.rows.length, yards: totalYards, amount: credit.amount, rate: credit.rate, key: retRate.buyerKey(g.buyer) });
     }
+    await storeBookedCredit(requestId, aj, booked.map((b) => ({ key: b.key, customer: b.customer || '', amount: retRate.round2(b.amount) })));
     creditNote = `↩️ Credited ${notes.join(' · ')}.`;
     if (drifts.length) rateNote = [rateNote, ...drifts].filter(Boolean).join('\n');
     if (skipped.length) {

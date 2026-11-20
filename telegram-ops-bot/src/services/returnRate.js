@@ -236,14 +236,44 @@ function creditByBuyer(aj, fills) {
 function priceRows(aj, rows, buyer) {
   const used = new Map();
   const bk = buyerKey(buyer || {});
+  let noCredit = 0;
+  let unpriced = 0;
   const priced = (rows || []).map((r) => {
     if (Number(r && r.pricePerYard) > 0) return r;
     const f = fillFor(aj, gapKey(bk, (buyer && buyer.design) || (r && r.design)));
     const rate = fillRate(f);
     if (f) used.set(f.key, f);
-    return rate > 0 ? { ...r, pricePerYard: rate } : r;
+    if (rate > 0) return { ...r, pricePerYard: rate };
+    // Review 2 (R2-2) — a than left at nothing ON PURPOSE (`⏭ No credit for
+    // these`, signed by the admins) is not a books failure; one with no
+    // fill at all still is.
+    if (f && f.noCredit) noCredit += 1; else unpriced += 1;
+    return r;
   });
-  return { rows: priced, used: [...used.values()] };
+  return { rows: priced, used: [...used.values()], noCredit, unpriced };
+}
+
+/**
+ * Review 2 (R2-2) — true when a buyer's credit is zero because the admins
+ * chose it: every than left without a rate is covered by a `noCredit` fill.
+ * @param {Array<{noCredit:number, unpriced:number}>} parts priceRows results
+ */
+function noCreditChosen(parts) {
+  const list = Array.isArray(parts) ? parts : [parts];
+  const nc = list.reduce((s, p) => s + ((p && p.noCredit) || 0), 0);
+  const up2 = list.reduce((s, p) => s + ((p && p.unpriced) || 0), 0);
+  return nc > 0 && up2 === 0;
+}
+
+/**
+ * Review 2 (R2-4) — the credit the executor booked for one buyer, as stored
+ * on the request at execution (`actionJSON.creditBooked`), or null when the
+ * request carries none (not executed, or executed before the field).
+ */
+function bookedFor(aj, key) {
+  const list = Array.isArray(aj && aj.creditBooked) ? aj.creditBooked : [];
+  const hit = list.find((b) => b && String(b.key) === String(key));
+  return hit && Number.isFinite(Number(hit.amount)) ? round2(hit.amount) : null;
 }
 
 /**
@@ -296,6 +326,8 @@ module.exports = {
   signedPrintProblem,
   creditByBuyer,
   priceRows,
+  noCreditChosen,
+  bookedFor,
   stepState,
   amountText,
   round2,

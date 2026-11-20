@@ -138,9 +138,27 @@ function get(userId) {
   return s;
 }
 
+// A session REPLACED by another flow's set() (the person opened something
+// else while it was live) dies without clear() and without expiring: no
+// janitor ever sees it. A flow whose screen must not keep looking live
+// registers here and is told (RET-8 review 2, R2-5). Listeners only observe;
+// each runs inside try/catch and never blocks the set.
+const _replacedListeners = [];
+
+/** Observe a live session being replaced by a different flow's set(). cb(userId, previous, next). */
+function onReplaced(cb) {
+  if (typeof cb === 'function' && !_replacedListeners.includes(cb)) _replacedListeners.push(cb);
+}
+
 function set(userId, data) {
   const ttl = _ttlFor(data);
+  const prev = _replacedListeners.length ? sessions.get(String(userId)) : null;
   sessions.set(String(userId), { ...data, _setAt: Date.now(), expiresAt: Date.now() + ttl });
+  if (prev && Date.now() <= prev.expiresAt && (prev.type !== (data && data.type) || prev.step !== (data && data.step))) {
+    for (const cb of _replacedListeners) {
+      try { cb(String(userId), prev, data); } catch (_) { /* listeners never break flows */ }
+    }
+  }
   if (_onSetObserver) {
     try { _onSetObserver(String(userId), data); } catch (_) { /* observers never break flows */ }
   }
@@ -223,6 +241,6 @@ module.exports = {
   get, set, clear, touch,
   getLastSessionHint, clearLastSessionHint,
   sweepExpired, drainExpiredForCleanup, onExpiredByRead,
-  onSet, onExpired, onCleared,
+  onSet, onExpired, onCleared, onReplaced,
   DEFAULT_TTL_MS,
 };
