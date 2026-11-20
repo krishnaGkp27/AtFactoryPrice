@@ -56,18 +56,80 @@ function looksLikeThanList(raw) {
   return /^sell\s+(?:(?:packages?|bales?|pkgs?|no\.?|numbers?)\s+)?\d{2,}(?:\s*(?:,|\band\b|\s)\s*\d{2,})*(?:\s|$|,)/i.test(t);
 }
 
+/** Words that follow a COUNT, never a bale number: "Return 5 bales of 9006". */
+const COUNT_WORD = /^(?:bales?|thans?|yards?|yds?|pcs?|pieces?|packages?|pkgs?|rolls?)\b/i;
+/** Words in front of the numbers that carry no meaning: "package", "the goods". */
+const LEAD_NOISE = /^(?:(?:the|a|an)\s+)?(?:packages?|bales?|pkgs?|goods|no\.?|numbers?)\b[\s:.#-]*/i;
+const NOISE_WORD = /^(?:the|a|an|packages?|bales?|pkgs?|goods|no\.?|numbers?|thans?)$/i;
+
 /**
- * RET-5 — a typed RETURN line: `Return 771, 779, 6189/5`. Unlike the sell
- * line a bare-only list qualifies (every typed return goes through the
- * review card — owner ruling R4, 20-Oct-2026), so the only requirement is
- * the verb and at least one number.
+ * RET-6 (owner, 20-Nov-2026 — Abdul's three lines all got the chips card:
+ * `Return 631/1+2+3+4+5,614/1 to Idumota`, the same with `package` in
+ * front, and `Return package from soldier madam 631/… to Idumota`) — take a
+ * typed RETURN line apart: the verb, the words in front of the numbers
+ * (`package`, `from <buyer>`), and the list with whatever follows it.
+ *
+ * In a return the small words mean the OPPOSITE of a sale: `from` names the
+ * buyer the goods come back from, `to` / `at` / `in` the store they come
+ * back to. Neither is ever trusted — the flow checks both against the sale
+ * record and says so on the card when they differ.
+ *
+ * @param {string} raw
+ * @returns {{from:string, body:string}|null} null when no number list opens
+ *   the line once those words are set aside.
+ */
+function splitReturnLine(raw) {
+  let t = String(raw || '').trim();
+  const verb = t.match(/^return(?:s|ed|ing)?\b[\s:,-]*/i);
+  if (!verb) return null;
+  t = t.slice(verb[0].length);
+  // The worded forms, rewritten into the list grammar (R4 — they open the
+  // same card): "than 2 from bale 5801" · "thans 1+2 of package 631" →
+  // `5801/2` · `631/1+2`; and "bale 631 than 3" → `631/3`.
+  t = t.replace(/\bthans?\s+(\d+(?:\s*[+-]\s*\d+)*)\s+(?:from|of|in)\s+(?:the\s+)?(?:(?:packages?|bales?|pkgs?)\s+)?(?:(?:no\.?|numbers?)\s+)?(\d+)\b/gi,
+    (_m, spec, bale) => `${bale}/${spec.replace(/\s+/g, '')}`);
+  t = t.replace(/\b(\d+)\s+thans?\s+(\d+(?:\s*[+-]\s*\d+)*)(?![\d/])/gi,
+    (_m, bale, spec) => `${bale}/${spec.replace(/\s+/g, '')}`);
+  const dropNoise = () => { let prev; do { prev = t; t = t.replace(LEAD_NOISE, ''); } while (t !== prev); };
+  dropNoise();
+  // "from <buyer>" in front of the numbers.
+  let from = '';
+  const m = t.match(/^from\s+([^\d,]*?)[\s:,-]*(?=\d)/i);
+  if (m) {
+    const words = m[1].trim().split(/\s+/).filter(Boolean);
+    while (words.length && NOISE_WORD.test(words[words.length - 1])) words.pop();   // "from soldier madam package 631"
+    while (words.length && NOISE_WORD.test(words[0])) words.shift();                // "from bale 5801"
+    from = words.join(' ');
+    t = t.slice(m[0].length);
+  }
+  dropNoise();
+  if (!/^\d/.test(t)) return null;
+  return { from, body: t };
+}
+
+/** Does `body` open with a list item — and not with a count ("5 bales of 9006")? */
+function opensWithList(body) {
+  if (/^\d+\s*\/\s*\d/.test(body)) return true;        // 631/1…
+  if (/^\d+\s*[xX]\s*\d+/.test(body)) return true;     // 771 x3
+  if (/^[\d\s,/+xX-]*$/.test(body)) return true;       // the pure list, as since RET-5
+  const bare = body.match(/^(\d{2,})\b[\s,]*([\s\S]*)$/); // a bale of two digits or more…
+  return !!bare && !COUNT_WORD.test(bare[2]);          // …that is not a count
+}
+
+/**
+ * RET-5 — a typed RETURN line: `Return 771, 779, 6189/5`. A bare-only list
+ * qualifies (every typed return goes through the review card — owner ruling
+ * R4, 20-Oct-2026).
+ *
+ * RET-6 (20-Nov-2026) — the line may also carry words: `package` / `bale`
+ * in front, the buyer (`from Soldier Madam`, before or after the numbers)
+ * and the store (`to Idumota`). The numbers decide; the words are checked
+ * against the sale record on the card. A sentence that opens with a count
+ * ("Return 5 bales of 9006") or has no number list is NOT claimed.
  */
 function looksLikeReturnList(raw) {
-  const t = String(raw || '').trim();
-  // Only the pure list: numbers, commas, `/`, `+`, `-`, `x`. A worded line
-  // ("Return than 2 from Bale 5801") stays with the intent parser, which
-  // redirects into the same card (R4).
-  return /^return\s+\d[\d\s,/+x-]*$/i.test(t);
+  const split = splitReturnLine(raw);
+  return !!split && opensWithList(split.body);
 }
 
 /**
@@ -200,7 +262,10 @@ function parseThanList(raw) {
   let commaThanHint = false;
   let ignoredDate = '';
 
-  const body = text.replace(/^(?:sell|return)\b/i, ' ');
+  // RET-6 — a return line is taken apart first: the buyer may stand in
+  // front of the numbers, and its small words mean the opposite of a sale's.
+  const ret = /^return/i.test(text) ? splitReturnLine(text) : null;
+  const body = ret ? ` ${ret.body}` : text.replace(/^(?:sell|return)\b/i, ' ');
   const segments = body.split(/,|\band\b/i).map((s) => s.trim()).filter(Boolean);
 
   const take = (got) => {
@@ -273,6 +338,22 @@ function parseThanList(raw) {
       if (!ignoredDate) [ignoredDate] = d;
       tail = tail.replace(d[0], ' ').replace(/\s+/g, ' ').trim();
     }
+    if (ret) {
+      // RET-6 — `to` / `at` / `in` / `@` names the STORE, `from` the BUYER.
+      const clean = (v) => String(v || '').replace(NOISE, ' ').replace(/\s+/g, ' ').trim();
+      const storeM = tail.match(/(?:\bto\b|\binto\b|\bat\b|\bin\b|@)\s*([A-Za-z][A-Za-z\s.'-]*?)(?=\s+from\b|$)/i);
+      const custM = tail.match(/\bfrom\s+([A-Za-z][A-Za-z\s.'-]*?)(?=\s+(?:to|into|at|in)\b|\s*@|$)/i);
+      let rest = tail;
+      if (storeM) rest = rest.replace(storeM[0], ' ');
+      if (custM) rest = rest.replace(custM[0], ' ');
+      return {
+        items, warehouseHint: '', bad, commaThanHint, ignoredCustomer: '', ignoredDate,
+        isReturn: true,
+        returnFrom: ret.from || (custM ? clean(custM[1]) : ''),
+        returnTo: storeM ? clean(storeM[1]) : '',
+        returnOther: clean(rest.replace(/@/g, ' ')),
+      };
+    }
     const cust = tail.match(/\bto\s+([A-Za-z][A-Za-z\s.'-]*)/i);
     if (cust) ignoredCustomer = cust[1].trim();
     // `@` is not a word character, so it needs its own alternative — a
@@ -289,7 +370,13 @@ function parseThanList(raw) {
     }
   }
 
+  if (ret) {
+    return {
+      items, warehouseHint: '', bad, commaThanHint, ignoredCustomer: '', ignoredDate,
+      isReturn: true, returnFrom: ret.from, returnTo: '', returnOther: '',
+    };
+  }
   return { items, warehouseHint, bad, commaThanHint, ignoredCustomer, ignoredDate };
 }
 
-module.exports = { parseThanList, looksLikeThanList, looksLikeReturnList, looksLikeTransferLine, _internals: { parseThanSpec } };
+module.exports = { parseThanList, looksLikeThanList, looksLikeReturnList, looksLikeTransferLine, _internals: { parseThanSpec, splitReturnLine } };

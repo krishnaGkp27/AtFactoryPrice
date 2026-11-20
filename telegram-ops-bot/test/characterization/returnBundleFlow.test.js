@@ -184,7 +184,8 @@ test('R4: the old "Return than 2 from Bale 779" intent opens the same review car
   } finally { intentResult = { action: 'unknown', confidence: 0 }; }
   const text = lastText(bot).replace(/\\/g, '');
   assert.match(text, /↩️ \*Return\* · 🏭 Lagos\n📦 1t · 30 yd\n\n👤 Kafaya · 1t · 30 yd\n9060-A\n Shade 01\n {2}1\. 779\/2 · 30 yd/);
-  assert.match(text, /ℹ️ I ignored "Benduku" — the buyer comes from the sale record\./);
+  // RET-6 — the typed buyer is CHECKED against the sale record and the difference is said.
+  assert.match(text, /⚠️ You wrote "from Benduku"\. The sale record names another buyer: 779 → Kafaya\. The credit goes to the buyer on the sale record\./);
   assert.equal(sessionStore.get(EMP).type, 'return_bundle_flow');
 });
 

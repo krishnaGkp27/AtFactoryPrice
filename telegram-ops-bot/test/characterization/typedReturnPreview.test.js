@@ -105,7 +105,7 @@ test('RET-5 (R4): every typed return intent opens the multi-bale review card —
   await controller.handleMessage(bot, message('Return than 2 from Bale P3 from Benduku'));
   const t2 = bot.allText().replace(/\\/g, '');
   assert.match(t2, /👤 Alhaji Musa · 1t · 60 yd[\s\S]*P3\/2 · 60 yd/, 'the than belongs to Alhaji Musa whatever the line claimed');
-  assert.match(t2, /ℹ️ I ignored "Benduku"/);
+  assert.match(t2, /⚠️ You wrote "from Benduku"\. The sale record names another buyer: P3 → Alhaji Musa\./);
   intentResult = { action: 'unknown', confidence: 0 };
 });
 

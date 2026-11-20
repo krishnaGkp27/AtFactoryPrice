@@ -126,8 +126,10 @@ test('looksLikeReturnList: a "Return …" line with a number, bare bales include
   assert.equal(looksLikeReturnList('Return 771, 779, 6189/5'), true);
   assert.equal(looksLikeReturnList('return 771'), true);
   assert.equal(looksLikeReturnList('Return 771 x3, 6189/1+2'), true);
-  assert.equal(looksLikeReturnList('Return than 2 from Bale 5801'), false, 'a worded line is the intent parser\'s');
-  assert.equal(looksLikeReturnList('Return 771 from Kafaya'), false);
+  // RET-6 (20-Nov-2026): the worded line and a line with the buyer are read
+  // locally too — with the AI off (TXT-1) they had nowhere else to go.
+  assert.equal(looksLikeReturnList('Return than 2 from Bale 5801'), true);
+  assert.equal(looksLikeReturnList('Return 771 from Kafaya'), true);
   assert.equal(looksLikeReturnList('returned goods from kafaya'), false);
   assert.equal(looksLikeReturnList('Return the goods'), false);
   assert.equal(looksLikeReturnList('sell 771'), false);
@@ -140,7 +142,10 @@ test('parseThanList strips the return verb and reads bare bales, thans and x-cou
     { packageNo: '6210', thans: [1, 2] }, { packageNo: '700', count: 3 },
   ]);
   assert.equal(out.warehouseHint, '');
-  assert.equal(parseThanList('Return 771 from Kafaya').warehouseHint, 'Kafaya', 'a trailing name surfaces so the flow can say it ignored it');
+  // RET-6 — in a return "from <name>" is the BUYER (it was read with the
+  // sale's meaning, as a store); the flow checks it against the sale record.
+  assert.equal(parseThanList('Return 771 from Kafaya').returnFrom, 'Kafaya');
+  assert.equal(parseThanList('Return 771 from Kafaya').warehouseHint, '');
 });
 
 // ── TRF-23 — the typed transfer line is read locally (owner's Go, 31-Oct-2026)
@@ -349,4 +354,68 @@ test('a than range that cannot be read is REPORTED after a comma too, never load
   // A readable range is unchanged.
   assert.deepEqual(parseThanList('sell 1082, 1100/1-3').items,
     [{ packageNo: '1082' }, { packageNo: '1100', thans: [1, 2, 3] }]);
+});
+
+// ── RET-6 (owner, 20-Nov-2026) — Abdul's three lines all got the chips card ──
+
+test('RET-6: the return line may carry "package", the buyer and the store', () => {
+  const lines = [
+    'Return 631/1+2+3+4+5,614/1 to Idumota',
+    'Return package 631/1+2+3+4+5,614/1 to Idumota',
+    'Return package from soldier madam 631/1+2+3+4+5,614/1 to Idumota',
+  ];
+  for (const l of lines) {
+    assert.equal(looksLikeReturnList(l), true, l);
+    const out = parseThanList(l);
+    assert.deepEqual(out.items, [{ packageNo: '631', thans: [1, 2, 3, 4, 5] }, { packageNo: '614', thans: [1] }], l);
+    assert.deepEqual(out.bad, [], l);
+    assert.equal(out.isReturn, true);
+    assert.equal(out.returnTo, 'Idumota', l);
+    assert.equal(out.ignoredCustomer, '', 'a return\'s "to" is the store, never a customer');
+    assert.equal(out.warehouseHint, '');
+  }
+  assert.equal(parseThanList(lines[0]).returnFrom, '');
+  assert.equal(parseThanList(lines[2]).returnFrom, 'soldier madam');
+});
+
+test('RET-6: the buyer and the store are read wherever they stand; a date is set aside', () => {
+  const a = parseThanList('Return 631/1 from Soldier Madam to Kano office 18 Nov');
+  assert.deepEqual(a.items, [{ packageNo: '631', thans: [1] }]);
+  assert.equal(a.returnFrom, 'Soldier Madam');
+  assert.equal(a.returnTo, 'Kano office');
+  assert.equal(a.ignoredDate, '18 Nov');
+  const b = parseThanList('Return 771 from Kafaya');
+  assert.deepEqual(b.items, [{ packageNo: '771' }]);
+  assert.equal(b.returnFrom, 'Kafaya');
+  assert.equal(b.returnTo, '');
+  const c = parseThanList('Return 631/1 @ Idumota');
+  assert.equal(c.returnTo, 'Idumota');
+  const d = parseThanList('Return 771, 779 idumota');
+  assert.deepEqual(d.items, [{ packageNo: '771' }, { packageNo: '779' }]);
+  assert.equal(d.returnOther, 'idumota', 'a bare word is handed to the flow, which decides store or buyer');
+  assert.equal(d.returnTo, '');
+  const e = parseThanList('Return from bale 5801');
+  assert.deepEqual(e.items, [{ packageNo: '5801' }]);
+  assert.equal(e.returnFrom, '', '"bale" is not a buyer');
+});
+
+test('RET-6: the worded forms become list items; a count is never a bale', () => {
+  assert.deepEqual(parseThanList('Return than 2 from Bale 5801').items, [{ packageNo: '5801', thans: [2] }]);
+  assert.deepEqual(parseThanList('Return thans 1+2 of package 631').items, [{ packageNo: '631', thans: [1, 2] }]);
+  assert.deepEqual(parseThanList('Return bale 631 than 3 and 614 than 1').items,
+    [{ packageNo: '631', thans: [3] }, { packageNo: '614', thans: [1] }]);
+  for (const l of ['Return 5 bales of 9006 from ABBA', 'Return 12 thans of bale 631', 'Return the goods',
+    'returned goods from kafaya', 'Return than 2 and 3 from bale 5801', 'Return to Idumota', 'sell 771']) {
+    assert.equal(looksLikeReturnList(l), false, l);
+  }
+  // the pure list is untouched
+  assert.deepEqual(parseThanList('Return 771, 779, 6189/5').items, [{ packageNo: '771' }, { packageNo: '779' }, { packageNo: '6189', thans: [5] }]);
+  assert.equal(parseThanList('Return 771, 779, 6189/5').returnOther, '');
+});
+
+test('RET-6: a SELL line keeps its own meaning of "to" and "from"', () => {
+  const out = parseThanList('Sell 1100/1, 1091/1 from kano office to karibullah');
+  assert.equal(out.warehouseHint, 'kano office');
+  assert.equal(out.ignoredCustomer, 'karibullah');
+  assert.equal(out.isReturn, undefined);
 });
