@@ -447,3 +447,90 @@ test('final check: every ledger entry refused and a than skipped — the skipped
     assert.match(reply, /FAILED/);
   } finally { accountingService.recordReturn = realRecord; }
 });
+
+// ── Final review (20-Nov-2026) ─────────────────────────────────────────────
+
+test('final review F1: return_bundle — a refused ledger entry is never announced as "credited X, not Y"', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = seed(bundleAJ());
+  const realRecord = accountingService.recordReturn;
+  accountingService.recordReturn = async () => { throw new Error('ledger down'); };
+  try {
+    const { reply } = await typedThenSecond(bot, id, ['1450'], async () => {
+      fake._store.get('Inventory').find((x) => x[0] === '9301' && x[5] === '1')[11] = 'Other Guy';
+    });
+    assert.equal(statusOf(id), 'approved');
+    assert.equal(CREDITS.length, 0);
+    assert.match(reply, /FAILED/);
+    assert.doesNotMatch(reply, /credited [\d,]+, not the/);
+  } finally { accountingService.recordReturn = realRecord; }
+});
+
+test('final review F1: return_thans — a refused ledger entry is never announced as "credited X, not Y"', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = seed(thansAJ());
+  const realRecord = accountingService.recordReturn;
+  accountingService.recordReturn = async () => { throw new Error('ledger down'); };
+  try {
+    const { reply } = await typedThenSecond(bot, id, ['1450'], async () => {
+      fake._store.get('Inventory').find((x) => x[0] === '5801' && x[5] === '2')[11] = 'Other Guy';
+    });
+    assert.equal(statusOf(id), 'approved');
+    assert.equal(CREDITS.length, 0);
+    assert.match(reply, /FAILED/);
+    assert.doesNotMatch(reply, /credited [\d,]+, not the/);
+  } finally { accountingService.recordReturn = realRecord; }
+});
+
+test('final review F1: a credit that posted short is still named', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = seed(bundleAJ());
+  const { reply } = await typedThenSecond(bot, id, ['1450'], async () => {
+    fake._store.get('Inventory').find((x) => x[0] === '9301' && x[5] === '1')[11] = 'Other Guy';
+  });
+  assert.match(reply, /solder madam: credited 87,000, not the 117,000 the approvals were given for/);
+});
+
+test('final review F2: a decided record never projects the live outstanding for a buyer with no gap', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = seed(bundleAJ([SOLDER[0], SOLDER[1], ABBA_RATED]));
+  await typedThenSecond(bot, id, ['1450']);
+  assert.equal(statusOf(id), 'approved');
+  const record = plain(await approvalCards.buildCardFromActionJSON(jsonOf(id), { decided: true }));
+  assert.match(record, /💰 ABBA 30,000/);
+  assert.doesNotMatch(record, /outstanding/i);
+  const waiting = plain(await approvalCards.buildCardFromActionJSON(bundleAJ([ABBA_RATED])));
+  assert.match(waiting, /💰 ABBA 30,000 · outstanding 500,000 → 470,000/, 'a waiting card keeps the projection');
+  const thans = thansAJ({ pricePerYard: 1000, thanRates: [{ thanNo: 1, yards: 30, rate: 1000 }, { thanNo: 2, yards: 30, rate: 1000 }] });
+  assert.doesNotMatch(plain(await approvalCards.buildCardFromActionJSON(thans, { decided: true })), /Outstanding/);
+  assert.match(plain(await approvalCards.buildCardFromActionJSON(thans)), /Outstanding 500,000 → 440,000/);
+});
+
+test('final review F3: rated and filled parts rounded apart never open a 1-kobo drift', () => {
+  const aj = {
+    action: 'return_bundle',
+    items: [
+      { packageNo: '1', thanNo: 1, design: 'D', customer: 'A', customerId: 'CA', yards: 27.5, pricePerYard: 73.1 },
+      { packageNo: '1', thanNo: 2, design: 'D', customer: 'A', customerId: 'CA', yards: 13.25, pricePerYard: 0 },
+    ],
+  };
+  aj.rateFill = rr.buildFills(rr.gapsOf(aj), [{ rate: 12.34 }]);
+  const posted = 27.5 * 73.1 + 13.25 * 12.34;
+  assert.equal(rr.driftNote(aj, { customer: 'A', customerId: 'CA' }, posted), '');
+  assert.equal(rr.creditByBuyer(aj)[0].total, rr.round2(posted));
+});
+
+test('final review F4: `price 1,450` keeps the step, as `1,450` and `price 1450` do', async () => {
+  reset();
+  const bot = createFakeBot();
+  seed(bundleAJ());
+  const id = fake._store.get('ApprovalQueue').slice(-1)[0][0];
+  await openStep(bot, A1, id);
+  await controller.handleMessage(bot, msg(A1, 'price 1,450'));
+  const s = sessionStore.get(A1);
+  assert.ok(s && s.step === 'admin_rate', 'the step stays open');
+});

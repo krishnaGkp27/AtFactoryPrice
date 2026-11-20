@@ -651,7 +651,9 @@ async function buildReturnThansCard(aj, opts = {}) {
     // CUR-1 C3 — a sale reversed at the booked Inventory rate: side B, bare.
     text += `\n💰 Credits ${aj.customer || 'the buyer'} ${money.sale(amount)}`
       + ` (${fmtQty(yards)} yd × ${money.saleRate(Math.round(rate))})`;
-    try {
+    // Final review — a decided record never projects the live balance: the
+    // ledger already holds the credit, so the arrow would subtract it twice.
+    if (!opts.decided) try {
       const { outstandingAsOfToday } = await require('./accountingService').getCustomerLedger(aj.customer);
       const now = Number(outstandingAsOfToday);
       // Omitted rather than degraded when the ledger read fails or hands back
@@ -912,7 +914,9 @@ async function buildReturnBundleCard(aj, opts = {}) {
     }
     if (amount > 0) {
       let line = `\n💰 ${who} ${money.sale(amount)}`;
-      try {
+      // Final review — no live-balance projection on a decided record (the
+      // ledger already holds the credit; returnRateLines does the same).
+      if (!opts.decided) try {
         const { outstandingAsOfToday } = await require('./accountingService').getCustomerLedger(g.customer);
         const now = Number(outstandingAsOfToday);
         if (Number.isFinite(now)) line += ` · outstanding ${money.sale(now)} → ${money.sale(now - amount)}`;

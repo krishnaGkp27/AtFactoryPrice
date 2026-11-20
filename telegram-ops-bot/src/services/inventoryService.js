@@ -693,6 +693,7 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     const priced = retRate.priceRows(aj, results, { customer: aj.customer, customerId: aj.customerId, design: aj.design });
     const credit = returnCreditFor({}, priced.rows);
     rateNote = rateNoteFor(aj, priced.used);
+    let thansDrift = () => null;
     {
       // Review 1 (R1-2) — a gap than whose sale row has gained a rate since
       // the raise is credited at that rate, not the fill: say so when the
@@ -701,8 +702,10 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       const ownRate = results
         .filter((r) => storedRate.has(String(r.thanNo)) && !(storedRate.get(String(r.thanNo)) > 0) && Number(r.pricePerYard) > 0)
         .map((r) => ({ tok: `${aj.packageNo}/${r.thanNo}`, rate: Number(r.pricePerYard) }));
-      const drift = retRate.driftNote(aj, { customer: aj.customer, customerId: aj.customerId }, credit.amount, ownRate);
-      if (drift) rateNote = rateNote ? `${rateNote}\n${drift}` : drift;
+      // Final review — the drift line ("credited X, not Y") is said only
+      // once the ledger entry went through (below); a refused entry is
+      // named by the FAILED list, never as a credit.
+      thansDrift = () => retRate.driftNote(aj, { customer: aj.customer, customerId: aj.customerId }, credit.amount, ownRate);
     }
     await transactionsRepository.append({
       user: item.user, action: 'return_thans', design: results[0]?.design, color: results[0]?.shade,
@@ -733,6 +736,10 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       }
       else await recordErpFailure('return credit (return_thans)', new Error(`no rate on record for Bale ${aj.packageNo} thans ${thanNos.join(', ')} — stock returned, credit NOT posted; post it manually`));
     } catch (e) { await recordErpFailure('return credit (return_thans)', e); }
+    if (postedThans) {
+      const drift = thansDrift();
+      if (drift) rateNote = rateNote ? `${rateNote}\n${drift}` : drift;
+    }
     // Review 3 (R3-6) — stored as booked only when the ledger entry went through.
     await storeBookedCredit(requestId, aj, [{ key: retRate.buyerKey({ customer: aj.customer, customerId: aj.customerId }), customer: returnCust.name || aj.customer || '', amount: postedThans ? retRate.round2(credit.amount) : 0, ...(postedThans ? {} : { failed: true }) }]);
     if (skipped.length) {
@@ -834,8 +841,6 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       const returnCust = await resolveReturnCustomer(g.name);
       const totalYards = g.rows.reduce((sum, t) => sum + (Number(t.yards) || 0), 0);
       const credit = returnCreditFor({}, g.rows);
-      const drift = retRate.driftNote(aj, g.buyer, credit.amount, g.ownRate);
-      if (drift) drifts.push(drift);
       const pkgs = [...new Set(g.rows.map((t) => String(t.packageNo)))];
       await transactionsRepository.append({
         user: item.user, action: 'return_bundle', design: g.rows[0]?.design, color: g.rows[0]?.shade,
@@ -860,6 +865,12 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
           notes.push({ credited: false, text: `${returnCust.name || 'the buyer'}: no rate on record — NO credit posted` });
         }
       } catch (e) { await recordErpFailure('return credit (return_bundle)', e); }
+      // Final review — the drift line only for a credit that posted; a
+      // refused entry is named by the FAILED list, never as "credited".
+      if (posted) {
+        const drift = retRate.driftNote(aj, g.buyer, credit.amount, g.ownRate);
+        if (drift) drifts.push(drift);
+      }
       booked.push({ customer: returnCust.name, customerId: returnCust.id, thans: g.rows.length, yards: totalYards, amount: posted ? credit.amount : 0, rate: credit.rate, key: retRate.buyerKey(g.buyer), ...(posted ? {} : { failed: true }) });
     }
     // Review 3 (R3-5) — a buyer the approvals gave a credit for whose thans

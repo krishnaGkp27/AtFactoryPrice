@@ -120,7 +120,11 @@ Requests raised from 20-Nov-2026 carry these facts on the request itself. A
 return raised BEFORE it and still waiting gets them from the stock sheet when
 the card is drawn (one read; if the read fails, the card prints as before). A
 DECIDED request (✅❌ Decided in 🛂 Approvals, the ↩️ Revert card) prints only
-what was stored — it never reads live stock.
+what was stored — it never reads live stock. So a return raised before
+20-Nov-2026 and decided after it prints than by than on its record, as before
+(its header keeps the bale count stored when it was raised). A decided record
+never projects the outstanding balance either: the ledger already holds the
+credit.
 
 ## 4. CARD-9 — the approval message, every request type
 

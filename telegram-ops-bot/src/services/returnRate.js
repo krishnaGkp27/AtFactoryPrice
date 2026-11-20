@@ -219,9 +219,11 @@ function creditByBuyer(aj, fills) {
   // for is the figure that posts (`amountText` prints the decimals when
   // there are any).
   for (const b of out) {
+    // Final review — the total from the UNROUNDED parts (as the executor
+    // sums them), so rounding the parts first never opens a 1-kobo gap.
+    b.total = round2(b.rated + b.filled);
     b.rated = round2(b.rated);
     b.filled = round2(b.filled);
-    b.total = round2(b.rated + b.filled);
   }
   return out.sort((a, b) => String(a.customer).localeCompare(String(b.customer)));
 }
@@ -312,7 +314,8 @@ function driftNote(aj, buyer, posted, ownRate = []) {
   if (!fillsOf(aj).length) return '';
   const b = creditByBuyer(aj).find((x) => x.key === buyerKey(buyer || {}));
   if (!b) return '';
-  if (Math.abs(round2(posted) - b.total) < 0.01) return '';
+  // Final review — float sums in another order may round a kobo apart.
+  if (Math.abs(round2(posted) - b.total) <= 0.01 + 1e-9) return '';
   const who = (buyer && (buyer.customer || buyer.soldTo)) || b.customer || 'the buyer';
   const why = (ownRate || []).length
     ? ` — ${ownRate.map((o) => `${o.tok} now carries its own rate on the sale record (${money.saleRate(o.rate, { fraction: Number.isInteger(Number(o.rate)) ? 0 : 2 })})`).join(', ')}, and a recorded rate is always used`

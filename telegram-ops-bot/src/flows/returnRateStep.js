@@ -717,7 +717,9 @@ function opensAnotherDoor(text) {
   // Review 3 (R3-4) — `price 1450` / `rate 1450` is an answer to "the rate
   // per yard": the step keeps it (the hint). `Price 9006 black 1500` is
   // still the price door.
-  if ((first === 'price' || first === 'rate') && words.length === 2 && parseRateNumber(words[1]) !== null) return false;
+  // Final review — `price 1,450` (the card's own comma form) is kept too.
+  const num = words.length === 2 && /^\d{1,3}(,\d{3})+(\.\d+)?$/.test(words[1]) ? words[1].replace(/,/g, '') : words[1];
+  if ((first === 'price' || first === 'rate') && words.length === 2 && parseRateNumber(num) !== null) return false;
   // Review 3 (R3-7) — every line that opens with Return / Returns /
   // Returned belongs to the one return door (RET-7), and a typed customer
   // line (CUS-4) to ➕ Add Contact: neither is a try at the rate.
