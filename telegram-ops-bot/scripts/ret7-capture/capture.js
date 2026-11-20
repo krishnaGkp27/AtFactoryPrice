@@ -10,7 +10,7 @@
  *
  * Scenes (one process, one workbook, in this order; the session is cleared
  * between scenes, as a fresh typed line does):
- *   one    Abdul types the one line `Return 631/1+2+3+4+5, 614/1` and walks
+ *   one    Abdul types the one line `Return 631/1+2+3, 614` (page 1's) and walks
  *          the whole return: ✅ Continue → 📅 Today → ✅ Good → ⏭ Skip photo
  *          → the confirm card → ✅ Submit for approval → his receipt.
  *   old    His three lines of 20-Nov (words around the numbers) → the
@@ -19,6 +19,8 @@
  *   wrong  `Return 631-635` → the card with ❓ Could not read.
  *   add    `Return 631/1+2+3+4+5`, then he types `614/1` (added) and then
  *          `700 to Idumota` (refused: ❓ Numbers only here).
+ *   stale  A card left open, then an old line: as is, after /menu, after
+ *          ❌ Cancel (only Cancel gives the one-way card — the sheet's Row 0).
  *   cancel The one line again, up to the confirm card, then ❌ Cancel —
  *          what the test sheet asks him to do (nothing is submitted).
  *
@@ -217,7 +219,7 @@ async function sceneOne() {
   newScene();
   at('10:00:00');
   const before = invStatus();
-  await types('one_line', ABDUL, 'Return 631/1+2+3+4+5, 614/1');
+  await types('one_line', ABDUL, 'Return 631/1+2+3, 614');
   await taps('one_go', ABDUL, '✅ Continue — date, condition, photo');
   await taps('one_date', ABDUL, /^📅 Today/);
   await taps('one_cond', ABDUL, '✅ Good — back to stock');
@@ -271,11 +273,35 @@ async function sceneAdd() {
   FACTS.add = { bales_after: s ? s.bales.map((b) => b.packageNo) : null };
 }
 
+/**
+ * A return card left open from earlier changes what an old line gives (the
+ * open card reads it first: "❓ Numbers only here"; /menu does not close it
+ * either). The test sheet's Row 0 asks him to tap ❌ Cancel on an open card
+ * first; this scene records what each start gives.
+ */
+async function sceneStale() {
+  FACTS.stale = {};
+  const oneWay = (key) => LOG.some((e) => e.stepKey === key && e.method === 'sendMessage'
+    && /type it one way only/.test(String(e.args[1] || '')));
+  const run = async (tag, between) => {
+    newScene();
+    at('10:35:00');
+    await types(`st_${tag}_open`, ABDUL, 'Return 631/1');
+    if (between) await between(tag);
+    await types(`st_${tag}_old`, ABDUL, OLD_LINES[0]);
+    FACTS.stale[tag] = { one_way_card: oneWay(`st_${tag}_old`), card_open_after: !!sessionStore.get(ABDUL) };
+    sessionStore.clear(ABDUL);
+  };
+  await run('none', null);
+  await run('menu', (tag) => types(`st_${tag}_menu`, ABDUL, '/menu'));
+  await run('cancel', (tag) => taps(`st_${tag}_cx`, ABDUL, '❌ Cancel'));
+}
+
 async function sceneCancel() {
   newScene();
   at('10:40:00');
   const before = queueRows().length;
-  await types('cx_line', ABDUL, 'Return 631/1+2+3+4+5, 614/1');
+  await types('cx_line', ABDUL, 'Return 631/1+2+3, 614');
   await taps('cx_go', ABDUL, '✅ Continue — date, condition, photo');
   await taps('cx_date', ABDUL, /^📅 Today/);
   await taps('cx_cond', ABDUL, '✅ Good — back to stock');
@@ -341,6 +367,7 @@ function visible(all) {
   await sceneWhole();
   await sceneWrong();
   await sceneAdd();
+  await sceneStale();
   await sceneCancel();
 })().then(() => {
   FACTS.ai_asked_total = intentCalls;

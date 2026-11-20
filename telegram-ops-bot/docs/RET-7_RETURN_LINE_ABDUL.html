@@ -132,14 +132,14 @@ code { font-family:"DejaVu Sans Mono",monospace; font-size:.9em; background:#eef
 body { font-size:11pt; line-height:1.4; }
 .pg { page-break-after: always; }
 .pg:last-child { page-break-after: auto; }
-h1 { font-size:28pt; margin:1mm 0 1mm; }
+h1 { font-size:22pt; margin:1mm 0 1mm; }
 h2 { font-size:21pt; color:#0e2a47; margin:0 0 1.4mm; letter-spacing:-.3px; }
 .sub { font-size:12.4pt; color:#22303f; margin-bottom:3mm; }
 .sub2 { font-size:11pt; color:#3d4b59; margin-bottom:3mm; }
 .mono { font-family:"DejaVu Sans Mono",monospace; }
 .bigbox { border:3px solid #1f6fb2; background:#f1f7fd; border-radius:4mm; padding:3mm 5mm 3.4mm; margin-bottom:4mm; }
 .bigl { font-size:11pt; font-weight:800; color:#1f6fb2; text-transform:uppercase; letter-spacing:1px; }
-.big { font-family:"DejaVu Sans Mono",monospace; font-weight:700; font-size:31pt; color:#0e2a47; line-height:1.25; margin:1mm 0 1.4mm; }
+.big { font-family:"DejaVu Sans Mono",monospace; font-weight:800; font-size:38pt; white-space:nowrap; color:#0e2a47; line-height:1.25; margin:1mm 0 1.4mm; }
 .bign { font-size:10.4pt; color:#3d4b59; }
 .two { display:flex; gap:4mm; margin-bottom:4mm; }
 .two .box { padding:3mm 4mm; }
@@ -178,6 +178,8 @@ h2 { font-size:21pt; color:#0e2a47; margin:0 0 1.4mm; letter-spacing:-.3px; }
        background:#1f6fb2; color:#fff; font-weight:900; font-size:10.4pt; }
 .extitle { font-weight:800; font-size:12pt; color:#0e2a47; margin-bottom:1mm; }
 .grid2 .shot .txt { font-size:7.4pt; line-height:1.25; }
+.cols3 .shot .txt { font-size:8.3pt; line-height:1.3; }
+.cols3 .shot .kbtn { font-size:7.6pt; }
 .grid2 .cap.plain { font-size:9.4pt; }
 .grid2 { gap:3mm 6mm; }
 .cxrow { display:flex; gap:5mm; align-items:center; margin-top:2.4mm; border:1.6px solid #1d6fa5; background:#f3f8fd; border-radius:3mm; padding:1.6mm 3mm; break-inside:avoid; }
@@ -185,24 +187,25 @@ h2 { font-size:21pt; color:#0e2a47; margin:0 0 1.4mm; letter-spacing:-.3px; }
 .cxcard { width:72mm; flex:none; }
 .cxt .btitle { margin-bottom:1mm; }
 
-.warn { border:2.6px solid #a3232a; background:#fff1f1; border-radius:3mm; padding:2mm 3.4mm; font-size:10.6pt; font-weight:700; color:#5a1015; margin-bottom:2.4mm; }
+.warn { border:2.6px solid #a3232a; background:#fff1f1; border-radius:3mm; padding:1.6mm 3.4mm; font-size:10pt; font-weight:700; color:#5a1015; margin-bottom:2.4mm; }
 .tt { width:100%; border-collapse:collapse; font-size:9.2pt; line-height:1.25; }
 .tt th { background:#0e2a47; color:#fff; text-align:left; padding:1.4mm 2mm; font-size:9pt; }
-.tt td { border-bottom:1.2px solid #b9c5d0; padding:1.3mm 1.6mm; vertical-align:top; }
+.tt td { border-bottom:1.2px solid #b9c5d0; padding:1mm 1.4mm; vertical-align:top; }
 .tt tr { break-inside:avoid; }
 .tt .tn { width:7mm; font-weight:900; font-size:12pt; color:#0e2a47; }
-.tt .td { width:62mm; } .tt .ts { width:50mm; color:#22303f; }
+.tt .td { width:67mm; } .tt .ts { width:55mm; color:#22303f; }
 .tt .typed { white-space:normal; overflow-wrap:anywhere; }
-.tt .tyn { width:19mm; font-size:9.6pt; white-space:nowrap; } .tt .tyn div { margin-bottom:1.2mm; }
+.tt .tyn { width:17mm; font-size:9.4pt; white-space:nowrap; } .tt .tyn div { margin-bottom:.8mm; }
 .tb { display:inline-block; width:4.4mm; height:4.4mm; border:1.6px solid #0e2a47; border-radius:.8mm; vertical-align:-1mm; margin-right:1mm; background:#fff; }
 .tt .tw { width:auto; }
-.wl { display:block; border-bottom:1px solid #7d8b99; height:8mm; }
+.wl { display:block; border-bottom:1px solid #7d8b99; height:7mm; }
 .used { margin-top:1.6mm; font-weight:700; color:#0e2a47; }
 .blank { display:inline-block; width:34mm; border-bottom:1.4px solid #0e2a47; height:4mm; vertical-align:-1mm; }
-.endrow { display:flex; gap:6mm; align-items:center; margin-top:2.4mm; break-inside:avoid; }
-.sign { display:flex; flex-direction:column; gap:3mm; font-size:11pt; font-weight:700; flex:none; }
-.sigl { display:inline-block; width:62mm; border-bottom:1.4px solid #0e2a47; height:5mm; vertical-align:-1mm; }
-.sendto { flex:1; font-size:12.4pt; font-weight:800; color:#1e8449; border:2.4px solid #1e8449; border-radius:3mm; padding:2.4mm 4mm; background:#f2fbf5; }
+.endrow { display:flex; gap:5mm; align-items:center; margin-top:1.6mm; break-inside:avoid; }
+.sign { display:flex; flex-direction:column; gap:2mm; font-size:11pt; font-weight:700; flex:none; }
+.sigl { display:inline-block; width:52mm; border-bottom:1.4px solid #0e2a47; height:5mm; vertical-align:-1mm; }
+.sendto { flex:1; font-size:11pt; font-weight:800; color:#1e8449; border:2.4px solid #1e8449; border-radius:3mm; padding:1.6mm 3mm; background:#f2fbf5; }
+.noprint { font-size:9.8pt; font-weight:600; color:#14532d; margin-top:1.2mm; }
 </style></head><body>
 <section class="pg">
  <div class="brand">black_panther bot · for Abdul · 20-Nov-2026</div>
@@ -218,7 +221,7 @@ h2 { font-size:21pt; color:#0e2a47; margin:0 0 1.4mm; letter-spacing:-.3px; }
   <div class="box recbox"><div class="btitle">Who is the customer? Which store?</div>
    <p class="rec">“The bot takes the buyer and the store from the sale record.”</p>
    <p>You do not type the customer. You do not type the store. The return card shows them to you. Check them there.</p>
-   <p class="small">Capital letters and extra spaces do not matter. A new line between bales also works.</p>
+   <p class="small">Capital letters and extra spaces do not matter.</p>
   </div>
  </div>
  <div class="dont">
@@ -245,50 +248,48 @@ The bot takes the buyer and the store from the sale record.</div></div><div clas
 <section class="pg">
  <h2>What you will see</h2>
  <div class="sub2">One return, from the line to the receipt. In this example the customer Soldier Madam bought bale 631 (thans 1 to 5) and bale 614 (than 1) from IDUMOTA.</div>
- <div class="cols3"><div class="colm"><div class="cell"><div class="cap"><span class="num">1</span><span>Type <span class="typed">Return 631/1+2+3+4+5, 614/1</span>. The return card opens. Check the customer and every bale line. Then tap <span class="nw"><span class="chip">✅ Continue — date, condition, photo</span>.</span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b> · 🏭 IDUMOTA
-📦 6t · 180 yd
+ <div class="cols3"><div class="colm"><div class="cell"><div class="cap"><span class="num">1</span><span>Type<br><span class='nw'><span class="typed">Return 631/1+2+3, 614</span></span><br>The return card opens. Check the customer and every bale line. Then tap <span class="nw"><span class="chip">✅ Continue — date, condition, photo</span></span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b> · 🏭 IDUMOTA
+📦 4t · 120 yd
 
-👤 Soldier Madam · 6t · 180 yd
+👤 Soldier Madam · 4t · 120 yd
 9043-B
  Shade 4
   1. 631/1 · 30 yd
   2. 631/2 · 30 yd
   3. 631/3 · 30 yd
-  4. 631/4 · 30 yd
-  5. 631/5 · 30 yd
 9043-A
  Shade 7
-  6. 614/1 · 30 yd
+  4. 614/1 · 30 yd
 
-💰 Credits: Soldier Madam 270,000 <i>(at the rates charged)</i></div></div><div class="krow"><div class="kbtn">🔎 Open 631</div><div class="kbtn">🔎 Open 614</div></div><div class="krow"><div class="kbtn">✅ Continue — date, condition, photo</div></div><div class="krow"><div class="kbtn">➕ Add more</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div><div class="cell"><div class="cap"><span class="num">2</span><span>Tap the day the goods came back. Here <span class="nw"><span class="chip">📅 Today (20-Nov-2026)</span>.</span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b>  ·  📦 6t · 180 yd
+📦 Loaded with every sold than: 614 — tap 🔎 Open to drop one.
 
-When did the goods come back?</div></div><div class="krow"><div class="kbtn">📅 Today (20-Nov-2026)</div></div><div class="krow"><div class="kbtn">Yesterday (19-Nov-2026)</div></div><div class="krow"><div class="kbtn">18-Nov-2026</div><div class="kbtn">17-Nov-2026</div></div><div class="krow"><div class="kbtn">16-Nov-2026</div><div class="kbtn">15-Nov-2026</div></div><div class="krow"><div class="kbtn">14-Nov-2026</div></div><div class="krow"><div class="kbtn">📆 Older date — calendar</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div></div><div class="colm"><div class="cell"><div class="cap"><span class="num">3</span><span>Tap how the goods look. Here <span class="nw"><span class="chip">✅ Good — back to stock</span>.</span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b>  ·  📦 6t · 180 yd  ·  📅 20-Nov-2026
+💰 Credits: Soldier Madam 180,000 <i>(at the rates charged)</i></div></div><div class="krow"><div class="kbtn">🔎 Open 631</div><div class="kbtn">🔎 Open 614</div></div><div class="krow"><div class="kbtn">✅ Continue — date, condition, photo</div></div><div class="krow"><div class="kbtn">➕ Add more</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div><div class="cell"><div class="cap"><span class="num">2</span><span>Tap the day the goods came back. Here <span class="nw"><span class="chip">📅 Today (20-Nov-2026)</span></span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b>  ·  📦 4t · 120 yd
+
+When did the goods come back?</div></div><div class="krow"><div class="kbtn">📅 Today (20-Nov-2026)</div></div><div class="krow"><div class="kbtn">Yesterday (19-Nov-2026)</div></div><div class="krow"><div class="kbtn">18-Nov-2026</div><div class="kbtn">17-Nov-2026</div></div><div class="krow"><div class="kbtn">16-Nov-2026</div><div class="kbtn">15-Nov-2026</div></div><div class="krow"><div class="kbtn">14-Nov-2026</div></div><div class="krow"><div class="kbtn">📆 Older date — calendar</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div></div><div class="colm"><div class="cell"><div class="cap"><span class="num">3</span><span>Tap how the goods look. Here <span class="nw"><span class="chip">✅ Good — back to stock</span></span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b>  ·  📦 4t · 120 yd  ·  📅 20-Nov-2026
 
 How do the goods look?
-<i>One condition for the whole line — goods in a different state go as a second return.</i></div></div><div class="krow"><div class="kbtn">✅ Good — back to stock</div></div><div class="krow"><div class="kbtn">⚠️ Damaged</div></div><div class="krow"><div class="kbtn">✂️ Cut / short</div></div><div class="krow"><div class="kbtn">📝 Other — I will type it</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div><div class="cell"><div class="cap"><span class="num">4</span><span>Send one photo of the goods, or tap <span class="nw"><span class="chip">⏭ Skip photo</span>.</span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b>  ·  📅 20-Nov-2026  ·  ✅ Good
+<i>One condition for the whole line — goods in a different state go as a second return.</i></div></div><div class="krow"><div class="kbtn">✅ Good — back to stock</div></div><div class="krow"><div class="kbtn">⚠️ Damaged</div></div><div class="krow"><div class="kbtn">✂️ Cut / short</div></div><div class="krow"><div class="kbtn">📝 Other — I will type it</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div><div class="cell"><div class="cap"><span class="num">4</span><span>Send one photo of the goods, or tap <span class="nw"><span class="chip">⏭ Skip photo</span></span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b>  ·  📅 20-Nov-2026  ·  ✅ Good
 
-📎 Send ONE photo of the goods — the admins see it on the card.</div></div><div class="krow"><div class="kbtn">⏭ Skip photo</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div></div><div class="colm"><div class="cell"><div class="cap"><span class="num">5</span><span>The confirm card. Check it. For a real return tap <span class="nw"><span class="chip">✅ Submit for approval</span>.</span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Confirm return</b> · 🏭 IDUMOTA
+📎 Send ONE photo of the goods — the admins see it on the card.</div></div><div class="krow"><div class="kbtn">⏭ Skip photo</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div></div><div class="colm"><div class="cell"><div class="cap"><span class="num">5</span><span>The confirm card. Check it. For a real return tap <span class="nw"><span class="chip">✅ Submit for approval</span></span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Confirm return</b> · 🏭 IDUMOTA
 📅 Returned <b>20-Nov-2026</b> · ✅ Good — back to stock
 
-👤 Soldier Madam · 6t · 180 yd
+👤 Soldier Madam · 4t · 120 yd
 9043-B
  Shade 4
   1. 631/1 · 30 yd
   2. 631/2 · 30 yd
   3. 631/3 · 30 yd
-  4. 631/4 · 30 yd
-  5. 631/5 · 30 yd
 9043-A
  Shade 7
-  6. 614/1 · 30 yd
+  4. 614/1 · 30 yd
 
-Σ 6t · 180 yd
-💰 Credits: Soldier Madam 270,000 <i>(at the rates charged)</i>
+Σ 4t · 120 yd
+💰 Credits: Soldier Madam 180,000 <i>(at the rates charged)</i>
 
 Approving puts the stock back and credits each customer&#x27;s account.
 Queues dual-admin approval.</div></div><div class="krow"><div class="kbtn">✅ Submit for approval</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div><div class="cell"><div class="cap"><span class="num">6</span><span>Your receipt: “Waiting for two admins to sign.” The stock changes only after two admins approve.</span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return — submitted</b>
 
-📦 6t · 180 yd · Soldier Madam
+📦 4t · 120 yd · Soldier Madam
 
 ⏳ Waiting for two admins to sign.
 Request: <code>7e3a9c51-2b4d-4f86-a1c0-5d9e8b7f6a24</code></div></div><div class="krow"><div class="kbtn">⬅ Back to Move Stock</div><div class="kbtn">🏠 Menu</div></div></div></div></div></div></div>
@@ -361,14 +362,15 @@ Request: <code>7e3a9c51-2b4d-4f86-a1c0-5d9e8b7f6a24</code></div></div><div class
 </section>
 <section class="pg">
  <h2>Test it on the bot</h2>
- <div class="sub2">Type each line in the bot, exactly as written. Do the rows in this order. Tick Yes if the bot shows it, No if not. Write what you saw.</div>
- <div class="warn">⚠️ Do NOT tap <span class="chip">✅ Submit for approval</span> in this test. A submitted return goes to the admins, and when they approve it the stock and the customer's account change. Stop at the confirm card and tap <span class="chip">❌ Cancel</span>.</div>
+ <div class="sub2">Type each line exactly as written, in order, from row 0. Tick Yes or No. Write what you saw.</div>
+ <div class="warn">⚠️ Do NOT tap <span class="chip">✅ Submit for approval</span> in this test — the admins would get a real return. Stop at the confirm card and tap <span class="chip">❌ Cancel</span>.</div>
  <table class="tt">
-  <tr><th>No</th><th>Type or tap this</th><th>You should see</th><th>Did you see it?</th><th>What I saw</th></tr>
-  <tr><td class="tn">1</td><td class="td">Type <span class="typed">Return 631/1+2+3+4+5,614/1 to Idumota</span></td><td class="ts">The card “↩️ Return — type it one way only”. No return card opens.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">2</td><td class="td">Type <span class="typed">Return package 631/1+2+3+4+5,614/1 to Idumota</span></td><td class="ts">The same card as in row 1.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">3</td><td class="td">Type <span class="typed">Return package from soldier madam 631/1+2+3+4+5,614/1 to Idumota</span></td><td class="ts">The same card as in row 1.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">4</td><td class="td">Type <span class="typed">Return 631-635</span>. Then tap <span class="chip">❌ Cancel</span>.</td><td class="ts">A return card with the line “❓ Could not read: -635”. After Cancel: “nothing was queued”.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">5</td><td class="td">Use a bale you sold. Type <span class="typed">Return</span> and the bale number only. Then tap <span class="chip">❌ Cancel</span>.<div class="used">Bale I used: <span class="blank"></span></div></td><td class="ts">The return card with every sold than of that bale, the customer's name, and “📦 Loaded with every sold than”.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">6</td><td class="td">Use bales you sold. Type <span class="typed">Return</span>, one bale with thans, a comma, a whole bale. Like <span class="typed">Return 631/1+2, 614</span>.<div class="used">Line I typed: <span class="blank"></span></div></td><td class="ts">The return card. The customer and the store are the ones from the sale. Each than you typed is one line.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">7</td><td class="td">On that open card, type the number of ONE MORE bale you sold, numbers only.<div class="used">Bale: <span class="blank"></span></div></td><td class="ts">“➕ Added 1 bale.” The new bale is on the card.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">8</td><td class="td">On the open card, type <span class="typed">700 to Idumota</span></td><td class="ts">“❓ Numbers only here” and “Nothing was added.”</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">9</td><td class="td">Tap <span class="chip">✅ Continue — date, condition, photo</span> → <span class='chip'>📅 Today (…)</span> → <span class="chip">✅ Good — back to stock</span> → <span class="chip">⏭ Skip photo</span></td><td class="ts">The card “Confirm return” with the button ✅ Submit for approval. DO NOT TAP IT.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">10</td><td class="td">Tap <span class="chip">❌ Cancel</span></td><td class="ts">“❌ Return cancelled — nothing was queued.”</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr>
+  <tr><th>No</th><th>Type or tap this</th><th>You should see</th><th>Seen?</th><th>What I saw</th></tr>
+  <tr><td class="tn">0</td><td class="td">Is a return card still open in your chat? Tap its <span class="chip">❌ Cancel</span>. No card open: go to row 1.</td><td class="ts">“❌ Return cancelled — nothing was queued.” Or nothing, if no card was open.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">1</td><td class="td">Type <span class="typed">Return 631/1+2+3+4+5,614/1 to Idumota</span></td><td class="ts">The card “↩️ Return — type it one way only”. No return card opens. Got “❓ Numbers only here”? Do row 0, then row 1 again.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">2</td><td class="td">Type <span class="typed">Return package 631/1+2+3+4+5,614/1 to Idumota</span></td><td class="ts">The same card as in row 1.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">3</td><td class="td">Type <span class="typed">Return package from soldier madam 631/1+2+3+4+5,614/1 to Idumota</span></td><td class="ts">The same card as in row 1.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">4</td><td class="td">Type <span class="typed">Return 631-635</span>. Then tap <span class="chip">❌ Cancel</span>.</td><td class="ts">A return card with the line “❓ Could not read: -635”. After Cancel: “nothing was queued”. Bale 631 may show as ⚠️ Not loaded — that is fine.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">5</td><td class="td">Use a bale you sold. Type <span class="typed">Return</span> and the bale number only. Then tap <span class="chip">❌ Cancel</span>.<div class="used">Bale I used: <span class="blank"></span></div></td><td class="ts">The return card with every sold than of that bale, the customer's name, and “📦 Loaded with every sold than”.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">6</td><td class="td">Use bales you sold. Type <span class="typed">Return</span>, one bale with thans, a comma, a whole bale. Like <span class="typed">Return 631/1+2, 614</span>.<div class="used">Line I typed: <span class="blank"></span></div></td><td class="ts">The return card. The customer and the store are the ones from the sale. Each than you typed is one line.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">7</td><td class="td">On that open card, type ONE MORE bale you sold — not one already on the card. Numbers only.<div class="used">Bale: <span class="blank"></span></div></td><td class="ts">“➕ Added 1 bale.” The new bale is on the card.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">8</td><td class="td">On the open card, type <span class="typed">700 to Idumota</span></td><td class="ts">“❓ Numbers only here” and “Nothing was added.”</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">9</td><td class="td">Tap <span class="chip">✅ Continue — date, condition, photo</span> → <span class='chip'>📅 Today (…)</span> → <span class="chip">✅ Good — back to stock</span> → <span class="chip">⏭ Skip photo</span></td><td class="ts">The card “Confirm return” with the button ✅ Submit for approval. DO NOT TAP IT.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">10</td><td class="td">Tap <span class="chip">❌ Cancel</span></td><td class="ts">“❌ Return cancelled — nothing was queued.”</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr>
  </table>
  <div class="endrow"><div class="sign">
   <div>Name: <span class="sigl"></span></div><div>Date: <span class="sigl"></span></div>
  </div>
- <div class="sendto">📷 Send a photo of this page to Krishna.</div></div>
+ <div class="sendto">📷 Printed: send Krishna a photo of this page.
+  <div class="noprint">No printer? Send Krishna one message per row: row number, Yes or No, what you saw. Like: 6 No — wrong customer.</div></div></div>
 </section></body></html>

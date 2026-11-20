@@ -29,7 +29,9 @@ How it works
 
 The test sheet (page 4) has printed tick boxes and writing lines. It is NOT a
 fillable PDF form: Chromium does not write form fields, and no PDF library is
-installed here to add them.
+installed here to add them. So the sheet says it plainly: print it, or, with
+no printer, send Krishna one message per row (row number, Yes or No, what he
+saw).
 
 Options
     --json FILE      read the capture's JSON from FILE instead of running it
@@ -121,8 +123,9 @@ def S(key, kind=None, to="Abdul", text=None):
 
 
 def end(label):
-    """A button that ends a sentence: the chip and its full stop stay together."""
-    return f'<span class="nw">{b(label)}.</span>'
+    """A button that ends a sentence: the chip alone, never a lone full stop
+    wrapping onto its own line after it."""
+    return f'<span class="nw">{b(label)}</span>'
 
 
 def card(c, cls=""):
@@ -178,7 +181,7 @@ def page1(doc):
   <div class="box recbox"><div class="btitle">Who is the customer? Which store?</div>
    <p class="rec">{P(f"“{html.escape(record)}”")}</p>
    <p>{P("You do not type the customer. You do not type the store. The return card shows them to you. Check them there.")}</p>
-   <p class="small">{P("Capital letters and extra spaces do not matter. A new line between bales also works.")}</p>
+   <p class="small">{P("Capital letters and extra spaces do not matter.")}</p>
   </div>
  </div>
  <div class="dont">
@@ -195,7 +198,7 @@ def page1(doc):
 
 def page2():
     steps = [
-        (S("one_line"), f"Type {ty('Return 631/1+2+3+4+5, 614/1')}. The return card opens. Check the customer and every bale line. "
+        (S("one_line"), f"Type<br><span class='nw'>{ty('Return 631/1+2+3, 614')}</span><br>The return card opens. Check the customer and every bale line. "
                         f"Then tap {end('✅ Continue — date, condition, photo')}"),
         (S("one_go"), f"Tap the day the goods came back. Here {end('📅 Today (20-Nov-2026)')}"),
         (S("one_date", kind="edit"), f"Tap how the goods look. Here {end('✅ Good — back to stock')}"),
@@ -247,11 +250,13 @@ def test_rows():
     blank = '<span class="blank"></span>'
     return [
         (f"Type {ty('Return 631/1+2+3+4+5,614/1 to Idumota')}",
-         "The card “↩️ Return — type it one way only”. No return card opens."),
+         "The card “↩️ Return — type it one way only”. No return card opens. "
+         "Got “❓ Numbers only here”? Do row 0, then row 1 again."),
         (f"Type {ty('Return package 631/1+2+3+4+5,614/1 to Idumota')}", "The same card as in row 1."),
         (f"Type {ty('Return package from soldier madam 631/1+2+3+4+5,614/1 to Idumota')}", "The same card as in row 1."),
         (f"Type {ty('Return 631-635')}. Then tap {b('❌ Cancel')}.",
-         "A return card with the line “❓ Could not read: -635”. After Cancel: “nothing was queued”."),
+         "A return card with the line “❓ Could not read: -635”. After Cancel: “nothing was queued”. "
+         "Bale 631 may show as ⚠️ Not loaded — that is fine."),
         (f"Use a bale you sold. Type {ty('Return')} and the bale number only. Then tap {b('❌ Cancel')}."
          f'<div class="used">Bale I used: {blank}</div>',
          "The return card with every sold than of that bale, the customer's name, and “📦 Loaded with every sold than”."),
@@ -259,7 +264,7 @@ def test_rows():
          f"Like {ty('Return 631/1+2, 614')}."
          f'<div class="used">Line I typed: {blank}</div>',
          "The return card. The customer and the store are the ones from the sale. Each than you typed is one line."),
-        (f"On that open card, type the number of ONE MORE bale you sold, numbers only."
+        (f"On that open card, type ONE MORE bale you sold — not one already on the card. Numbers only."
          f'<div class="used">Bale: {blank}</div>',
          "“➕ Added 1 bale.” The new bale is on the card."),
         (f"On the open card, type {ty('700 to Idumota')}", "“❓ Numbers only here” and “Nothing was added.”"),
@@ -270,30 +275,37 @@ def test_rows():
     ]
 
 
+def row0():
+    """Row 0 — an open return card reads a typed line FIRST (proven by the
+    capture's stale scene: only ❌ Cancel closes it; /menu does not)."""
+    return (f"Is a return card still open in your chat? Tap its {b('❌ Cancel')}. No card open: go to row 1.",
+            "“❌ Return cancelled — nothing was queued.” Or nothing, if no card was open.")
+
+
 def page4():
     rows = []
-    for k, (do, see) in enumerate(test_rows()):
+    for k, (do, see) in enumerate([row0()] + test_rows(), start=0):
         P(do)
         P(see)
-        rows.append(f'<tr><td class="tn">{k + 1}</td><td class="td">{do}</td><td class="ts">{see}</td>'
+        rows.append(f'<tr><td class="tn">{k}</td><td class="td">{do}</td><td class="ts">{see}</td>'
                     f'<td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td>'
                     f'<td class="tw"><span class="wl"></span></td></tr>')
-    warn = P(f"Do NOT tap {b('✅ Submit for approval')} in this test. A submitted return goes to the admins, "
-             "and when they approve it the stock and the customer's account change. "
+    warn = P(f"Do NOT tap {b('✅ Submit for approval')} in this test — the admins would get a real return. "
              f"Stop at the confirm card and tap {b('❌ Cancel')}.")
     return f"""
 <section class="pg">
  <h2>Test it on the bot</h2>
- <div class="sub2">{P("Type each line in the bot, exactly as written. Do the rows in this order. Tick Yes if the bot shows it, No if not. Write what you saw.")}</div>
+ <div class="sub2">{P("Type each line exactly as written, in order, from row 0. Tick Yes or No. Write what you saw.")}</div>
  <div class="warn">⚠️ {warn}</div>
  <table class="tt">
-  <tr><th>No</th><th>Type or tap this</th><th>You should see</th><th>Did you see it?</th><th>What I saw</th></tr>
+  <tr><th>No</th><th>Type or tap this</th><th>You should see</th><th>Seen?</th><th>What I saw</th></tr>
   {"".join(rows)}
  </table>
  <div class="endrow"><div class="sign">
   <div>Name: <span class="sigl"></span></div><div>Date: <span class="sigl"></span></div>
  </div>
- <div class="sendto">📷 {P("Send a photo of this page to Krishna.")}</div></div>
+ <div class="sendto">📷 {P("Printed: send Krishna a photo of this page.")}
+  <div class="noprint">{P("No printer? Send Krishna one message per row: row number, Yes or No, what you saw. Like: 6 No — wrong customer.")}</div></div></div>
 </section>"""
 
 
@@ -327,6 +339,9 @@ def check_capture(doc):
         die(f"❌ Cancel raised a request or left the card open: {cx}")
     if (facts.get("add") or {}).get("bales_after") != ["631", "614"]:
         die("on the open card, 614/1 should be added and '700 to Idumota' refused")
+    st = facts.get("stale") or {}
+    if (st.get("none") or {}).get("one_way_card") is not False or not (st.get("cancel") or {}).get("one_way_card"):
+        die(f"row 0: an open card should catch the old line and ❌ Cancel should free it: {st}")
     if "❓ Could not read" not in G.S(SEG, step="wrong |", to="Abdul")["text"]:
         die("the wrong line's card lost its ❓ Could not read line")
 
@@ -372,14 +387,14 @@ EXTRA_CSS = """
 body { font-size:11pt; line-height:1.4; }
 .pg { page-break-after: always; }
 .pg:last-child { page-break-after: auto; }
-h1 { font-size:28pt; margin:1mm 0 1mm; }
+h1 { font-size:22pt; margin:1mm 0 1mm; }
 h2 { font-size:21pt; color:#0e2a47; margin:0 0 1.4mm; letter-spacing:-.3px; }
 .sub { font-size:12.4pt; color:#22303f; margin-bottom:3mm; }
 .sub2 { font-size:11pt; color:#3d4b59; margin-bottom:3mm; }
 .mono { font-family:"DejaVu Sans Mono",monospace; }
 .bigbox { border:3px solid #1f6fb2; background:#f1f7fd; border-radius:4mm; padding:3mm 5mm 3.4mm; margin-bottom:4mm; }
 .bigl { font-size:11pt; font-weight:800; color:#1f6fb2; text-transform:uppercase; letter-spacing:1px; }
-.big { font-family:"DejaVu Sans Mono",monospace; font-weight:700; font-size:31pt; color:#0e2a47; line-height:1.25; margin:1mm 0 1.4mm; }
+.big { font-family:"DejaVu Sans Mono",monospace; font-weight:800; font-size:38pt; white-space:nowrap; color:#0e2a47; line-height:1.25; margin:1mm 0 1.4mm; }
 .bign { font-size:10.4pt; color:#3d4b59; }
 .two { display:flex; gap:4mm; margin-bottom:4mm; }
 .two .box { padding:3mm 4mm; }
@@ -418,6 +433,8 @@ h2 { font-size:21pt; color:#0e2a47; margin:0 0 1.4mm; letter-spacing:-.3px; }
        background:#1f6fb2; color:#fff; font-weight:900; font-size:10.4pt; }
 .extitle { font-weight:800; font-size:12pt; color:#0e2a47; margin-bottom:1mm; }
 .grid2 .shot .txt { font-size:7.4pt; line-height:1.25; }
+.cols3 .shot .txt { font-size:8.3pt; line-height:1.3; }
+.cols3 .shot .kbtn { font-size:7.6pt; }
 .grid2 .cap.plain { font-size:9.4pt; }
 .grid2 { gap:3mm 6mm; }
 .cxrow { display:flex; gap:5mm; align-items:center; margin-top:2.4mm; border:1.6px solid #1d6fa5; background:#f3f8fd; border-radius:3mm; padding:1.6mm 3mm; break-inside:avoid; }
@@ -425,24 +442,25 @@ h2 { font-size:21pt; color:#0e2a47; margin:0 0 1.4mm; letter-spacing:-.3px; }
 .cxcard { width:72mm; flex:none; }
 .cxt .btitle { margin-bottom:1mm; }
 
-.warn { border:2.6px solid #a3232a; background:#fff1f1; border-radius:3mm; padding:2mm 3.4mm; font-size:10.6pt; font-weight:700; color:#5a1015; margin-bottom:2.4mm; }
+.warn { border:2.6px solid #a3232a; background:#fff1f1; border-radius:3mm; padding:1.6mm 3.4mm; font-size:10pt; font-weight:700; color:#5a1015; margin-bottom:2.4mm; }
 .tt { width:100%; border-collapse:collapse; font-size:9.2pt; line-height:1.25; }
 .tt th { background:#0e2a47; color:#fff; text-align:left; padding:1.4mm 2mm; font-size:9pt; }
-.tt td { border-bottom:1.2px solid #b9c5d0; padding:1.3mm 1.6mm; vertical-align:top; }
+.tt td { border-bottom:1.2px solid #b9c5d0; padding:1mm 1.4mm; vertical-align:top; }
 .tt tr { break-inside:avoid; }
 .tt .tn { width:7mm; font-weight:900; font-size:12pt; color:#0e2a47; }
-.tt .td { width:62mm; } .tt .ts { width:50mm; color:#22303f; }
+.tt .td { width:67mm; } .tt .ts { width:55mm; color:#22303f; }
 .tt .typed { white-space:normal; overflow-wrap:anywhere; }
-.tt .tyn { width:19mm; font-size:9.6pt; white-space:nowrap; } .tt .tyn div { margin-bottom:1.2mm; }
+.tt .tyn { width:17mm; font-size:9.4pt; white-space:nowrap; } .tt .tyn div { margin-bottom:.8mm; }
 .tb { display:inline-block; width:4.4mm; height:4.4mm; border:1.6px solid #0e2a47; border-radius:.8mm; vertical-align:-1mm; margin-right:1mm; background:#fff; }
 .tt .tw { width:auto; }
-.wl { display:block; border-bottom:1px solid #7d8b99; height:8mm; }
+.wl { display:block; border-bottom:1px solid #7d8b99; height:7mm; }
 .used { margin-top:1.6mm; font-weight:700; color:#0e2a47; }
 .blank { display:inline-block; width:34mm; border-bottom:1.4px solid #0e2a47; height:4mm; vertical-align:-1mm; }
-.endrow { display:flex; gap:6mm; align-items:center; margin-top:2.4mm; break-inside:avoid; }
-.sign { display:flex; flex-direction:column; gap:3mm; font-size:11pt; font-weight:700; flex:none; }
-.sigl { display:inline-block; width:62mm; border-bottom:1.4px solid #0e2a47; height:5mm; vertical-align:-1mm; }
-.sendto { flex:1; font-size:12.4pt; font-weight:800; color:#1e8449; border:2.4px solid #1e8449; border-radius:3mm; padding:2.4mm 4mm; background:#f2fbf5; }
+.endrow { display:flex; gap:5mm; align-items:center; margin-top:1.6mm; break-inside:avoid; }
+.sign { display:flex; flex-direction:column; gap:2mm; font-size:11pt; font-weight:700; flex:none; }
+.sigl { display:inline-block; width:52mm; border-bottom:1.4px solid #0e2a47; height:5mm; vertical-align:-1mm; }
+.sendto { flex:1; font-size:11pt; font-weight:800; color:#1e8449; border:2.4px solid #1e8449; border-radius:3mm; padding:1.6mm 3mm; background:#f2fbf5; }
+.noprint { font-size:9.8pt; font-weight:600; color:#14532d; margin-top:1.2mm; }
 """
 
 FOOT = f"black_panther bot · How to type a return · for Abdul · {DATE} · page "
