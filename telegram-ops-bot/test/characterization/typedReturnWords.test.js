@@ -37,11 +37,16 @@ installFakeSheets(createFakeSheets({
     invRow('614', 1, 'sold', 'soldier madam', 'IDUMOTA', '9043-A', '7', 1500),
     invRow('614', 2, 'available', '', 'IDUMOTA', '9043-A', '7', 1500),
     invRow('700', 1, 'sold', 'ABBA', 'Lagos', '9006', '1', 1000),
+    invRow('800', 1, 'sold', 'ABBA', 'Lagos Island', '9006', '1', 1000),
+    invRow('810', 1, 'sold', 'Musa Ibrahim', 'Kano office', '9006', '1', 1000),
+    invRow('820', 1, 'sold', 'Alhaji Musa', 'Lagos office', '9006', '1', 1000),
   ],
   Customers: [
     CUS_HEADERS,
     ['CUS-S', 'Soldier Madam', '080', '', '', 0, 0, '', '', 'Active', '', '', '[]'],
     ['CUS-A', 'ABBA', '081', '', '', 0, 0, '', '', 'Active', '', '', '[]'],
+    ['CUS-M', 'Musa Ibrahim', '082', '', '', 0, 0, '', '', 'Active', '', '', '[]'],
+    ['CUS-N', 'Alhaji Musa', '083', '', '', 0, 0, '', '', 'Active', '', '', '[]'],
   ],
 }));
 // The AI never answers here: every line below must be read locally.
@@ -123,8 +128,70 @@ test('RET-6: the worded line opens the same card with the AI switched off', asyn
   assert.ok(text.includes('614/1 · 30 yd'));
 });
 
+test('RET-6 review: a bale typed after the words is on the card; what cannot be read is named', async () => {
+  for (const line of ['Return 631/1 to Idumota 614/1', 'Return 631/1 from soldier madam 614/1', 'Return 631/1 package 614/1']) {
+    const { text } = await type(line);
+    assert.ok(text.includes('631/1 · 30 yd') && text.includes('614/1 · 30 yd'), line);
+    assert.doesNotMatch(text, /I did not use/, line);
+  }
+  const bad = (await type('Return 631/1 to Idumota 614/9-2')).text;
+  assert.ok(bad.includes('631/1 · 30 yd'));
+  assert.match(bad, /❓ Could not read: `614\/9-2`/);
+  const count = (await type('Return 631/1, 2 thans 614 to Idumota')).text;
+  assert.match(count, /❓ Could not read: `2 thans`/);
+  assert.ok(count.includes('631/1 · 30 yd') && /614(?:\/1)? · 30 yd/.test(count), 'the bale after the count is still loaded');
+});
+
+test('RET-6 review: a count in front of a bale, a phone number and "12 days ago" are not return lists', async () => {
+  for (const line of ['Return 2 thans 631', 'Return from Abba 08012345678', 'Return 12 days ago']) {
+    const bot = createFakeBot();
+    sessionStore.clear(EMP);
+    await controller.handleMessage(bot, message(line));
+    const s = sessionStore.get(EMP);
+    assert.ok(!s || s.type !== 'return_bundle_flow', `${line} must not open the return card`);
+  }
+});
+
+test('RET-6 review: whole words only — a near-miss store or buyer is said, an unclear name is said', async () => {
+  // "Lagos" is a store of its own, so a bale sold from Lagos Island differs.
+  const near = (await type('Return 800 to Lagos')).text;
+  assert.match(near, /⚠️ You wrote "to Lagos"\. Returned goods go back to the store they were sold from: 800 → Lagos Island\./);
+  // "office" fits Kano office and Lagos office.
+  const unclear = (await type('Return 810, 820 to office')).text;
+  assert.match(unclear, /⚠️ You wrote "to office"\. That name fits more than one store\. Each bale goes back to the store it was sold from: 810 → Kano office, 820 → Lagos office\./);
+  // "Musa" fits two buyers on this return.
+  const who = (await type('Return 810, 820 from Musa')).text;
+  assert.match(who, /⚠️ You wrote "from Musa"\. That name fits more than one buyer\. The credit goes to the buyer on the sale record: 810 → Musa Ibrahim, 820 → Alhaji Musa\./);
+  // …and one buyer when only one is on the return: nothing to say.
+  assert.doesNotMatch((await type('Return 810 from Musa')).text, /You wrote/);
+  // A short store name that fits exactly one store: nothing to say.
+  assert.doesNotMatch((await type('Return 810 to kano')).text, /You wrote/);
+  // A bare word that is a store is checked as the store, not taken for a buyer.
+  const bare = (await type('Return 810 Lagos')).text;
+  assert.match(bare, /⚠️ You wrote "to Lagos"\. Returned goods go back to the store they were sold from: 810 → Kano office\./);
+});
+
+test('RET-6 review: each typed line is checked against the bales IT loaded; a line on the card is always a return line', async () => {
+  const { bot } = await type('Return 631/1 to Idumota');
+  // a second line, typed on the review card, with a store that is wrong for ITS bale
+  await controller.handleMessage(bot, message('700 to Idumota'));
+  const t2 = lastText(bot);
+  assert.ok(t2.includes('631/1 · 30 yd') && t2.includes('700 · 30 yd'));
+  assert.match(t2, /⚠️ You wrote "to Idumota"\. Returned goods go back to the store they were sold from: 700 → Lagos\./);
+  assert.doesNotMatch(t2, /631 → /, 'the first line\'s bale agreed and stays unmentioned');
+  // "Sell …" typed on the return card is read as a return line: "to" is the store, never a buyer
+  await controller.handleMessage(bot, message('Sell 614/1 to Idumota'));
+  const t3 = lastText(bot);
+  assert.ok(t3.includes('614/1 · 30 yd'));
+  assert.doesNotMatch(t3, /You wrote "from Idumota"/);
+});
+
 test('RET-6: nameMatches — a short name for a store, word order, and no loose match on one or two letters', () => {
-  const { nameMatches } = returnBundleFlow._internals;
+  const { nameMatches, nameLevel } = returnBundleFlow._internals;
+  assert.equal(nameLevel('Lagos', 'Lagos Island'), 'partial');
+  assert.equal(nameLevel('lagos', 'LAGOS'), 'exact');
+  assert.equal(nameMatches('ali', 'Alimat Bello'), false, 'whole words, never a piece of a word');
+  assert.equal(nameMatches('abba', 'Kabba Trading'), false);
   assert.equal(nameMatches('kano', 'Kano office'), true);
   assert.equal(nameMatches('Idumota store', 'IDUMOTA'), true);
   assert.equal(nameMatches('madam soldier', 'Soldier Madam'), true);

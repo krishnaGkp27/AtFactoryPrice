@@ -153,7 +153,44 @@ the typed words. If Abdul often receives returns at a store other than the
 one that sold the goods, that is an owner ruling: either the return may name
 the receiving store, or the bot offers a transfer right after approval.
 
+**Hardened the same day after an adversarial review (11 findings, all
+closed).** The first cut went live before the review finished; these were
+fixed and redeployed within the hour:
+
+- **Every number is loaded or reported.** A bale typed AFTER the words
+  (`Return 631/1 to Idumota 614/1`, `… from soldier madam 614/1`,
+  `… package 614/1`) was left off the card without a word. It is an item
+  now; a token that cannot be read is listed under `❓ Could not read`.
+- **A count is never a bale.** `Return 2 thans 631` was read as bale 2,
+  than 631 — it is not claimed now (the Return hint answers);
+  `Return 631, 2 thans 614` loads 631 and 614 and reports `2 thans`.
+  Among words a bare bale is two to six digits with no leading zero, so a
+  phone number or `12 days ago` is never a bale. The pure number list keeps
+  its RET-5 reading exactly.
+- **No freeze.** `Return from` followed by thousands of spaces took over a
+  minute in one pattern and blocked the bot. White space is collapsed first,
+  the buyer in front is found by position, and a line over 1,500 characters
+  is not a return list.
+- **Names match on whole words.** `ali` is not `Alimat Bello`; `Lagos` is
+  not `Lagos Island` when `Lagos` is a store of its own (the card knows
+  every store the stock sheet names). A name that fits more than one store
+  or buyer is said to be unclear:
+  `⚠️ You wrote "to office". That name fits more than one store. Each bale goes back to the store it was sold from: 810 → Kano office, 820 → Lagos office.`
+- **Each typed line is checked against the bales it loaded** (a second line
+  added on the card with other words no longer overwrites the first), and a
+  line typed on the return card is always read as a return line, whatever
+  verb leads it.
+- `and` inside a buyer's name (`from Sani and Sons`) no longer cuts the
+  line; a leading date (`Return 18 Nov 631/1`) is set aside; trailing
+  `please` / `on` / a full stop are dropped from the store and the buyer.
+
+Left as is: `Return 50000 to Abba` opens the card with `50000 — not found`
+(a five-digit number can be a bale); a buyer whose name ends in a number
+(`from shop 12 631/1`) loses the number to the list — both show on the card.
+The SELL line has the same old gap for a number typed after its words
+(`Sell 1100/1 to Abba 1091/1` drops 1091/1); it was not touched here.
+
 **Tests.** `test/characterization/typedReturnWords.test.js` (the three lines
-through the real controller; both differences; the admin card),
-`test/unit/utils/thanListParser.test.js` (RET-6 block).
+through the real controller; both differences; the admin card; every review
+case), `test/unit/utils/thanListParser.test.js` (the RET-6 blocks).
 

@@ -57,7 +57,11 @@ function looksLikeThanList(raw) {
 }
 
 /** Words that follow a COUNT, never a bale number: "Return 5 bales of 9006". */
-const COUNT_WORD = /^(?:bales?|thans?|yards?|yds?|pcs?|pieces?|packages?|pkgs?|rolls?)\b/i;
+const COUNT_WORD = /^(?:bales?|thans?|yards?|yds?|pcs?|pieces?|packages?|pkgs?|rolls?|days?|weeks?|months?|hours?|hrs?|times?|naira|ngn)\b/i;
+/** A bare bale number among WORDS: two to six digits, no leading zero — a phone number or a `5` is never one. */
+const BARE_BALE = /^[1-9]\d{1,5}$/;
+/** The longest return line read (a 60-bale list is ~500 characters). */
+const RETURN_LINE_MAX = 1500;
 /** Words in front of the numbers that carry no meaning: "package", "the goods". */
 const LEAD_NOISE = /^(?:(?:the|a|an)\s+)?(?:packages?|bales?|pkgs?|goods|no\.?|numbers?)\b[\s:.#-]*/i;
 const NOISE_WORD = /^(?:the|a|an|packages?|bales?|pkgs?|goods|no\.?|numbers?|thans?)$/i;
@@ -79,41 +83,73 @@ const NOISE_WORD = /^(?:the|a|an|packages?|bales?|pkgs?|goods|no\.?|numbers?|tha
  *   the line once those words are set aside.
  */
 function splitReturnLine(raw) {
-  let t = String(raw || '').trim();
-  const verb = t.match(/^return(?:s|ed|ing)?\b[\s:,-]*/i);
+  // Whitespace is collapsed FIRST and the length capped: every pattern below
+  // then runs in linear time (a run of 4,000 spaces after "Return from" used
+  // to take over a minute and froze the bot for everyone).
+  let t = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (t.length > RETURN_LINE_MAX) return null;
+  // The pure list RET-5 read (numbers, commas, `/`, `+`, `-`, `x` and nothing
+  // else) keeps its exact old reading; the stricter rules are for lines with words.
+  const pure = /^return \d[\d ,/+x-]*$/i.test(t);
+  const verb = t.match(/^return(?:s|ed|ing)?\b[ :,-]*/i);
   if (!verb) return null;
   t = t.slice(verb[0].length);
   // The worded forms, rewritten into the list grammar (R4 — they open the
   // same card): "than 2 from bale 5801" · "thans 1+2 of package 631" →
-  // `5801/2` · `631/1+2`; and "bale 631 than 3" → `631/3`.
-  t = t.replace(/\bthans?\s+(\d+(?:\s*[+-]\s*\d+)*)\s+(?:from|of|in)\s+(?:the\s+)?(?:(?:packages?|bales?|pkgs?)\s+)?(?:(?:no\.?|numbers?)\s+)?(\d+)\b/gi,
-    (_m, spec, bale) => `${bale}/${spec.replace(/\s+/g, '')}`);
-  t = t.replace(/\b(\d+)\s+thans?\s+(\d+(?:\s*[+-]\s*\d+)*)(?![\d/])/gi,
-    (_m, bale, spec) => `${bale}/${spec.replace(/\s+/g, '')}`);
+  // `5801/2` · `631/1+2`.
+  t = t.replace(/\bthans? (\d+(?: ?[+-] ?\d+)*) (?:from|of|in) (?:the )?(?:(?:packages?|bales?|pkgs?) )?(?:(?:no\.?|numbers?) )?(\d+)\b/gi,
+    (_m, spec, bale) => `${bale}/${spec.replace(/ /g, '')}`);
+  // "bale 631 than 3" → `631/3` — only when the first number can be a bale
+  // and the second a than: "2 thans 631" is a COUNT in front of a bale and
+  // is left alone (it was read as bale 2, than 631).
+  t = t.replace(/\b(\d+) thans? (\d+(?: ?[+-] ?\d+)*)(?![\d/])/gi, (m, bale, spec) => {
+    const nums = spec.split(/[+-]/).map((n) => parseInt(n, 10));
+    const top = Math.max(...nums);
+    return (BARE_BALE.test(bale) && top < 100 && parseInt(bale, 10) > top) ? `${bale}/${spec.replace(/ /g, '')}` : m;
+  });
   const dropNoise = () => { let prev; do { prev = t; t = t.replace(LEAD_NOISE, ''); } while (t !== prev); };
   dropNoise();
-  // "from <buyer>" in front of the numbers.
+  // "from <buyer>" in front of the numbers: the words up to the first digit.
   let from = '';
-  const m = t.match(/^from\s+([^\d,]*?)[\s:,-]*(?=\d)/i);
-  if (m) {
-    const words = m[1].trim().split(/\s+/).filter(Boolean);
+  if (/^from /i.test(t)) {
+    const at = t.search(/\d/);
+    if (at < 0) return null;
+    const said = t.slice(5, at).replace(/[ :,-]+$/, '');
+    if (said.includes(',')) return null;            // "from Abba, 0801…, Kano" is not a return list
+    const words = said.split(' ').filter(Boolean);
     while (words.length && NOISE_WORD.test(words[words.length - 1])) words.pop();   // "from soldier madam package 631"
     while (words.length && NOISE_WORD.test(words[0])) words.shift();                // "from bale 5801"
     from = words.join(' ');
-    t = t.slice(m[0].length);
+    t = t.slice(at);
   }
   dropNoise();
+  // A date in front of the numbers ("Return 18 Nov 631/1") is set aside — the
+  // date step asks; its day was read as bale 18.
+  // A numeric date with its year ("18/11/2026 631/1") is a date in any line:
+  // no list item has two slashes. (It was read as bale 18, than 11.)
+  let lead = t.match(DATE_AT_FRONT);
+  if (!lead && !pure) {
+    lead = t.match(WORD_DATE_AT_FRONT);
+    // "18 Nov 631/1": the 631 is a bale, not a year — a year has two or four
+    // digits and is never followed by `/` or `x`.
+    if (lead && (/(?:^|\D)\d{3}$/.test(lead[0]) || /^ ?[/xX]/.test(t.slice(lead[0].length)))) {
+      lead = t.match(DAY_MONTH_AT_FRONT);
+    }
+  }
+  if (lead) { t = t.slice(lead[0].length).replace(/^[ ,:-]+/, ''); dropNoise(); }
   if (!/^\d/.test(t)) return null;
-  return { from, body: t };
+  return { from, body: t, pure };
 }
 
 /** Does `body` open with a list item — and not with a count ("5 bales of 9006")? */
-function opensWithList(body) {
+function opensWithList(body, pure) {
+  if (pure) return true;                               // the pure list, as since RET-5
   if (/^\d+\s*\/\s*\d/.test(body)) return true;        // 631/1…
   if (/^\d+\s*[xX]\s*\d+/.test(body)) return true;     // 771 x3
-  if (/^[\d\s,/+xX-]*$/.test(body)) return true;       // the pure list, as since RET-5
-  const bare = body.match(/^(\d{2,})\b[\s,]*([\s\S]*)$/); // a bale of two digits or more…
-  return !!bare && !COUNT_WORD.test(bare[2]);          // …that is not a count
+  const bare = body.match(/^(\d+)\b[ ,]*([\s\S]*)$/);
+  // …a bale number (two to six digits, no leading zero — not a phone number,
+  // not an amount written with a 0) that is not a count ("5 bales", "12 days").
+  return !!bare && BARE_BALE.test(bare[1]) && !COUNT_WORD.test(bare[2]);
 }
 
 /**
@@ -129,7 +165,7 @@ function opensWithList(body) {
  */
 function looksLikeReturnList(raw) {
   const split = splitReturnLine(raw);
-  return !!split && opensWithList(split.body);
+  return !!split && opensWithList(split.body, split.pure);
 }
 
 /**
@@ -184,6 +220,8 @@ const WORD_DATE_SRC = `(?:\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH_WORD}\\b(?:[\\s,]+
 const WORD_DATE = new RegExp(`\\b${WORD_DATE_SRC}`, 'i');
 const WORD_DATE_ONLY = new RegExp(`^${WORD_DATE_SRC}$`, 'i');
 const WORD_DATE_AT_FRONT = new RegExp(`^${WORD_DATE_SRC}`, 'i');
+/** Day and month only, opening a string: "18 Nov" (RET-6 — see splitReturnLine). */
+const DAY_MONTH_AT_FRONT = new RegExp(`^\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH_WORD}\\b`, 'i');
 
 /** True when a segment IS a date, not a bale ("06 august 2026", "6/8/26"). */
 function isDateLike(s) {
@@ -266,7 +304,14 @@ function parseThanList(raw) {
   // front of the numbers, and its small words mean the opposite of a sale's.
   const ret = /^return/i.test(text) ? splitReturnLine(text) : null;
   const body = ret ? ` ${ret.body}` : text.replace(/^(?:sell|return)\b/i, ' ');
-  const segments = body.split(/,|\band\b/i).map((s) => s.trim()).filter(Boolean);
+  // A return line with WORDS in it is read more strictly than the pure list
+  // (which stays exactly as RET-5 read it): a bare number must look like a
+  // bale, a count is reported, and "and" inside a buyer's name ("Sani and
+  // Sons") no longer cuts the line — it separates only when a number follows.
+  const strict = !!ret && !ret.pure;
+  const segments = (strict
+    ? body.split(/,|\band\b(?= (?:(?:thans?|packages?|bales?|pkgs?|no\.?|numbers?) )?\d)/i)
+    : body.split(/,|\band\b/i)).map((s) => s.trim()).filter(Boolean);
 
   const take = (got) => {
     // A lone small number right after a `<bale>/<than>` item is almost
@@ -296,6 +341,19 @@ function parseThanList(raw) {
       if (/[A-Za-z]/.test(s)) tailBits.push(s);
       else bad.push(seg.trim());
       continue;
+    }
+    if (strict && first.bare) {
+      // "2 thans 614" / "5 bales" — a count, never a bale: reported, and the
+      // rest of the segment is still read.
+      const after = s.slice(first.used).replace(/^\s+/, '');
+      const count = after.match(COUNT_WORD);
+      if (count || !BARE_BALE.test(first.item.packageNo)) {
+        bad.push(count ? `${first.item.packageNo} ${count[0]}` : first.item.packageNo);
+        if (!count && items.length && Number(first.item.packageNo) <= 99) commaThanHint = true;
+        const left = count ? after.slice(count[0].length) : after;
+        if (left.trim()) tailBits.push(left.trim());
+        continue;
+      }
     }
     take(first);
     let rest = s.slice(first.used);
@@ -339,8 +397,20 @@ function parseThanList(raw) {
       tail = tail.replace(d[0], ' ').replace(/\s+/g, ' ').trim();
     }
     if (ret) {
+      // A number left among the words is NEVER dropped: it is an item when
+      // it reads as one ("… to Idumota 614/1", "… package 614/1"), otherwise
+      // it is reported as unreadable.
+      tail = tail.replace(/\d+(?: ?\/ ?\d+(?: ?[+-] ?\d+)*| ?[xX] ?\d+)?(?:[/+-]\S*)?/g, (tok) => {
+        const got = readItem(tok);
+        const whole = got && !got.bad && got.used === tok.length;
+        if (whole && (!got.bare || BARE_BALE.test(got.item.packageNo))) items.push(got.item);
+        else bad.push(tok.trim());
+        return ' ';
+      }).replace(/\s+/g, ' ').trim();
       // RET-6 — `to` / `at` / `in` / `@` names the STORE, `from` the BUYER.
-      const clean = (v) => String(v || '').replace(NOISE, ' ').replace(/\s+/g, ' ').trim();
+      const clean = (v) => ` ${String(v || '').replace(NOISE, ' ').replace(/[.,;:!?]+/g, ' ')} `
+        .replace(/ [-/]+(?= )/g, ' ')                       // a stray `/` or `-` left by a number
+        .replace(/\s+/g, ' ').trim().replace(/(?:(?:^| )(?:on|please|pls|kindly|thanks|today|now))+$/i, '').trim();
       const storeM = tail.match(/(?:\bto\b|\binto\b|\bat\b|\bin\b|@)\s*([A-Za-z][A-Za-z\s.'-]*?)(?=\s+from\b|$)/i);
       const custM = tail.match(/\bfrom\s+([A-Za-z][A-Za-z\s.'-]*?)(?=\s+(?:to|into|at|in)\b|\s*@|$)/i);
       let rest = tail;
@@ -351,7 +421,7 @@ function parseThanList(raw) {
         isReturn: true,
         returnFrom: ret.from || (custM ? clean(custM[1]) : ''),
         returnTo: storeM ? clean(storeM[1]) : '',
-        returnOther: clean(rest.replace(/@/g, ' ')),
+        returnOther: clean(rest.replace(/@/g, ' ').replace(/\band\b/gi, ' ')),
       };
     }
     const cust = tail.match(/\bto\s+([A-Za-z][A-Za-z\s.'-]*)/i);

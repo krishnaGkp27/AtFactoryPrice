@@ -419,3 +419,66 @@ test('RET-6: a SELL line keeps its own meaning of "to" and "from"', () => {
   assert.equal(out.ignoredCustomer, 'karibullah');
   assert.equal(out.isReturn, undefined);
 });
+
+// ── RET-6 review (20-Nov-2026) — every number is loaded or reported; nothing freezes ──
+
+const itemsOf = (l) => parseThanList(l).items.map((i) => i.packageNo + (i.thans ? `/${i.thans.join('+')}` : '') + (i.count ? ` x${i.count}` : ''));
+
+test('RET-6 review: a number typed AFTER the words is an item, never dropped', () => {
+  assert.deepEqual(itemsOf('Return 631/1 to Idumota 614/1'), ['631/1', '614/1']);
+  assert.deepEqual(itemsOf('Return 631/1 to Idumota 700'), ['631/1', '700']);
+  assert.deepEqual(itemsOf('Return 631/1+2 from soldier madam 614/1'), ['631/1+2', '614/1']);
+  assert.equal(parseThanList('Return 631/1+2 from soldier madam 614/1').returnFrom, 'soldier madam');
+  for (const l of ['Return 631/1 package 614/1', 'Return package 631/1 bale 614/1']) assert.deepEqual(itemsOf(l), ['631/1', '614/1'], l);
+  assert.deepEqual(itemsOf('Return 631/1 no 614'), ['631/1', '614']);
+  // what cannot be read is REPORTED
+  const bad = parseThanList('Return 631/1 to Idumota 614/9-2');
+  assert.deepEqual(itemsOf('Return 631/1 to Idumota 614/9-2'), ['631/1']);
+  assert.deepEqual(bad.bad, ['614/9-2']);
+  assert.equal(bad.returnTo, 'Idumota');
+});
+
+test('RET-6 review: a count is never a bale, and a than number is never swapped with its bale', () => {
+  for (const l of ['Return 2 thans 631', 'Return 5 thans 9006', 'Return 1 than 631', 'Return 2 thans 631 to Idumota',
+    'Return 12 days ago', 'Return from Abba 08012345678', 'Return from Abba, 08012345678, Kano', 'Return package 0771']) {
+    assert.equal(looksLikeReturnList(l), false, l);
+  }
+  const mixed = parseThanList('Return 631, 2 thans 614');
+  assert.deepEqual(mixed.items, [{ packageNo: '631' }, { packageNo: '614' }]);
+  assert.deepEqual(mixed.bad, ['2 thans'], 'the count is said, the bale after it is still read');
+  assert.deepEqual(parseThanList('Return 631, 5 bales').bad, ['5 bales']);
+  assert.deepEqual(itemsOf('Return 631 thans 1+2'), ['631/1+2']);
+  assert.deepEqual(itemsOf('Return bale 631 than 3 and 614 than 1'), ['631/3', '614/1']);
+});
+
+test('RET-6 review: "and" inside a buyer\'s name, trailing words and dates', () => {
+  const a = parseThanList('Return 631/1 from Sani and Sons');
+  assert.equal(a.returnFrom, 'Sani and Sons');
+  const b = parseThanList('Return 631/1 from A and B 700');
+  assert.equal(b.returnFrom, 'A and B');
+  assert.deepEqual(b.items, [{ packageNo: '631', thans: [1] }, { packageNo: '700' }]);
+  assert.equal(parseThanList('Return 631/1 and 614/1 to Idumota').items.length, 2);
+  assert.equal(parseThanList('Return 631/1 to Idumota on 18/11/2026').returnTo, 'Idumota');
+  assert.equal(parseThanList('Return 631/1,614/1 to Idumota.').returnTo, 'Idumota');
+  assert.equal(parseThanList('Return 631/1 to Idumota please').returnTo, 'Idumota');
+  assert.deepEqual(itemsOf('Return 18 Nov 631/1'), ['631/1'], 'the day of a leading date is not a bale');
+  assert.deepEqual(itemsOf('Return 18 Nov 2026 631/1, 614'), ['631/1', '614']);
+  assert.deepEqual(itemsOf('Return 18/11/2026 631/1'), ['631/1']);
+});
+
+test('RET-6 review: the pure list keeps its old reading exactly; long white space costs nothing', () => {
+  assert.deepEqual(itemsOf('Return 5'), ['5']);
+  assert.deepEqual(itemsOf('Return 0771, 12345678'), ['0771', '12345678']);
+  assert.deepEqual(itemsOf('Return 771 x3, 6189/1+2'), ['771 x3', '6189/1+2']);
+  assert.deepEqual(itemsOf('RETURN  PACKAGE   631/1+2 ,614/1  TO  IDUMOTA'), ['631/1+2', '614/1']);
+  assert.deepEqual(itemsOf('Return 631/1\n614/1\nto Idumota'), ['631/1', '614/1']);
+  const t0 = process.hrtime.bigint();
+  for (const pad of [' ', '\n', '\t']) {
+    assert.equal(looksLikeReturnList(`Return from${pad.repeat(4000)}x`), false);
+    looksLikeReturnList(`Return 631/1 to ${'a '.repeat(700)}`);
+    looksLikeReturnList(`Return from ${'a'.repeat(1400)} 631/1`);
+  }
+  assert.equal(looksLikeReturnList(`Return 631/1 ${'x'.repeat(2000)}`), false, 'a line longer than any real list is not claimed');
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.ok(ms < 500, `the pre-check must stay linear (took ${ms.toFixed(0)} ms; it took over a minute before)`);
+});
