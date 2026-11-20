@@ -715,8 +715,10 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
     // RET-3 — ONE credit for the whole set, on the propagating emitter (see
     // return_than above). The request id makes two returns of the same bale
     // distinct, which `RT-`/`RP-` could not.
+    let postedThans = false;
     try {
       await erpEmitAsync('return', { type: 'return_thans', packageNo: aj.packageNo, thanNos, yards: totalYards, pricePerYard: credit.rate, design: results[0]?.design, shade: results[0]?.shade, warehouse: aj.warehouse || results[0]?.warehouse, userId: item.user, txnId: `RN-${aj.packageNo}-${requestId}`, customer: returnCust.name, customerId: returnCust.id });
+      postedThans = true;
       // Review 1 (R1-12) — when an admin entered the rate, the rate is named
       // on the admins' reply only (rateNote, §6d); the requester's copy of
       // this line carries the credit, as before RET-8.
@@ -731,7 +733,8 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
       }
       else await recordErpFailure('return credit (return_thans)', new Error(`no rate on record for Bale ${aj.packageNo} thans ${thanNos.join(', ')} — stock returned, credit NOT posted; post it manually`));
     } catch (e) { await recordErpFailure('return credit (return_thans)', e); }
-    await storeBookedCredit(requestId, aj, [{ key: retRate.buyerKey({ customer: aj.customer, customerId: aj.customerId }), customer: returnCust.name || aj.customer || '', amount: retRate.round2(credit.amount) }]);
+    // Review 3 (R3-6) — stored as booked only when the ledger entry went through.
+    await storeBookedCredit(requestId, aj, [{ key: retRate.buyerKey({ customer: aj.customer, customerId: aj.customerId }), customer: returnCust.name || aj.customer || '', amount: postedThans ? retRate.round2(credit.amount) : 0, ...(postedThans ? {} : { failed: true }) }]);
     if (skipped.length) {
       creditNote = `${creditNote ? `${creditNote}\n` : ''}⚠️ Skipped: `
         + `${skipped.map((sk) => `#${sk.thanNo} (${sk.why})`).join(', ')} — nothing flipped, nothing credited for them.`;
@@ -840,22 +843,39 @@ async function executeApprovedActionInner(requestId, approvedBy, enrichment) {
         warehouse: g.rows[0]?.warehouse || '', customerName: returnCust.name, customerId: returnCust.id,
         saleRefId: requestId, pricePerYard: credit.rate || '', salesDate: aj.returnedOn || '',
       });
+      // Review 3 (R3-6) — the credit counts as booked only when the ledger
+      // entry went through; a refused entry is stored as nothing posted.
+      let posted = false;
+      const tally = `${g.rows.length} than${g.rows.length === 1 ? '' : 's'}, ${totalYards} yd`;
       try {
         await erpEmitAsync('return', { type: 'return_bundle', packageNo: pkgs.join(', '), thanNos: g.rows.map((t) => t.thanNo), yards: totalYards, pricePerYard: credit.rate, design: g.rows[0]?.design, shade: g.rows[0]?.shade, warehouse: g.rows[0]?.warehouse, userId: item.user, txnId: `RB-${requestId}-${idx}`, customer: returnCust.name, customerId: returnCust.id });
-        if (credit.amount > 0) notes.push(`${returnCust.name || 'the buyer'} ${retRate.amountText(credit.amount)} (${g.rows.length} than${g.rows.length === 1 ? '' : 's'}, ${totalYards} yd)`);
+        posted = true;
+        if (credit.amount > 0) notes.push({ credited: true, text: `${returnCust.name || 'the buyer'} ${retRate.amountText(credit.amount)} (${tally})` });
         else if (retRate.noCreditChosen(g.parts)) {
           // Review 2 (R2-2) — no credit was the admins' signed choice for
           // every than of this buyer that has no rate: not a books failure.
-          notes.push(`${returnCust.name || 'the buyer'}: no credit — chosen at approval (${g.rows.length} than${g.rows.length === 1 ? '' : 's'}, ${totalYards} yd)`);
+          notes.push({ credited: false, text: `No credit to ${returnCust.name || 'the buyer'} — chosen at approval (${tally})` });
         } else {
           await recordErpFailure('return credit (return_bundle)', new Error(`no rate on record for ${returnCust.name || g.name}: ${g.rows.map((t) => `${t.packageNo}/${t.thanNo}`).join(', ')} — stock returned, credit NOT posted; post it manually`));
-          notes.push(`${returnCust.name || 'the buyer'}: no rate on record — NO credit posted`);
+          notes.push({ credited: false, text: `${returnCust.name || 'the buyer'}: no rate on record — NO credit posted` });
         }
       } catch (e) { await recordErpFailure('return credit (return_bundle)', e); }
-      booked.push({ customer: returnCust.name, customerId: returnCust.id, thans: g.rows.length, yards: totalYards, amount: credit.amount, rate: credit.rate, key: retRate.buyerKey(g.buyer) });
+      booked.push({ customer: returnCust.name, customerId: returnCust.id, thans: g.rows.length, yards: totalYards, amount: posted ? credit.amount : 0, rate: credit.rate, key: retRate.buyerKey(g.buyer), ...(posted ? {} : { failed: true }) });
     }
-    await storeBookedCredit(requestId, aj, booked.map((b) => ({ key: b.key, customer: b.customer || '', amount: retRate.round2(b.amount) })));
-    creditNote = `↩️ Credited ${notes.join(' · ')}.`;
+    // Review 3 (R3-5) — a buyer the approvals gave a credit for whose thans
+    // were ALL skipped got nothing: stored as 0, so the record says so.
+    const stored = booked.map((b) => ({ key: b.key, customer: b.customer || '', amount: retRate.round2(b.amount), ...(b.failed ? { failed: true } : {}) }));
+    for (const b of retRate.creditByBuyer(aj)) {
+      if (!stored.some((x) => String(x.key) === String(b.key))) stored.push({ key: b.key, customer: b.customer || '', amount: 0 });
+    }
+    await storeBookedCredit(requestId, aj, stored);
+    // Review 3 (R3-3) — "Credited" heads the line only when every buyer on
+    // it was credited; a no-credit or no-rate buyer is never announced as
+    // credited. Nothing at all to say (every ledger entry failed) = no line:
+    // the failure list says it.
+    if (notes.length && notes.every((n) => n.credited)) creditNote = `↩️ Credited ${notes.map((n) => n.text).join(' · ')}.`;
+    else if (notes.length) creditNote = `↩️ ${notes.map((n) => (n.credited ? `Credited ${n.text}` : n.text)).join(' · ')}.`;
+    else creditNote = null;
     if (drifts.length) rateNote = [rateNote, ...drifts].filter(Boolean).join('\n');
     if (skipped.length) {
       creditNote += `\n⚠️ Skipped: ${skipped.map((sk) => `${sk.tok} (${sk.why})`).join(', ')} — nothing flipped, nothing credited for them.`;

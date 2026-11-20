@@ -124,6 +124,7 @@ test('review 2 (R2-4): bookedFor reads the credit stored at execution, or null',
   const aj = { creditBooked: [{ key: 'CUS-S', customer: 'solder madam', amount: 109500 }, { key: 'CUS-A', amount: 0 }] };
   assert.equal(rr.bookedFor(aj, 'CUS-S'), 109500);
   assert.equal(rr.bookedFor(aj, 'CUS-A'), 0);
-  assert.equal(rr.bookedFor(aj, 'CUS-X'), null);
+  // Review 3 (R3-1) — a stored list names every buyer credited: one missing from it got 0.
+  assert.equal(rr.bookedFor(aj, 'CUS-X'), 0);
   assert.equal(rr.bookedFor({}, 'CUS-S'), null);
 });

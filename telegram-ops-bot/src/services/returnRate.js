@@ -137,7 +137,9 @@ function buildFills(gaps, answers) {
     const a = answers[i] || {};
     const base = { key: g.key, customer: g.customer, customerId: g.customerId, design: g.design, thans: g.thans, yards: g.yards };
     if (a.noCredit) out.push({ ...base, noCredit: true });
-    else if (Number(a.rate) > 0) out.push({ ...base, rate: Number(a.rate) });
+    // Review 3 (R3-8) — kept to two decimals, as every card prints it, so
+    // the printed rate × yards is the credit that posts.
+    else if (round2(a.rate) > 0) out.push({ ...base, rate: round2(a.rate) });
     else return null;
   }
   return out;
@@ -269,11 +271,27 @@ function noCreditChosen(parts) {
  * Review 2 (R2-4) — the credit the executor booked for one buyer, as stored
  * on the request at execution (`actionJSON.creditBooked`), or null when the
  * request carries none (not executed, or executed before the field).
+ *
+ * Review 3 (R3-1) — the list is written once, for the whole execution, and
+ * names every buyer that was credited. A buyer missing from a list that
+ * exists was credited nothing (every than of theirs was skipped): 0, never
+ * "not stored".
  */
 function bookedFor(aj, key) {
-  const list = Array.isArray(aj && aj.creditBooked) ? aj.creditBooked : [];
-  const hit = list.find((b) => b && String(b.key) === String(key));
-  return hit && Number.isFinite(Number(hit.amount)) ? round2(hit.amount) : null;
+  if (!Array.isArray(aj && aj.creditBooked)) return null;
+  const hit = aj.creditBooked.find((b) => b && String(b.key) === String(key));
+  if (!hit) return 0;
+  return Number.isFinite(Number(hit.amount)) ? round2(hit.amount) : 0;
+}
+
+/**
+ * Review 3 (R3-6) — true when the executor's ledger credit for this buyer
+ * was refused (stored as `failed: true`, amount 0): nothing posted.
+ */
+function bookFailedFor(aj, key) {
+  if (!Array.isArray(aj && aj.creditBooked)) return false;
+  const hit = aj.creditBooked.find((b) => b && String(b.key) === String(key));
+  return !!(hit && hit.failed);
 }
 
 /**
@@ -328,6 +346,7 @@ module.exports = {
   priceRows,
   noCreditChosen,
   bookedFor,
+  bookFailedFor,
   stepState,
   amountText,
   round2,

@@ -228,7 +228,8 @@ test('R2-2: a signed "no credit" is told plainly — no failed-entry alarm, no "
   assert.equal(statusOf(id), 'approved');
   const reply = textsTo(bot, A2, from).join('\n');
   assert.doesNotMatch(reply, /FAILED|post it manually|NO credit posted/);
-  assert.match(reply, /solder madam: no credit — chosen at approval \(2 thans, 60 yd\)/);
+  // Review 3 (R3-3) — worded as what happened, never as "Credited".
+  assert.match(reply, /No credit to solder madam — chosen at approval \(2 thans, 60 yd\)/);
   assert.match(reply, /ABBA 30,000 \(1 than, 30 yd\)/);
   assert.match(reply, /✏️ solder madam · 44200: no credit — chosen by Musa/);
   assert.doesNotMatch(textsTo(bot, EMP, from).join('\n'), /need an admin's attention/);

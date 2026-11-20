@@ -224,15 +224,37 @@ function onStepReplaced(userId, prev) {
   if (!prev || prev.type !== SESSION_TYPE || prev.step !== STEP || !prev.flowMessageId || !prev.requestId) return;
   const at = botFor.get(String(userId));
   if (!at || !at.bot) return;
-  const text = `Rate step for return ${refOf(prev.requestId)} closed — nothing was approved. The request still waits.\nTap ✏️ Type the rate to open it again.`;
+  const ref = refOf(prev.requestId);
+  // Review 3 (R3-2) — the note says only what is true NOW: the row is read
+  // first (best-effort). Still waiting for this rate → the reopen offer;
+  // decided, or no longer asking this admin → closed, no chip; unreadable →
+  // closed, with the chip (re-checked on tap) but no claim that it waits.
   Promise.resolve()
-    .then(() => at.bot.editMessageText(text, {
-      chat_id: at.chatId, message_id: prev.flowMessageId,
-      reply_markup: { inline_keyboard: [[
+    .then(async () => {
+      let row = null;
+      try { row = await approvalQueueRepository.getByRequestId(prev.requestId); } catch (_) { /* unreadable */ }
+      const st = row ? String(row.status || '').toLowerCase() : '';
+      const stillAsks = row && st === 'pending' && returnRate.isReturn(row.actionJSON)
+        && returnRate.stepState(row.actionJSON) === 'ask';
+      const reopen = { reply_markup: { inline_keyboard: [[
         { text: '✏️ Type the rate', callback_data: `${NS}re:${prev.requestId}` },
         { text: '✖ Not now', callback_data: `${NS}rx:${prev.requestId}` },
-      ]] },
-    }))
+      ]] } };
+      let text;
+      let markup = { reply_markup: { inline_keyboard: [] } };
+      if (stillAsks) {
+        text = `Rate step for return ${ref} closed — nothing was approved. The request still waits.\nTap ✏️ Type the rate to open it again.`;
+        markup = reopen;
+      } else if (!row) {
+        text = `Rate step for return ${ref} closed — nothing was approved here.\nTap ✏️ Type the rate to open it again.`;
+        markup = reopen;
+      } else if (st && st !== 'pending') {
+        text = `Rate step for return ${ref} closed. The request is already ${st}.`;
+      } else {
+        text = `Rate step for return ${ref} closed — nothing was approved here. Open 🛂 Approvals to see the request.`;
+      }
+      return at.bot.editMessageText(text, { chat_id: at.chatId, message_id: prev.flowMessageId, ...markup });
+    })
     .catch(() => { /* too old to edit, or already gone */ });
 }
 sessionStore.onReplaced(onStepReplaced);
@@ -490,13 +512,17 @@ async function liveForRate(bot, query, requestId) {
     if (liveStep(uid, requestId)) sessionStore.clear(uid);
     return null;
   }
+  // Review 3 (R3-2) — a terminal answer ends the step's session too, so a
+  // later takeover cannot rewrite the true text with a reopen offer.
   if (ownRequestRefused(row, uid)) {
     await answer(OWN_REQUEST, true);
+    if (liveStep(uid, requestId)) sessionStore.clear(uid);
     return null;
   }
   if (!returnRate.gapsOf(aj).length) {
     await answer('This return needs no rate.', true);
     await close('This return needs no rate. Open the card to approve or reject it.');
+    if (liveStep(uid, requestId)) sessionStore.clear(uid);
     return null;
   }
   return row;
@@ -684,8 +710,19 @@ async function handleCallback(bot, query, rest) {
  * the rate: the step keeps it and says what a rate looks like.
  */
 function opensAnotherDoor(text) {
-  const first = String(text || '').trim().replace(/^\/+/, '').split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
+  const t = String(text || '').trim();
+  const words = t.replace(/^\/+/, '').split(/\s+/);
+  const first = words[0].toLowerCase().replace(/[^a-z]/g, '');
   if (!first) return false;
+  // Review 3 (R3-4) — `price 1450` / `rate 1450` is an answer to "the rate
+  // per yard": the step keeps it (the hint). `Price 9006 black 1500` is
+  // still the price door.
+  if ((first === 'price' || first === 'rate') && words.length === 2 && parseRateNumber(words[1]) !== null) return false;
+  // Review 3 (R3-7) — every line that opens with Return / Returns /
+  // Returned belongs to the one return door (RET-7), and a typed customer
+  // line (CUS-4) to ➕ Add Contact: neither is a try at the rate.
+  try { if (require('../utils/thanListParser').isReturnLine(t)) return true; } catch (_) { /* reader missing */ }
+  try { if (require('../utils/customerLineParser').parseCustomerLine(t)) return true; } catch (_) { /* reader missing */ }
   try {
     return Object.prototype.hasOwnProperty.call(require('../utils/typedRouter').VERBS, first);
   } catch (_) { return false; }
@@ -749,6 +786,13 @@ async function handleText(bot, msg, session) {
   if (rate === null || !(rate > 0)) {
     await drawCurrent(bot, chatId, userId, session, row,
       { note: '⚠️ That is not a rate. Type a number above zero, for example 1450.' });
+    return true;
+  }
+  // Review 3 (R3-8) — the card prints a rate to two decimals; a rate with
+  // more would make "rate × yards" disagree with the printed credit.
+  if (/\.\d{3,}$/.test(text)) {
+    await drawCurrent(bot, chatId, userId, session, row,
+      { note: '⚠️ A rate has at most two decimals, for example 3.20. Type it again.' });
     return true;
   }
   session.answers = Array.isArray(session.answers) ? session.answers : [];

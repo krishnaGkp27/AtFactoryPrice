@@ -840,7 +840,10 @@ async function returnRateLines(aj, customer, gaps, lead, outstandingJoin = '\nOu
   const amount = booked !== null ? booked : signedAmount;
   const by = (aj.rateFillBy && (aj.rateFillBy.name || aj.rateFillBy.id)) || 'an admin';
   let text = '';
-  if (booked !== null && Math.abs(booked - signedAmount) >= 0.01) {
+  if (booked !== null && rr.bookFailedFor(aj, rr.buyerKey(gaps[0]))) {
+    // Review 3 (R3-6) — the ledger refused the credit: nothing posted.
+    text += `${lead}credit not posted — the ledger entry failed (approved for ${rr.amountText(signedAmount)})`;
+  } else if (booked !== null && Math.abs(booked - signedAmount) >= 0.01) {
     text += `${lead}${rr.amountText(booked)} credited (approved for ${rr.amountText(signedAmount)})`;
   } else if (amount > 0) {
     text += `${lead}${rr.amountText(amount)}`;
