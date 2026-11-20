@@ -88,12 +88,16 @@ function armQueue() {
   return calls;
 }
 
+// RET-7 (20-Nov-2026): a message that OPENS with Return is the return door's
+// alone — one line, numbers only (test/characterization/typedReturnOneWay.test.js).
+// These sentences reach the same card through the intent redirect (R4), so
+// they no longer open with that word.
 test('RET-5 (R4): every typed return intent opens the multi-bale review card — nothing queues from the line', async () => {
   const bot = createFakeBot();
   const q = armQueue();
   sessionStore.clear(ADMIN);
   intentResult = { action: 'return_package', packageNo: 'P1', confidence: 0.9 };
-  await controller.handleMessage(bot, message('Return Bale P1'));
+  await controller.handleMessage(bot, message('Take back Bale P1'));
   const text = bot.allText().replace(/\\/g, '');
   assert.match(text, /↩️ \*Return\*[\s\S]*👤 Benduku · 2t · 120 yd[\s\S]*1\. P1 · 120 yd/, 'the buyer comes from the sale record');
   assert.equal(q.appended.length, 0, 'nothing queued from the line itself');
@@ -102,10 +106,10 @@ test('RET-5 (R4): every typed return intent opens the multi-bale review card —
 
   sessionStore.clear(ADMIN);
   intentResult = { action: 'return_than', packageNo: 'P3', thanNo: 2, customer: 'Benduku', confidence: 0.9 };
-  await controller.handleMessage(bot, message('Return than 2 from Bale P3 from Benduku'));
+  await controller.handleMessage(bot, message('Take back than 2 from Bale P3 from Benduku'));
   const t2 = bot.allText().replace(/\\/g, '');
   assert.match(t2, /👤 Alhaji Musa · 1t · 60 yd[\s\S]*P3\/2 · 60 yd/, 'the than belongs to Alhaji Musa whatever the line claimed');
-  assert.match(t2, /⚠️ You wrote "from Benduku"\. The sale record names another buyer: P3 → Alhaji Musa\./);
+  assert.match(t2, /ℹ️ I ignored "Benduku"/);
   intentResult = { action: 'unknown', confidence: 0 };
 });
 
@@ -114,7 +118,7 @@ test('a multi-buyer bale is no longer refused: each buyer gets their own group',
   armQueue();
   sessionStore.clear(ADMIN);
   intentResult = { action: 'return_package', packageNo: 'P3', confidence: 0.9 };
-  await controller.handleMessage(bot, message('Return Bale P3'));
+  await controller.handleMessage(bot, message('Take back Bale P3'));
   intentResult = { action: 'unknown', confidence: 0 };
   const text = bot.allText().replace(/\\/g, '');
   assert.match(text, /📦 2t · 120 yd · 2 customers[\s\S]*👤 Alhaji Musa · 1t · 60 yd[\s\S]*👤 Benduku · 1t · 60 yd/);
@@ -125,7 +129,7 @@ test('unknown and unsold bales are named on the card, not refused in silence', a
   armQueue();
   sessionStore.clear(ADMIN);
   intentResult = { action: 'return_package', packageNo: 'P2', confidence: 0.9 };
-  await controller.handleMessage(bot, message('Return Bale P2'));
+  await controller.handleMessage(bot, message('Take back Bale P2'));
   intentResult = { action: 'unknown', confidence: 0 };
   assert.match(bot.allText(), /• P2 — nothing sold — all 1 than in stock/);
 });

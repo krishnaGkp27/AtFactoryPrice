@@ -4429,13 +4429,20 @@ async function handleMessage(bot, msg) {
   // grammar, parsed locally, opens the multi-bale return review card. A
   // bare-only line qualifies too (R4 — every typed return goes through it).
   {
-    const { looksLikeReturnList, parseThanList } = require('../utils/thanListParser');
+    const { looksLikeReturnList, parseThanList, isReturnLine } = require('../utils/thanListParser');
     if (looksLikeReturnList(text)) {
       const parsed = parseThanList(text);
       if (parsed.items.length) {
         const shown = await require('../flows/returnBundleFlow').startWithLine(bot, chatId, userId, parsed);
         if (shown) return;
       }
+    }
+    // RET-7 (owner, 20-Nov-2026: "close all other door of this script … a
+    // single window") — any other message that opens with Return gets the
+    // ONE line back, in every AI mode. Nothing is read out of its words.
+    if (isReturnLine(text)) {
+      await require('../flows/returnBundleFlow').sendFormatCard(bot, chatId, userId, text);
+      return;
     }
   }
   // TRF-23 (owner's Go, 31-Oct-2026) — "Transfer 832, 1186, 786 to kano":

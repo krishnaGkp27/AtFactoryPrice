@@ -176,7 +176,7 @@ function localIntent(raw) {
     case 'sell': case 'return': case 'transfer':
       // The local doors in front of the router claim every line with numbers;
       // reaching here means there were none.
-      if (verb === 'return') return hint(verb, 'Bale numbers, a than as 6189/5, several thans as 631/1+2+3. The buyer and the store may follow: from Abba to Idumota.');
+      if (verb === 'return') return hint(verb, 'Numbers only: a than as 631/1, several thans as 631/1+2+3. No name, no store.');
       return hint(verb, verb === 'transfer' ? 'Bale numbers, then the store it goes to.' : 'Bale numbers, a than as 6189/5.');
     case 'bale': {
       const nums = rest.match(/\d+/g) || [];

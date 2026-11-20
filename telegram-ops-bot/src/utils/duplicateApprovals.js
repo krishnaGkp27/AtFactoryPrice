@@ -41,9 +41,6 @@ const VOLATILE_KEYS = new Set([
   // PRC-2 — who was asked first, when the card went wider, and the admin who
   // typed a blank amount are routing and bookkeeping, never what is asked.
   'askedAdmin', 'askWidenedAt', 'amountBy', 'amountPending',
-  // RET-6 — the requester's typed words that differ from the sale record
-  // are a remark for the approver, never part of what is returned.
-  'typedNotes',
   'stage', 'dispatchedAt', 'bales', 'dispatched', 'short',
   'createdAt', 'created_at', 'timestamp', 'ts', 'updatedAt',
   'sale_doc_file_id', 'sale_doc_file_unique_id',
