@@ -26,7 +26,7 @@
  * seller's choice).
  *
  * Session (type 'return_bundle_flow', callback namespace `rb:`):
- *   { step, flowMessageId, bales[] (each may carry typed{from,to,other}), knownStores[], notLoaded[], bad[], openIdx,
+ *   { step, flowMessageId, bales[] (each may carry typed{from,to,other}), notLoaded[], bad[], openIdx,
  *     returnedOn, calYm, maxDaysBack, condition, conditionNote,
  *     photoFileId, photoKind, _submitting }
  *   bales[i] = { packageNo, warehouse, design, arrivalBatch, whole, needPick,
@@ -202,14 +202,16 @@ async function resolveBuyers(bales) {
 
 /* ── RET-6: the words typed around the numbers ────────────────────────── */
 
-const nameKey = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+/** Letters and digits of any script, accents folded: "Àbíkẹ́ Stores" → "abike stores". */
+const nameKey = (v) => String(v || '').normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase()
+  .replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
 /**
- * How well does a typed name stand for a name on record? WHOLE WORDS only —
- * "ali" is not "Alimat Bello" and "abba" is not "Kabba Trading".
+ * How does a typed name compare with a name on record? WHOLE WORDS only —
+ * "ali" is not "Alimat Bello".
  * @returns {'exact'|'partial'|'none'} exact = the same words (any order, any
  *   case); partial = one side's words are all in the other ("kano" ↔ "Kano
- *   office", "Idumota store" ↔ "IDUMOTA").
+ *   office"); none = no such overlap.
  */
 function nameLevel(typed, actual) {
   const a = nameKey(typed).split(' ').filter(Boolean);
@@ -224,118 +226,125 @@ function nameLevel(typed, actual) {
 }
 const nameMatches = (typed, actual) => nameLevel(typed, actual) !== 'none';
 
-/**
- * The names on record a typed name stands for: the exact ones when there is
- * one, else every partial one (more than one = the typed name is not clear).
- */
-function standsFor(typed, names) {
-  const seen = new Set();
-  const uniq = [];
-  for (const n of names || []) {
-    const k = nameKey(n);
-    if (k && !seen.has(k)) { seen.add(k); uniq.push(String(n)); }
-  }
-  const exact = uniq.filter((n) => nameLevel(typed, n) === 'exact');
-  return exact.length ? exact : uniq.filter((n) => nameLevel(typed, n) === 'partial');
-}
-
 /** What the person typed about the buyer and the store (never trusted). */
 function typedOf(parsed) {
   const p = parsed || {};
   if (p.isReturn) {
     return { from: String(p.returnFrom || ''), to: String(p.returnTo || ''), other: String(p.returnOther || '') };
   }
-  // The older doors (an intent redirect, a line that did not open with its
-  // numbers): the customer they name is the buyer the goods come from.
+  // The older doors (an intent redirect): the customer they name is the
+  // buyer the goods come from.
   return { from: String(p.ignoredCustomer || ''), to: '', other: String(p.warehouseHint || '') };
 }
 
-/** Tag the bales a line just loaded with that line's words (each line is checked against its own bales). */
-function tagTyped(bales, before, parsed) {
+/**
+ * Tag every bale a line NAMES with that line's words — a bale already on
+ * the card included, so a later line's words are never checked against
+ * nothing. Each line is checked against its own bales only.
+ */
+function tagTyped(bales, parsed) {
   const typed = typedOf(parsed);
   if (!typed.from && !typed.to && !typed.other) return;
-  const had = new Set((before || []).map((b) => pkgKey(b.packageNo)));
-  for (const b of bales) if (!had.has(pkgKey(b.packageNo))) b.typed = typed;
+  const named = new Set(((parsed && parsed.items) || []).map((it) => pkgKey(it.packageNo)));
+  for (const b of bales) if (named.has(pkgKey(b.packageNo))) b.typed = typed;
 }
+
+const TYPED_NOTE_MAX = 6;                       // lines kept on the cards and the request
+const clip = (v, n = 40) => (String(v).length > n ? `${String(v).slice(0, n - 1)}…` : String(v));
 
 /**
  * RET-6 (owner, 20-Nov-2026) — a typed return may say who the goods come
  * from and which store they come back to ("Return package from soldier madam
  * 631/1+2, 614/1 to Idumota"). The sale record decides both (R3: each bale
  * goes back to the store it was sold from; the credit goes to the buyer the
- * sale names) — so the words are CHECKED, and a difference is said out loud
- * instead of being dropped. Nothing is printed when they agree.
+ * sale names), so the words are never used — they are SHOWN next to the
+ * record whenever they are not exactly the record's own name:
  *
- * Each typed line is checked against the bales IT loaded. A name that fits
- * more than one store / buyer is said to be unclear, never matched quietly.
- * @param {object} session bales carry `.typed`; `knownStores` = every store the stock sheet names
+ *   exact (same words, any case)  → nothing is printed
+ *   anything else                 → one line naming what the record says
+ *                                   (⚠️ when no word agrees, ℹ️ otherwise)
+ *
+ * No guessing which store or customer a short or misspelt name "means":
+ * the person and the approving admin read both and decide.
+ * @param {object} session bales carry `.typed` (the words of the line that named them)
  * @param {Array<object>} items the request's picked thans
- * @returns {string[]} plain lines (`⚠️ …` a difference, `ℹ️ …` words not used)
+ * @returns {string[]} plain lines, at most TYPED_NOTE_MAX (+ one "and N more")
  */
 function typedNotes(session, items) {
-  const out = [];
-  if (!session || !Array.isArray(items) || !items.length) return out;
+  if (!session || !Array.isArray(items) || !items.length) return [];
   const byBale = new Map();
   for (const it of items) {
     const k = pkgKey(it.packageNo);
-    if (!byBale.has(k)) byBale.set(k, { no: String(it.packageNo), store: String(it.warehouse || ''), buyers: new Set(), names: new Set() });
-    const b = byBale.get(k);
+    if (!byBale.has(k)) byBale.set(k, { no: String(it.packageNo), store: String(it.warehouse || ''), buyers: new Map() });
     const shown = String(it.customer || it.soldTo || '');
-    if (shown) b.buyers.add(shown);
-    for (const n of [it.customer, it.soldTo]) if (n) b.names.add(String(n));
+    const rec = byBale.get(k).buyers;
+    const bk = nameKey(shown) || shown;
+    if (!rec.has(bk)) rec.set(bk, { shown, names: new Set() });
+    for (const n of [it.customer, it.soldTo]) if (n) rec.get(bk).names.add(String(n));
   }
-  const allStores = [...new Set([...[...byBale.values()].map((b) => b.store), ...(session.knownStores || [])].filter(Boolean))];
-  const allBuyers = [...byBale.values()].flatMap((b) => [...b.names]);
-  // Group the picked bales by the words of the line that loaded them.
+  const best = (typed, names) => {
+    let lvl = 'none';
+    for (const n of names) {
+      const l = nameLevel(typed, n);
+      if (l === 'exact') return 'exact';
+      if (l === 'partial') lvl = 'partial';
+    }
+    return lvl;
+  };
+  const storeLevel = (typed, b) => best(typed, [b.store]);
+  // every buyer of the bale's picked thans must agree: the weakest decides
+  const buyerLevel = (typed, b) => {
+    const levels = [...b.buyers.values()].map((v) => best(typed, [...v.names]));
+    if (!levels.length || levels.includes('none')) return 'none';
+    return levels.includes('partial') ? 'partial' : 'exact';
+  };
   const groups = new Map();
+  const add = (kind, value, bale, level) => {
+    const gk = `${kind}|${nameKey(value) || value}`;
+    if (!groups.has(gk)) groups.set(gk, { kind, value, rows: [] });
+    groups.get(gk).rows.push({ bale, level });
+  };
   for (const sb of session.bales || []) {
-    const rec = byBale.get(pkgKey(sb.packageNo));
+    const b = byBale.get(pkgKey(sb.packageNo));
     const t = sb.typed || session.typed;
-    if (!rec || !t) continue;
-    let { from = '', to = '', other = '' } = t;
-    // A bare word with no "to" / "from" in front: the store when it names a
-    // store, else the buyer when it names one.
-    if (other) {
-      if (!to && standsFor(other, allStores).length) { to = other; other = ''; }
-      else if (!from && standsFor(other, allBuyers).length) { from = other; other = ''; }
-    }
-    for (const [kind, value] of [['to', to], ['from', from], ['other', other]]) {
-      if (!value) continue;
-      const gk = `${kind}|${nameKey(value) || value}`;
-      if (!groups.has(gk)) groups.set(gk, { kind, value, bales: [] });
-      groups.get(gk).bales.push(rec);
+    if (!b || !t) continue;
+    if (t.to) add('to', t.to, b, storeLevel(t.to, b));
+    if (t.from) add('from', t.from, b, buyerLevel(t.from, b));
+    if (t.other) {
+      // A word with no "to" / "from" in front: silent only when it IS the
+      // store or IS the buyer; otherwise both are shown.
+      const exact = storeLevel(t.other, b) === 'exact' || buyerLevel(t.other, b) === 'exact';
+      const some = storeLevel(t.other, b) !== 'none' || buyerLevel(t.other, b) !== 'none';
+      add('other', t.other, b, exact ? 'exact' : (some ? 'partial' : 'none'));
     }
   }
-  const list = (rows, fmt) => `${rows.slice(0, 6).map(fmt).join(', ')}${rows.length > 6 ? ` and ${rows.length - 6} more` : ''}`;
   const storeOf = (b) => `${b.no} → ${b.store || 'no store on record'}`;
-  const buyerOf = (b) => `${b.no} → ${[...b.buyers].join(' / ') || 'no buyer on record'}`;
+  const buyersOf = (b) => [...b.buyers.values()].map((v) => v.shown).filter(Boolean).join(' / ') || 'no buyer on record';
+  const buyerOf = (b) => `${b.no} → ${buyersOf(b)}`;
+  const bothOf = (b) => `${b.no} → ${b.store || 'no store on record'} · ${buyersOf(b)}`;
+  const list = (rows, fmt) => `${rows.slice(0, 6).map((r) => fmt(r.bale)).join(', ')}${rows.length > 6 ? ` and ${rows.length - 6} more` : ''}`;
+  const out = [];
   for (const g of groups.values()) {
+    const off = g.rows.filter((r) => r.level !== 'exact');
+    if (!off.length) continue;
+    const apart = off.some((r) => r.level === 'none');
+    const said = clip(g.value);
     if (g.kind === 'to') {
-      const targets = standsFor(g.value, allStores);
-      if (targets.length > 1) {
-        out.push(`⚠️ You wrote "to ${g.value}". That name fits more than one store. Each bale goes back to the store it was sold from: ${list(g.bales, storeOf)}.`);
-        continue;
-      }
-      const keys = new Set(targets.map(nameKey));
-      const off = g.bales.filter((b) => !keys.has(nameKey(b.store)));
-      if (off.length) out.push(`⚠️ You wrote "to ${g.value}". Returned goods go back to the store they were sold from: ${list(off, storeOf)}.`);
+      out.push(apart
+        ? `⚠️ You wrote "to ${said}". Returned goods go back to the store they were sold from: ${list(off, storeOf)}.`
+        : `ℹ️ You wrote "to ${said}". The store on the sale record: ${list(off, storeOf)}.`);
     } else if (g.kind === 'from') {
-      const targets = standsFor(g.value, allBuyers);
-      const keys = new Set(targets.map(nameKey));
-      const hit = g.bales.filter((b) => [...b.names].some((n) => keys.has(nameKey(n))));
-      const exact = targets.some((n) => nameLevel(g.value, n) === 'exact');
-      const fitted = new Set(hit.flatMap((b) => [...b.buyers].map(nameKey)));
-      if (!exact && fitted.size > 1) {
-        out.push(`⚠️ You wrote "from ${g.value}". That name fits more than one buyer. The credit goes to the buyer on the sale record: ${list(g.bales, buyerOf)}.`);
-        continue;
-      }
-      const off = g.bales.filter((b) => !hit.includes(b));
-      if (off.length) out.push(`⚠️ You wrote "from ${g.value}". The sale record names another buyer: ${list(off, buyerOf)}. The credit goes to the buyer on the sale record.`);
+      out.push(apart
+        ? `⚠️ You wrote "from ${said}". The sale record names another buyer: ${list(off, buyerOf)}. The credit goes to the buyer on the sale record.`
+        : `ℹ️ You wrote "from ${said}". The buyer on the sale record: ${list(off, buyerOf)}.`);
     } else {
-      out.push(`ℹ️ I did not use "${g.value}". The buyer and the store come from the sale record.`);
+      out.push(`${apart ? '⚠️' : 'ℹ️'} You wrote "${said}". The store and the buyer come from the sale record: ${list(off, bothOf)}.`);
     }
   }
-  return [...new Set(out)];
+  const uniq = [...new Set(out)];
+  return uniq.length > TYPED_NOTE_MAX
+    ? [...uniq.slice(0, TYPED_NOTE_MAX), `…and ${uniq.length - TYPED_NOTE_MAX} more typed names that are not the sale record's.`]
+    : uniq;
 }
 
 /* ── the request body (one builder — review, confirm and the queue row) ─── */
@@ -382,9 +391,9 @@ function buildActionJSON(session, label) {
     delete g.key;
   }
   const stores = [...new Set(items.map((it) => it.warehouse).filter(Boolean))];
-  // RET-6 — what the requester typed that the sale record does not bear out
+  // RET-6 — what the requester typed that is not the sale record's own name
   // rides the request, so the approving admin reads it too.
-  const typedDiffs = typedNotes(session, items).filter((n) => n.startsWith('⚠️'));
+  const typedDiffs = typedNotes(session, items);
   return {
     action: 'return_bundle',
     items,
@@ -666,7 +675,7 @@ async function startWithLine(bot, chatId, userId, parsed, { messageId = null } =
   }
   const { bales, notLoaded } = loadLine(items, snap.rows, []);
   await resolveBuyers(bales);
-  tagTyped(bales, [], parsed);
+  tagTyped(bales, parsed);
   sessionStore.set(uid, {
     type: SESSION_TYPE,
     step: 'review',
@@ -676,9 +685,6 @@ async function startWithLine(bot, chatId, userId, parsed, { messageId = null } =
     bales,
     notLoaded,
     bad: Array.isArray(parsed.bad) ? parsed.bad.slice(0, 6) : [],
-    // RET-6 — every store the stock sheet names, so a typed "to Lagos" is
-    // told apart from "Lagos Island" even when only one is on this return.
-    knownStores: [...new Set((snap.rows || []).map((r) => String((r && r.warehouse) || '').trim()).filter(Boolean))],
     openIdx: null,
     returnedOn: '', calYm: '', maxDaysBack: 0,
     condition: '', conditionNote: '', photoFileId: '', photoKind: '',
@@ -934,12 +940,17 @@ async function handleText(bot, msg) {
     const line = `return ${text.replace(/^(?:return(?:s|ed|ing)?|sell|sale|sold)\b/i, '').trim()}`;
     if (!/\d/.test(line)) return false;
     const parsed = parseThanList(line);
+    if (parsed.tooLong) {
+      await dropBelow(bot, chatId, userId, session);
+      await showReview(bot, chatId, userId, { note: '❓ That line is too long to read. Send the bale numbers in shorter lines.' });
+      return true;
+    }
     if (!parsed.items.length && !(parsed.bad || []).length) return false;
     const { rows } = await snapshotFor(userId);
     const { bales, notLoaded } = loadLine(parsed.items, rows, session.bales || []);
     const added = bales.length - (session.bales || []).length;
     await resolveBuyers(bales);
-    tagTyped(bales, session.bales || [], parsed);
+    tagTyped(bales, parsed);
     session.bales = bales;
     session.notLoaded = notLoaded;   // the earlier "not loaded" list is superseded by this line's
     session.bad = (parsed.bad || []).slice(0, 6);
@@ -1014,5 +1025,5 @@ module.exports = {
   handleCallback,
   handleText,
   handlePhoto,
-  _internals: { loadLine, buildActionJSON, CONDITIONS, typedNotes, typedOf, nameMatches, nameLevel, standsFor },
+  _internals: { loadLine, buildActionJSON, CONDITIONS, typedNotes, typedOf, tagTyped, nameMatches, nameLevel },
 };

@@ -115,10 +115,18 @@ test('RET-6: only the bales that differ are named; a request with no difference 
   assert.equal(returnBundleFlow._internals.buildActionJSON(clean.session, null).typedNotes, undefined);
 });
 
-test('RET-6: a bare word is the store or the buyer when it names one on the list, else it is said to be unused', async () => {
-  assert.doesNotMatch((await type('Return 631/1 idumota')).text, /You wrote|I did not use/);
-  assert.doesNotMatch((await type('Return 631/1 soldier madam')).text, /You wrote|I did not use/);
-  assert.match((await type('Return 631/1 urgent')).text, /ℹ️ I did not use "urgent"\. The buyer and the store come from the sale record\./);
+test('RET-6: a bare word is silent only when it IS the store or the buyer; otherwise both are shown', async () => {
+  assert.doesNotMatch((await type('Return 631/1 idumota')).text, /You wrote/);
+  assert.doesNotMatch((await type('Return 631/1 soldier madam')).text, /You wrote/);
+  assert.match((await type('Return 631/1 urgent')).text,
+    /⚠️ You wrote "urgent"\. The store and the buyer come from the sale record: 631 → IDUMOTA · Soldier Madam\./);
+  // a buyer word beside a store word is not swallowed as "the store": both facts are shown
+  assert.match((await type('Return 631/1 abba idumota')).text,
+    /ℹ️ You wrote "abba idumota"\. The store and the buyer come from the sale record: 631 → IDUMOTA · Soldier Madam\./);
+  // the name in front of the numbers, without "from"
+  const front = await type('Return soldier madam 631/1+2 to idumota');
+  assert.ok(front.text.includes('631/1 · 30 yd') && front.text.includes('631/2 · 30 yd'));
+  assert.doesNotMatch(front.text, /You wrote/);
 });
 
 test('RET-6: the worded line opens the same card with the AI switched off', async () => {
@@ -152,23 +160,60 @@ test('RET-6 review: a count in front of a bale, a phone number and "12 days ago"
   }
 });
 
-test('RET-6 review: whole words only — a near-miss store or buyer is said, an unclear name is said', async () => {
-  // "Lagos" is a store of its own, so a bale sold from Lagos Island differs.
-  const near = (await type('Return 800 to Lagos')).text;
-  assert.match(near, /⚠️ You wrote "to Lagos"\. Returned goods go back to the store they were sold from: 800 → Lagos Island\./);
-  // "office" fits Kano office and Lagos office.
-  const unclear = (await type('Return 810, 820 to office')).text;
-  assert.match(unclear, /⚠️ You wrote "to office"\. That name fits more than one store\. Each bale goes back to the store it was sold from: 810 → Kano office, 820 → Lagos office\./);
-  // "Musa" fits two buyers on this return.
-  const who = (await type('Return 810, 820 from Musa')).text;
-  assert.match(who, /⚠️ You wrote "from Musa"\. That name fits more than one buyer\. The credit goes to the buyer on the sale record: 810 → Musa Ibrahim, 820 → Alhaji Musa\./);
-  // …and one buyer when only one is on the return: nothing to say.
-  assert.doesNotMatch((await type('Return 810 from Musa')).text, /You wrote/);
-  // A short store name that fits exactly one store: nothing to say.
-  assert.doesNotMatch((await type('Return 810 to kano')).text, /You wrote/);
-  // A bare word that is a store is checked as the store, not taken for a buyer.
-  const bare = (await type('Return 810 Lagos')).text;
-  assert.match(bare, /⚠️ You wrote "to Lagos"\. Returned goods go back to the store they were sold from: 810 → Kano office\./);
+test('RET-6 review: silent only on the record\'s own name — a short or near-miss name is shown beside the record', async () => {
+  // "Lagos" is not "Lagos Island": shown, whichever store the person meant
+  assert.match((await type('Return 800 to Lagos')).text,
+    /ℹ️ You wrote "to Lagos"\. The store on the sale record: 800 → Lagos Island\./);
+  // a short name: the card says what it stands for
+  assert.match((await type('Return 810 to kano')).text,
+    /ℹ️ You wrote "to kano"\. The store on the sale record: 810 → Kano office\./);
+  assert.match((await type('Return 810, 820 to office')).text,
+    /ℹ️ You wrote "to office"\. The store on the sale record: 810 → Kano office, 820 → Lagos office\./);
+  assert.match((await type('Return 810, 820 from Musa')).text,
+    /ℹ️ You wrote "from Musa"\. The buyer on the sale record: 810 → Musa Ibrahim, 820 → Alhaji Musa\./);
+  // the verdict for one line never depends on another line's bales
+  assert.match((await type('Return 810 from Musa')).text,
+    /ℹ️ You wrote "from Musa"\. The buyer on the sale record: 810 → Musa Ibrahim\./);
+  // a typed name with MORE words than the record's is not taken as the same customer
+  assert.match((await type('Return 810 from Musa Ibrahim Kano')).text, /ℹ️ You wrote "from Musa Ibrahim Kano"/);
+  // the exact name, any case or order: nothing
+  assert.doesNotMatch((await type('Return 810 from ibrahim musa to KANO OFFICE')).text, /You wrote/);
+  // a piece of a word is no match at all
+  assert.match((await type('Return 810 from Mus')).text, /⚠️ You wrote "from Mus"\. The sale record names another buyer: 810 → Musa Ibrahim\./);
+  // a bare word that is another store's name
+  assert.match((await type('Return 810 Lagos')).text,
+    /⚠️ You wrote "Lagos"\. The store and the buyer come from the sale record: 810 → Kano office · Musa Ibrahim\./);
+});
+
+test('RET-6 review: a later line that names a bale already on the card is still checked', async () => {
+  const { bot } = await type('Return 631/1');
+  await controller.handleMessage(bot, message('631/1 from Abba to Lagos'));
+  const t = lastText(bot);
+  assert.match(t, /already on the list/);
+  assert.match(t, /⚠️ You wrote "to Lagos"\. Returned goods go back to the store they were sold from: 631 → IDUMOTA\./);
+  assert.match(t, /⚠️ You wrote "from Abba"\. The sale record names another buyer: 631 → Soldier Madam\./);
+});
+
+test('RET-6 review: the admin card prints every kept line, a long typed name is clipped, the count is bounded', async () => {
+  const { bot, session } = await type('Return 631/1 from Abba to Lagos');
+  await controller.handleMessage(bot, message('700 from Musa to Kano'));
+  await controller.handleMessage(bot, message(`800 to ${'Verylongstorename'.repeat(5)}`));
+  const aj = returnBundleFlow._internals.buildActionJSON(sessionStore.get(EMP) || session, null);
+  assert.equal(aj.typedNotes.length, 5);
+  const card = await approvalCards.buildReturnBundleCard(aj);
+  for (const n of aj.typedNotes) assert.ok(card.includes(n.replace(/^(⚠️|ℹ️) You wrote/, '$1 The requester wrote')), n);
+  assert.match(card, /The requester wrote "from Musa"\. The sale record names another buyer: 700 → ABBA/);
+  assert.ok(aj.typedNotes.every((n) => n.length < 260), 'a typed name is clipped to 40 characters');
+  // more than six distinct typed names: six lines and a count, never an unbounded list
+  const many = { bales: [], typed: null };
+  const items = [];
+  for (let i = 0; i < 9; i += 1) {
+    many.bales.push({ packageNo: String(900 + i), typed: { from: `Buyer${i}`, to: '', other: '' } });
+    items.push({ packageNo: String(900 + i), warehouse: 'Lagos', customer: 'ABBA', soldTo: 'ABBA' });
+  }
+  const notes = returnBundleFlow._internals.typedNotes(many, items);
+  assert.equal(notes.length, 7);
+  assert.match(notes[6], /^…and 3 more typed names/);
 });
 
 test('RET-6 review: each typed line is checked against the bales IT loaded; a line on the card is always a return line', async () => {
@@ -192,6 +237,11 @@ test('RET-6: nameMatches — a short name for a store, word order, and no loose 
   assert.equal(nameLevel('lagos', 'LAGOS'), 'exact');
   assert.equal(nameMatches('ali', 'Alimat Bello'), false, 'whole words, never a piece of a word');
   assert.equal(nameMatches('abba', 'Kabba Trading'), false);
+  // accents are folded and other scripts are compared, never dropped to an empty key
+  assert.equal(nameLevel('Abike Stores', 'Àbíkẹ́ Stores'), 'exact');
+  assert.equal(nameLevel('محمد', 'محمد'), 'exact');
+  assert.equal(nameLevel('محمد', 'ABBA'), 'none');
+  assert.equal(nameLevel('Musa Ibrahim', 'Musa'), 'partial', 'more words than the record is not the same name');
   assert.equal(nameMatches('kano', 'Kano office'), true);
   assert.equal(nameMatches('Idumota store', 'IDUMOTA'), true);
   assert.equal(nameMatches('madam soldier', 'Soldier Madam'), true);

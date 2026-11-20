@@ -111,86 +111,91 @@ The return line took only a bare list of numbers. `package`, `from soldier
 madam` and `to Idumota` each sent the line to the sentence path, which is
 switched off (TXT-1). Owner: *"Fix it immediately."*
 
-**What the line reads now** (`thanListParser.splitReturnLine`, still parsed
-locally, no AI):
+### Two readers, kept apart
 
-| Typed | Read as |
+| Line | Reader | Behaviour |
+|---|---|---|
+| the PURE list — numbers, commas, `/`, `+`, `-`, `x` and nothing else | `parseThanList`'s own code | exactly as RET-5 read it (checked against the pre-RET-6 reader on 150,000 lists: no difference) |
+| a line with words | `thanListParser.parseReturnWords` | a token scanner written for returns |
+
+Sell lines are untouched (150,000 lines compared: identical).
+
+### What the scanner reads
+
+Every token is one of three things:
+
+| Token | Becomes |
 |---|---|
-| `Return 631/1+2+3+4+5, 614/1` | the list, as before |
-| `package` · `bale` · `pkg` · `no` in front of the numbers | nothing — set aside |
-| `from Soldier Madam` (before or after the numbers) | the buyer the goods come back from |
-| `to Idumota` · `at` · `in` · `@` | the store they come back to |
+| `631/1` · `631/1+2+3` · `631/1-3` · `771 x3` | an item |
+| a bare number of two to six digits, no leading zero | an item (a whole bale) |
 | `than 2 from bale 5801` · `bale 631 than 3` | `5801/2` · `631/3` |
-| a bare word after the numbers (`… idumota`) | the store when it names one on the list, else the buyer when it names one |
-| a date (`18 Nov`) | set aside — the date step asks |
+| any other number — a count (`10 thans`, `12 days`), a phone number, `24hrs`, `10:30`, `x3`, `design 9043`, a single digit | **reported** under `❓ Could not read`, never loaded, never dropped |
+| a date (`18/11/2026`, `18 Nov`, `18 Nov 2026`) | set aside — the date step asks. A bale is never taken for a year (`18 Nov 6189` keeps bale 6189) |
+| a word | filler (`package`, `bale`, `pls`, `abeg` …) is dropped; the rest are the buyer or the store |
 
-Not claimed (they get the Return hint line): a count (`Return 5 bales of
-9006`), a line with no number list (`Return the goods`).
+In a return the small words mean the opposite of a sale: **`from` names the
+buyer** the goods come back from, **`to` / `at` / `in` / `@` the store**. A
+word with neither in front (`Return 631/1 idumota`,
+`Return soldier madam 631/1 …`) is kept as it is.
 
-**The sale record still decides (R3 stands).** The typed buyer and store are
-CHECKED, never used:
+**When the line is claimed** (`looksLikeReturnList`): its FIRST number is an
+item, and the line is about the numbers — nothing but filler in front of
+them, or `from <buyer>`, or a short name followed by an item written with
+`/` or `x`. Not claimed (the Return hint answers): `Return 5 bales of 9006`,
+`Return 2 thans 631`, `Return from Abba 08012345678`, `Return policy 2026`,
+`Return the goods`. A line with words longer than 1,500 characters is not
+read.
 
-- they agree with the sale record → nothing is printed (the header already
-  names the store, the groups name the buyer);
-- the store differs →
-  `⚠️ You wrote "to Lagos". Returned goods go back to the store they were sold from: 631 → IDUMOTA.`
-- the buyer differs →
-  `⚠️ You wrote "from Abba". The sale record names another buyer: 631 → Soldier Madam. The credit goes to the buyer on the sale record.`
-- a word that names neither →
-  `ℹ️ I did not use "urgent". The buyer and the store come from the sale record.`
+### The sale record still decides (R3 stands)
 
-The two `⚠️` lines show on the review card and the confirm card, ride the
-request as `actionJSON.typedNotes` (the executor does not read it; the
-duplicate detector ignores it) and print on the admin's card as
+The typed buyer and store are never used. They are shown beside the record
+whenever they are not exactly the record's own name:
+
+| Typed against the record | Card |
+|---|---|
+| the same words, any case or order (`to idumota` · `IDUMOTA`) | nothing — the header names the store, the groups name the buyer |
+| some words agree (`to kano` · `Kano office`; `to Lagos` · `Lagos Island`; `from Musa` · `Musa Ibrahim`) | `ℹ️ You wrote "to kano". The store on the sale record: 810 → Kano office.` |
+| no word agrees | `⚠️ You wrote "to Lagos". Returned goods go back to the store they were sold from: 631 → IDUMOTA.` · `⚠️ You wrote "from Abba". The sale record names another buyer: 631 → Soldier Madam. The credit goes to the buyer on the sale record.` |
+| a word with no `to` / `from` that is neither the store nor the buyer | `⚠️ You wrote "urgent". The store and the buyer come from the sale record: 631 → IDUMOTA · Soldier Madam.` |
+
+The bot does not guess which store or customer a short or misspelt name
+"means": whole words only (`ali` is not `Alimat Bello`), accents folded,
+any script. Each typed line is checked against the bales it names (a bale
+already on the card included). At most six lines are kept, a long typed
+name is clipped to 40 characters, and a seventh line says how many more.
+
+The lines show on the review card and the confirm card, ride the request as
+`actionJSON.typedNotes` (the executor does not read it; the duplicate
+detector ignores it) and print on the admin's card as
 `⚠️ The requester wrote …` — so goods that physically went to another store
 get a transfer after the return is approved.
 
 The old line `ℹ️ I ignored "<name>" — the buyer comes from the sale record.`
-is gone: a name is now checked, and silent when it is right.
+is gone.
+
+### How it got here
+
+The first cut went live straight after its own tests passed. Two adversarial
+reviews the same hour found that patching the sale's reader for returns had
+left gaps — a bale typed after the words was dropped without a word, a
+count in front of a bale was read as the bale, one pattern froze on
+thousands of spaces, and the plain list had gained items out of leftovers
+(`Return 631-635`). The word-reading was then rebuilt as the scanner above,
+beside an untouched plain-list reader, and the name check was reduced to
+"silent only on the record's own name".
+
+**Left as is.** `Return 50000 to Abba` opens the card with `50000 — not
+found` (a five-digit number can be a bale). A numeric date without a year
+(`18/11`) is the item syntax and is read as bale 18, than 11. A registered
+alias of the buyer gets the `ℹ️` / `⚠️` line (the name typed is not the
+record's). The SELL line still drops a number typed after its words
+(`Sell 1100/1 to Abba 1091/1`) — it was not touched here.
 
 **Not built.** Changing where returned goods go (R3) or who is credited from
 the typed words. If Abdul often receives returns at a store other than the
 one that sold the goods, that is an owner ruling: either the return may name
 the receiving store, or the bot offers a transfer right after approval.
 
-**Hardened the same day after an adversarial review (11 findings, all
-closed).** The first cut went live before the review finished; these were
-fixed and redeployed within the hour:
-
-- **Every number is loaded or reported.** A bale typed AFTER the words
-  (`Return 631/1 to Idumota 614/1`, `… from soldier madam 614/1`,
-  `… package 614/1`) was left off the card without a word. It is an item
-  now; a token that cannot be read is listed under `❓ Could not read`.
-- **A count is never a bale.** `Return 2 thans 631` was read as bale 2,
-  than 631 — it is not claimed now (the Return hint answers);
-  `Return 631, 2 thans 614` loads 631 and 614 and reports `2 thans`.
-  Among words a bare bale is two to six digits with no leading zero, so a
-  phone number or `12 days ago` is never a bale. The pure number list keeps
-  its RET-5 reading exactly.
-- **No freeze.** `Return from` followed by thousands of spaces took over a
-  minute in one pattern and blocked the bot. White space is collapsed first,
-  the buyer in front is found by position, and a line over 1,500 characters
-  is not a return list.
-- **Names match on whole words.** `ali` is not `Alimat Bello`; `Lagos` is
-  not `Lagos Island` when `Lagos` is a store of its own (the card knows
-  every store the stock sheet names). A name that fits more than one store
-  or buyer is said to be unclear:
-  `⚠️ You wrote "to office". That name fits more than one store. Each bale goes back to the store it was sold from: 810 → Kano office, 820 → Lagos office.`
-- **Each typed line is checked against the bales it loaded** (a second line
-  added on the card with other words no longer overwrites the first), and a
-  line typed on the return card is always read as a return line, whatever
-  verb leads it.
-- `and` inside a buyer's name (`from Sani and Sons`) no longer cuts the
-  line; a leading date (`Return 18 Nov 631/1`) is set aside; trailing
-  `please` / `on` / a full stop are dropped from the store and the buyer.
-
-Left as is: `Return 50000 to Abba` opens the card with `50000 — not found`
-(a five-digit number can be a bale); a buyer whose name ends in a number
-(`from shop 12 631/1`) loses the number to the list — both show on the card.
-The SELL line has the same old gap for a number typed after its words
-(`Sell 1100/1 to Abba 1091/1` drops 1091/1); it was not touched here.
-
 **Tests.** `test/characterization/typedReturnWords.test.js` (the three lines
-through the real controller; both differences; the admin card; every review
-case), `test/unit/utils/thanListParser.test.js` (the RET-6 blocks).
-
+through the real controller; every card line; the admin card),
+`test/unit/utils/thanListParser.test.js` (the RET-6 blocks).

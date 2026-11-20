@@ -478,7 +478,68 @@ test('RET-6 review: the pure list keeps its old reading exactly; long white spac
     looksLikeReturnList(`Return 631/1 to ${'a '.repeat(700)}`);
     looksLikeReturnList(`Return from ${'a'.repeat(1400)} 631/1`);
   }
-  assert.equal(looksLikeReturnList(`Return 631/1 ${'x'.repeat(2000)}`), false, 'a line longer than any real list is not claimed');
+  assert.equal(looksLikeReturnList(`Return 631/1 to ${'q'.repeat(2000)}`), false, 'a line with words longer than any real list is not claimed');
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
   assert.ok(ms < 500, `the pre-check must stay linear (took ${ms.toFixed(0)} ms; it took over a minute before)`);
+});
+
+// ── RET-6 second check (20-Nov-2026) — two readers kept apart ────────────────
+
+test('RET-6: the PURE list is read exactly as RET-5 read it — no new item out of a leftover', () => {
+  // these were turned into extra bales by the first cut's tail scan
+  assert.deepEqual(itemsOf('Return 631-635'), ['631']);
+  assert.deepEqual(itemsOf('Return 631 x600'), ['631']);
+  assert.deepEqual(itemsOf('Return 771, 779, 6189/5'), ['771', '779', '6189/5']);
+  assert.deepEqual(itemsOf('Return 771 x3, 6189/1+2'), ['771 x3', '6189/1+2']);
+  assert.equal(parseThanList('Return 771, 779').isReturn, true);
+});
+
+test('RET-6: among words a number that is not an item is REPORTED — a count, a phone number, a time, a design', () => {
+  const cases = {
+    'Return 631/1 10 thans to Idumota': ['10 thans'],
+    'Return 631/1 12 days ago': ['12 days'],
+    'Return 631/1 30 yards to Idumota': ['30 yards'],
+    'Return 631/1 08031234567 to Idumota': ['08031234567'],
+    'Return 631/1 from Abba 0803 123 4567': ['0803 123 4567'],
+    'Return 631/1 from Abba +234 803 123 4567': ['+234 803 123 4567'],
+    'Return 631/1 to Idumota 24hrs': ['24hrs'],
+    'Return 631/1 to Idumota at 10:30': ['10:30'],
+    'Return 631/1 to Idumota x3': ['x3'],
+    'Return 631/1 design 9043': ['design 9043'],
+    'Return 631/1 of 9043-B': ['9043-B'],
+  };
+  for (const [line, bad] of Object.entries(cases)) {
+    const out = parseThanList(line);
+    assert.deepEqual(out.items, [{ packageNo: '631', thans: [1] }], line);
+    assert.deepEqual(out.bad, bad, line);
+  }
+  assert.equal(parseThanList('Return 631/1 from Abba 0803 123 4567').returnFrom, 'Abba', 'the phone number does not swallow the buyer');
+  assert.equal(parseThanList('Return 631/1 to Idumota at 10:30').returnTo, 'Idumota');
+});
+
+test('RET-6: a bale is never taken for the year of a date; names keep their digits and articles', () => {
+  assert.deepEqual(itemsOf('Return 18 Nov 6189, 6210 to Idumota'), ['6189', '6210']);
+  assert.deepEqual(itemsOf('Return 631/1 18 Nov 6189 to Idumota'), ['631/1', '6189']);
+  assert.equal(parseThanList('Return 631/1 18 Nov 2026 to Idumota').ignoredDate, '18 Nov 2026');
+  assert.equal(parseThanList('Return 631/1 to A1 Stores').returnTo, 'A1 Stores');
+  assert.equal(parseThanList('Return 631/1 from Abba2 to Idumota').returnFrom, 'Abba2');
+  assert.equal(parseThanList('Return 631/1 from A and B 700').returnFrom, 'A and B');
+  assert.equal(parseThanList('Return 631/1 to The Place').returnTo, 'The Place');
+  assert.equal(parseThanList('Return 631/1 to Idumota!').returnTo, 'Idumota');
+  assert.deepEqual(itemsOf('Return 631 / 1 + 2 + 3 , 614 / 1 to idumota'), ['631/1+2+3', '614/1']);
+});
+
+test('RET-6: the claim rule — the first number must be an item, and the line must be about the numbers', () => {
+  for (const l of ['Return soldier madam 631/1+2 to idumota', 'Return pls 631/1, 614/1 to Idumota', 'Return 631/1 abba idumota',
+    'Return from soldier madam 771', 'Return 50000 to Abba']) assert.equal(looksLikeReturnList(l), true, l);
+  for (const l of ['Return policy 2026', 'Return report', 'Return soldier madam 771', 'Return 5 bales of 9006 from ABBA',
+    'Returning customer Abba 08012345678', 'Return 2 thans 631 to Idumota', 'Return the 5 bales']) {
+    assert.equal(looksLikeReturnList(l), false, l);
+  }
+  // a line typed ON the return card is read by the same reader, never by the sale's
+  const card = parseThanList('return pls 631/1, 614/1 to Idumota');
+  assert.deepEqual(card.items, [{ packageNo: '631', thans: [1] }, { packageNo: '614', thans: [1] }]);
+  assert.equal(card.returnTo, 'Idumota');
+  assert.equal(card.ignoredCustomer, '');
+  assert.equal(parseThanList(`return 700 to ${'q'.repeat(1600)}`).tooLong, true);
 });

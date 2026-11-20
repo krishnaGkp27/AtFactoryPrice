@@ -779,8 +779,9 @@ async function buildReturnBundleCard(aj) {
   // RET-6 (20-Nov-2026) — what the requester typed about the buyer or the
   // store that the sale record does not bear out. The record decides; the
   // admin is told, so goods that physically went elsewhere get a transfer.
-  for (const n of (Array.isArray(aj.typedNotes) ? aj.typedNotes : []).slice(0, 3)) {
-    text += `\n${String(n).replace(/^⚠️ You wrote/, '⚠️ The requester wrote')}`;
+  // (The flow keeps at most six lines and says when there were more.)
+  for (const n of (Array.isArray(aj.typedNotes) ? aj.typedNotes : []).slice(0, 8)) {
+    text += `\n${String(n).replace(/^(⚠️|ℹ️) You wrote/, '$1 The requester wrote')}`;
   }
   const signed = Array.isArray(aj.approvals) ? aj.approvals.length : 0;
   text += `\n🔏 Dual-admin return — ${signed} signed so far.`;

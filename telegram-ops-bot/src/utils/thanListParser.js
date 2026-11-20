@@ -56,116 +56,190 @@ function looksLikeThanList(raw) {
   return /^sell\s+(?:(?:packages?|bales?|pkgs?|no\.?|numbers?)\s+)?\d{2,}(?:\s*(?:,|\band\b|\s)\s*\d{2,})*(?:\s|$|,)/i.test(t);
 }
 
-/** Words that follow a COUNT, never a bale number: "Return 5 bales of 9006". */
-const COUNT_WORD = /^(?:bales?|thans?|yards?|yds?|pcs?|pieces?|packages?|pkgs?|rolls?|days?|weeks?|months?|hours?|hrs?|times?|naira|ngn)\b/i;
-/** A bare bale number among WORDS: two to six digits, no leading zero — a phone number or a `5` is never one. */
-const BARE_BALE = /^[1-9]\d{1,5}$/;
-/** The longest return line read (a 60-bale list is ~500 characters). */
-const RETURN_LINE_MAX = 1500;
-/** Words in front of the numbers that carry no meaning: "package", "the goods". */
-const LEAD_NOISE = /^(?:(?:the|a|an)\s+)?(?:packages?|bales?|pkgs?|goods|no\.?|numbers?)\b[\s:.#-]*/i;
-const NOISE_WORD = /^(?:the|a|an|packages?|bales?|pkgs?|goods|no\.?|numbers?|thans?)$/i;
-
-/**
- * RET-6 (owner, 20-Nov-2026 — Abdul's three lines all got the chips card:
- * `Return 631/1+2+3+4+5,614/1 to Idumota`, the same with `package` in
- * front, and `Return package from soldier madam 631/… to Idumota`) — take a
- * typed RETURN line apart: the verb, the words in front of the numbers
- * (`package`, `from <buyer>`), and the list with whatever follows it.
+/* ── RET-6 (owner, 20-Nov-2026) — a return line with WORDS in it ──────────
  *
- * In a return the small words mean the OPPOSITE of a sale: `from` names the
- * buyer the goods come back from, `to` / `at` / `in` the store they come
- * back to. Neither is ever trusted — the flow checks both against the sale
- * record and says so on the card when they differ.
+ * Abdul typed a return three ways and got the chips card each time:
+ *   Return 631/1+2+3+4+5,614/1 to Idumota
+ *   Return package 631/1+2+3+4+5,614/1 to Idumota
+ *   Return package from soldier madam 631/1+2+3+4+5,614/1 to Idumota
+ * The return line took only a bare list of numbers.
  *
- * @param {string} raw
- * @returns {{from:string, body:string}|null} null when no number list opens
- *   the line once those words are set aside.
+ * Two readers, kept apart on purpose:
+ *  - the PURE list (numbers, commas, `/`, `+`, `-`, `x` and nothing else)
+ *    is read exactly as RET-5 read it, by parseThanList's own code below;
+ *  - a line with words goes to `parseReturnWords`, a token scanner written
+ *    for returns: every token is an item, a word, or a number that is NOT
+ *    an item — and that last kind is always REPORTED (`bad`), never loaded
+ *    and never dropped. The bot does not guess stock (§2).
+ *
+ * In a return the small words mean the opposite of a sale: `from` names the
+ * buyer the goods come back from, `to` / `at` / `in` / `@` the store. Neither
+ * is trusted: the flow shows them next to the sale record.
  */
-function splitReturnLine(raw) {
-  // Whitespace is collapsed FIRST and the length capped: every pattern below
-  // then runs in linear time (a run of 4,000 spaces after "Return from" used
-  // to take over a minute and froze the bot for everyone).
-  let t = String(raw || '').replace(/\s+/g, ' ').trim();
-  if (t.length > RETURN_LINE_MAX) return null;
-  // The pure list RET-5 read (numbers, commas, `/`, `+`, `-`, `x` and nothing
-  // else) keeps its exact old reading; the stricter rules are for lines with words.
-  const pure = /^return \d[\d ,/+x-]*$/i.test(t);
-  const verb = t.match(/^return(?:s|ed|ing)?\b[ :,-]*/i);
-  if (!verb) return null;
-  t = t.slice(verb[0].length);
-  // The worded forms, rewritten into the list grammar (R4 — they open the
-  // same card): "than 2 from bale 5801" · "thans 1+2 of package 631" →
-  // `5801/2` · `631/1+2`.
-  t = t.replace(/\bthans? (\d+(?: ?[+-] ?\d+)*) (?:from|of|in) (?:the )?(?:(?:packages?|bales?|pkgs?) )?(?:(?:no\.?|numbers?) )?(\d+)\b/gi,
-    (_m, spec, bale) => `${bale}/${spec.replace(/ /g, '')}`);
-  // "bale 631 than 3" → `631/3` — only when the first number can be a bale
-  // and the second a than: "2 thans 631" is a COUNT in front of a bale and
-  // is left alone (it was read as bale 2, than 631).
-  t = t.replace(/\b(\d+) thans? (\d+(?: ?[+-] ?\d+)*)(?![\d/])/gi, (m, bale, spec) => {
-    const nums = spec.split(/[+-]/).map((n) => parseInt(n, 10));
-    const top = Math.max(...nums);
-    return (BARE_BALE.test(bale) && top < 100 && parseInt(bale, 10) > top) ? `${bale}/${spec.replace(/ /g, '')}` : m;
-  });
-  const dropNoise = () => { let prev; do { prev = t; t = t.replace(LEAD_NOISE, ''); } while (t !== prev); };
-  dropNoise();
-  // "from <buyer>" in front of the numbers: the words up to the first digit.
-  let from = '';
-  if (/^from /i.test(t)) {
-    const at = t.search(/\d/);
-    if (at < 0) return null;
-    const said = t.slice(5, at).replace(/[ :,-]+$/, '');
-    if (said.includes(',')) return null;            // "from Abba, 0801…, Kano" is not a return list
-    const words = said.split(' ').filter(Boolean);
-    while (words.length && NOISE_WORD.test(words[words.length - 1])) words.pop();   // "from soldier madam package 631"
-    while (words.length && NOISE_WORD.test(words[0])) words.shift();                // "from bale 5801"
-    from = words.join(' ');
-    t = t.slice(at);
-  }
-  dropNoise();
-  // A date in front of the numbers ("Return 18 Nov 631/1") is set aside — the
-  // date step asks; its day was read as bale 18.
-  // A numeric date with its year ("18/11/2026 631/1") is a date in any line:
-  // no list item has two slashes. (It was read as bale 18, than 11.)
-  let lead = t.match(DATE_AT_FRONT);
-  if (!lead && !pure) {
-    lead = t.match(WORD_DATE_AT_FRONT);
-    // "18 Nov 631/1": the 631 is a bale, not a year — a year has two or four
-    // digits and is never followed by `/` or `x`.
-    if (lead && (/(?:^|\D)\d{3}$/.test(lead[0]) || /^ ?[/xX]/.test(t.slice(lead[0].length)))) {
-      lead = t.match(DAY_MONTH_AT_FRONT);
-    }
-  }
-  if (lead) { t = t.slice(lead[0].length).replace(/^[ ,:-]+/, ''); dropNoise(); }
-  if (!/^\d/.test(t)) return null;
-  return { from, body: t, pure };
+
+/** The pure list RET-5 read — its claim and its reading are unchanged. */
+const PURE_RETURN = /^return\s+\d[\d\s,/+x-]*$/i;
+/** A numeric date with its year, both separators the same: 18/11/2026 · 18-11-26 · 18.11.2026. */
+const NUM_DATE_SRC = '\\b\\d{1,2}([/.-])\\d{1,2}\\1(?:\\d{4}|\\d{2})\\b';
+/** A bare bale number among words: two to six digits, no leading zero. */
+const BARE_BALE = /^[1-9]\d{1,5}$/;
+/** The longest return line with words that is read (a 60-bale list is ~500 characters). */
+const RETURN_LINE_MAX = 1500;
+/** A word after a number that makes the number a COUNT or a measure, never a bale. */
+const COUNT_WORD = /^(?:bales?|thans?|yards?|yds?|pcs?|pieces?|packages?|pkgs?|rolls?|days?|weeks?|months?|years?|hours?|hrs?|mins?|minutes?|times?|naira|ngn|k|kg|m|am|pm|percent)$/i;
+/** A word in front of a number that makes it something else than a bale ("design 9043", "5 bales of 9006"). */
+const QUALIFIER = /^(?:design|designs|dsn|shade|shades|colou?r|rate|price|amount|qty|quantity|of|phone|tel|call)$/i;
+/** Words that carry nothing in a return line. `and` is handled apart (it may sit inside a name). */
+const FILLER = /^(?:pls|plz|please|kindly|abeg|oga|sir|ma|also|add|plus|thanks|thank|you|today|yesterday|tomorrow|now|ago|on|the|a|an|goods|packages?|bales?|pkgs?|no|nos|numbers?|thans?)$/i;
+
+function isPureReturn(text) {
+  const t = String(text || '').trim();
+  return PURE_RETURN.test(t) && !new RegExp(NUM_DATE_SRC).test(t);
 }
 
-/** Does `body` open with a list item — and not with a count ("5 bales of 9006")? */
-function opensWithList(body, pure) {
-  if (pure) return true;                               // the pure list, as since RET-5
-  if (/^\d+\s*\/\s*\d/.test(body)) return true;        // 631/1…
-  if (/^\d+\s*[xX]\s*\d+/.test(body)) return true;     // 771 x3
-  const bare = body.match(/^(\d+)\b[ ,]*([\s\S]*)$/);
-  // …a bale number (two to six digits, no leading zero — not a phone number,
-  // not an amount written with a 0) that is not a count ("5 bales", "12 days").
-  return !!bare && BARE_BALE.test(bare[1]) && !COUNT_WORD.test(bare[2]);
+/**
+ * Read a return line that has words in it.
+ * @param {string} raw the whole typed line (the verb is optional)
+ * @returns {object} parseThanList's shape plus `isReturn`, `returnFrom`,
+ *   `returnTo`, `returnOther` and the facts the claim rule needs.
+ */
+function parseReturnWords(raw) {
+  const out = {
+    items: [], warehouseHint: '', bad: [], commaThanHint: false, ignoredCustomer: '', ignoredDate: '',
+    isReturn: true, returnFrom: '', returnTo: '', returnOther: '',
+    firstIsItem: false, firstConfident: false, leadWords: [], leadFrom: false, tooLong: false,
+  };
+  // White space is collapsed first and the length capped, so every pattern
+  // below runs in linear time on a short string.
+  let t = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (t.length > RETURN_LINE_MAX) { out.tooLong = true; return out; }
+  t = t.replace(/^return(?:s|ed|ing)?\b[ :,-]*/i, '');
+  // Dates are set aside (the date step asks): a numeric one with its year,
+  // and day + month with a year only when it IS a year (19xx / 20xx) —
+  // "18 Nov 6189" keeps bale 6189.
+  const lift = (m) => { if (!out.ignoredDate) out.ignoredDate = m.trim(); return ' '; };
+  t = t.replace(new RegExp(NUM_DATE_SRC, 'g'), lift)
+    .replace(new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)? ${MONTH_WORD}\\b(?:,? (?:19|20)\\d{2}\\b)?`, 'gi'), lift)
+    .replace(new RegExp(`\\b${MONTH_WORD} \\d{1,2}(?:st|nd|rd|th)?\\b(?:,? (?:19|20)\\d{2}\\b)?`, 'gi'), lift);
+  // The worded forms, rewritten into the list grammar (R4 — the same card):
+  // "than 2 from bale 5801" · "thans 1+2 of package 631" → 5801/2 · 631/1+2.
+  t = t.replace(/\bthans? (\d+(?: ?[+-] ?\d+)*) (?:from|of|in) (?:the )?(?:(?:packages?|bales?|pkgs?) )?(?:(?:no\.?|numbers?) )?(\d+)\b/gi,
+    (_m, spec, bale) => `${bale}/${spec.replace(/ /g, '')}`);
+  // "bale 631 than 3" → 631/3 — only when the first number can be a bale and
+  // the second a than; "2 thans 631" is a count in front of a bale.
+  t = t.replace(/\b(\d+) thans? (\d+(?: ?[+-] ?\d+)*)(?![\d/])/gi, (m, bale, spec) => {
+    const top = Math.max(...spec.split(/[+-]/).map((n) => parseInt(n, 10)));
+    return (BARE_BALE.test(bale) && top < 100 && parseInt(bale, 10) > top) ? `${bale}/${spec.replace(/ /g, '')}` : m;
+  });
+  // Glue the list operators so one item is one token: "631 / 1 + 2" → 631/1+2,
+  // "631/1 - 3" → 631/1-3, "771 x 3" → 771x3.
+  t = t.replace(/(\d) ?\/ ?(?=\d)/g, '$1/');
+  for (let prev = ''; prev !== t;) { prev = t; t = t.replace(/(\/\d+(?:[+-]\d+)*) ?([+-]) ?(?=\d)/g, '$1$2'); }
+  t = t.replace(/(\d) ?[xX] ?(?=\d)/g, '$1x').replace(/@/g, ' at ');
+
+  const toks = t.split(/[ ,;&]+/)
+    .map((x) => x.replace(/^[#(["'“‘]+/, '').replace(/[.,;:!?)\]"'”’]+$/, ''))
+    .filter(Boolean);
+  const seq = [];                                   // { kind: 'item' | 'bad' | 'word', text }
+  let sawNumber = false;
+  const number = (kind, confident) => {
+    if (!sawNumber) { sawNumber = true; out.firstIsItem = kind === 'item'; out.firstConfident = !!confident; }
+  };
+  for (let i = 0; i < toks.length; i += 1) {
+    const tok = toks[i];
+    const prevWord = seq.length && seq[seq.length - 1].kind === 'word' ? seq[seq.length - 1].text : '';
+    if (/^\d+\/\d+(?:[+-]\d+)*$/.test(tok) || /^\d+x\d+$/i.test(tok)) {
+      const got = readItem(tok);
+      const ok = got && !got.bad && got.used === tok.length && !got.bare && !/^0/.test(tok) && !QUALIFIER.test(prevWord);
+      number(ok ? 'item' : 'bad', ok);
+      if (ok) { out.items.push(got.item); seq.push({ kind: 'item', text: tok }); }
+      else { out.bad.push(tok); seq.push({ kind: 'bad', text: tok }); }
+      continue;
+    }
+    if (/^\+?\d+$/.test(tok)) {
+      const next = toks[i + 1] || '';
+      let badText = '';
+      if (QUALIFIER.test(prevWord)) { badText = `${prevWord} ${tok}`; seq.pop(); }   // "design 9043", "of 9006"
+      else if (COUNT_WORD.test(next)) { badText = `${tok} ${next}`; i += 1; }
+      else if (/^(?:\+|0)/.test(tok) || tok.length >= 7) {
+        // a phone number: the digit groups that follow belong to it
+        badText = tok;
+        while (/^\d+$/.test(toks[i + 1] || '')) { badText += ` ${toks[i + 1]}`; i += 1; }
+      } else if (!BARE_BALE.test(tok)) {
+        badText = tok;                              // a single digit: "631/1, 2"
+        if (out.items.length) out.commaThanHint = true;
+      }
+      number(badText ? 'bad' : 'item', false);
+      if (badText) { out.bad.push(badText); seq.push({ kind: 'bad', text: badText }); }
+      else { out.items.push({ packageNo: tok }); seq.push({ kind: 'item', text: tok }); }
+      continue;
+    }
+    if (/\d/.test(tok) && !/^\p{L}/u.test(tok)) {
+      // digits glued to something else and not a name: 24hrs, 614kg, 10:30, 50%, 9043-B, 631/abc
+      number('bad', false);
+      out.bad.push(tok); seq.push({ kind: 'bad', text: tok });
+      continue;
+    }
+    if (/^[-/+]+$/.test(tok)) continue;             // a stray operator
+    if (/^[xX]\d+$/.test(tok)) {                    // a count cut off from its bale: "… to Idumota x3"
+      out.bad.push(tok); seq.push({ kind: 'bad', text: tok });
+      continue;
+    }
+    seq.push({ kind: 'word', text: tok });           // a word (a name may carry digits: "A1")
+  }
+
+  // The words: what stands before the first number, then the clauses.
+  const firstNum = seq.findIndex((e) => e.kind !== 'word');
+  const lead = (firstNum < 0 ? seq : seq.slice(0, firstNum)).map((e) => e.text).filter((w) => !FILLER.test(w) && !/^and$/i.test(w));
+  out.leadFrom = lead.length > 0 && /^from$/i.test(lead[0]);
+  out.leadWords = out.leadFrom ? lead.slice(1) : lead;
+  const said = { from: [], to: [], other: [] };
+  let mode = 'other';
+  for (let i = 0; i < seq.length; i += 1) {
+    const e = seq[i];
+    if (e.kind !== 'word') { mode = 'other'; continue; }           // a number ends a clause
+    const w = e.text;
+    if (/^from$/i.test(w)) { mode = 'from'; continue; }
+    if (/^(?:to|into|at|in)$/i.test(w)) { mode = 'to'; continue; }
+    if (/^and$/i.test(w)) {
+      // inside a name ("Sani and Sons") it stays; between items it is nothing
+      const nxt = seq[i + 1];
+      if (mode !== 'other' && said[mode].length && nxt && nxt.kind === 'word' && (!FILLER.test(nxt.text) || /^(?:a|an|the)$/i.test(nxt.text))
+        && !/^(?:from|to|into|at|in|and)$/i.test(nxt.text)) said[mode].push(w);
+      continue;
+    }
+    // inside a name an article is part of it ("from A and B", "to The Place")
+    if (FILLER.test(w) && !(mode !== 'other' && /^(?:a|an|the)$/i.test(w))) continue;
+    said[mode].push(w);
+  }
+  out.returnFrom = said.from.join(' ');
+  out.returnTo = said.to.join(' ');
+  out.returnOther = said.other.join(' ');
+  return out;
 }
 
 /**
  * RET-5 — a typed RETURN line: `Return 771, 779, 6189/5`. A bare-only list
  * qualifies (every typed return goes through the review card — owner ruling
- * R4, 20-Oct-2026).
+ * R4, 20-Oct-2026); that pure list is claimed exactly as before.
  *
- * RET-6 (20-Nov-2026) — the line may also carry words: `package` / `bale`
- * in front, the buyer (`from Soldier Madam`, before or after the numbers)
- * and the store (`to Idumota`). The numbers decide; the words are checked
- * against the sale record on the card. A sentence that opens with a count
- * ("Return 5 bales of 9006") or has no number list is NOT claimed.
+ * RET-6 (20-Nov-2026) — a line with words is claimed when its FIRST number
+ * is a list item and it is clear the numbers are what the line is about:
+ * nothing but noise in front of them, or `from <buyer>`, or a short name
+ * followed by an item written with `/` or `x`. A sentence that opens with a
+ * count ("Return 5 bales of 9006"), a phone number, an amount, or has no
+ * item at all is NOT claimed — it gets the Return hint.
  */
 function looksLikeReturnList(raw) {
-  const split = splitReturnLine(raw);
-  return !!split && opensWithList(split.body, split.pure);
+  const t = String(raw || '').trim();
+  if (!/^return/i.test(t)) return false;
+  if (isPureReturn(t)) return true;
+  if (!/^return(?:s|ed|ing)?\b/i.test(t.replace(/\s+/g, ' '))) return false;
+  const p = parseReturnWords(t);
+  if (p.tooLong || !p.items.length || !p.firstIsItem) return false;
+  if (!p.leadWords.length) return true;
+  if (p.leadFrom) return p.leadWords.length <= 6;
+  return p.firstConfident && p.leadWords.length <= 4;
 }
 
 /**
@@ -220,8 +294,6 @@ const WORD_DATE_SRC = `(?:\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH_WORD}\\b(?:[\\s,]+
 const WORD_DATE = new RegExp(`\\b${WORD_DATE_SRC}`, 'i');
 const WORD_DATE_ONLY = new RegExp(`^${WORD_DATE_SRC}$`, 'i');
 const WORD_DATE_AT_FRONT = new RegExp(`^${WORD_DATE_SRC}`, 'i');
-/** Day and month only, opening a string: "18 Nov" (RET-6 — see splitReturnLine). */
-const DAY_MONTH_AT_FRONT = new RegExp(`^\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH_WORD}\\b`, 'i');
 
 /** True when a segment IS a date, not a bale ("06 august 2026", "6/8/26"). */
 function isDateLike(s) {
@@ -300,18 +372,20 @@ function parseThanList(raw) {
   let commaThanHint = false;
   let ignoredDate = '';
 
-  // RET-6 — a return line is taken apart first: the buyer may stand in
-  // front of the numbers, and its small words mean the opposite of a sale's.
-  const ret = /^return/i.test(text) ? splitReturnLine(text) : null;
-  const body = ret ? ` ${ret.body}` : text.replace(/^(?:sell|return)\b/i, ' ');
-  // A return line with WORDS in it is read more strictly than the pure list
-  // (which stays exactly as RET-5 read it): a bare number must look like a
-  // bale, a count is reported, and "and" inside a buyer's name ("Sani and
-  // Sons") no longer cuts the line — it separates only when a number follows.
-  const strict = !!ret && !ret.pure;
-  const segments = (strict
-    ? body.split(/,|\band\b(?= (?:(?:thans?|packages?|bales?|pkgs?|no\.?|numbers?) )?\d)/i)
-    : body.split(/,|\band\b/i)).map((s) => s.trim()).filter(Boolean);
+  // RET-6 — a return line with words has its own reader; the pure list and
+  // every sell line are read by the code below, unchanged.
+  const isReturn = /^return/i.test(text);
+  if (isReturn && !isPureReturn(text)) {
+    const p = parseReturnWords(text);
+    return {
+      items: p.items, warehouseHint: '', bad: p.bad, commaThanHint: p.commaThanHint, ignoredCustomer: '',
+      ignoredDate: p.ignoredDate, isReturn: true, returnFrom: p.returnFrom, returnTo: p.returnTo,
+      returnOther: p.returnOther, ...(p.tooLong ? { tooLong: true } : {}),
+    };
+  }
+
+  const body = text.replace(/^(?:sell|return)\b/i, ' ');
+  const segments = body.split(/,|\band\b/i).map((s) => s.trim()).filter(Boolean);
 
   const take = (got) => {
     // A lone small number right after a `<bale>/<than>` item is almost
@@ -341,19 +415,6 @@ function parseThanList(raw) {
       if (/[A-Za-z]/.test(s)) tailBits.push(s);
       else bad.push(seg.trim());
       continue;
-    }
-    if (strict && first.bare) {
-      // "2 thans 614" / "5 bales" — a count, never a bale: reported, and the
-      // rest of the segment is still read.
-      const after = s.slice(first.used).replace(/^\s+/, '');
-      const count = after.match(COUNT_WORD);
-      if (count || !BARE_BALE.test(first.item.packageNo)) {
-        bad.push(count ? `${first.item.packageNo} ${count[0]}` : first.item.packageNo);
-        if (!count && items.length && Number(first.item.packageNo) <= 99) commaThanHint = true;
-        const left = count ? after.slice(count[0].length) : after;
-        if (left.trim()) tailBits.push(left.trim());
-        continue;
-      }
     }
     take(first);
     let rest = s.slice(first.used);
@@ -396,34 +457,6 @@ function parseThanList(raw) {
       if (!ignoredDate) [ignoredDate] = d;
       tail = tail.replace(d[0], ' ').replace(/\s+/g, ' ').trim();
     }
-    if (ret) {
-      // A number left among the words is NEVER dropped: it is an item when
-      // it reads as one ("… to Idumota 614/1", "… package 614/1"), otherwise
-      // it is reported as unreadable.
-      tail = tail.replace(/\d+(?: ?\/ ?\d+(?: ?[+-] ?\d+)*| ?[xX] ?\d+)?(?:[/+-]\S*)?/g, (tok) => {
-        const got = readItem(tok);
-        const whole = got && !got.bad && got.used === tok.length;
-        if (whole && (!got.bare || BARE_BALE.test(got.item.packageNo))) items.push(got.item);
-        else bad.push(tok.trim());
-        return ' ';
-      }).replace(/\s+/g, ' ').trim();
-      // RET-6 — `to` / `at` / `in` / `@` names the STORE, `from` the BUYER.
-      const clean = (v) => ` ${String(v || '').replace(NOISE, ' ').replace(/[.,;:!?]+/g, ' ')} `
-        .replace(/ [-/]+(?= )/g, ' ')                       // a stray `/` or `-` left by a number
-        .replace(/\s+/g, ' ').trim().replace(/(?:(?:^| )(?:on|please|pls|kindly|thanks|today|now))+$/i, '').trim();
-      const storeM = tail.match(/(?:\bto\b|\binto\b|\bat\b|\bin\b|@)\s*([A-Za-z][A-Za-z\s.'-]*?)(?=\s+from\b|$)/i);
-      const custM = tail.match(/\bfrom\s+([A-Za-z][A-Za-z\s.'-]*?)(?=\s+(?:to|into|at|in)\b|\s*@|$)/i);
-      let rest = tail;
-      if (storeM) rest = rest.replace(storeM[0], ' ');
-      if (custM) rest = rest.replace(custM[0], ' ');
-      return {
-        items, warehouseHint: '', bad, commaThanHint, ignoredCustomer: '', ignoredDate,
-        isReturn: true,
-        returnFrom: ret.from || (custM ? clean(custM[1]) : ''),
-        returnTo: storeM ? clean(storeM[1]) : '',
-        returnOther: clean(rest.replace(/@/g, ' ').replace(/\band\b/gi, ' ')),
-      };
-    }
     const cust = tail.match(/\bto\s+([A-Za-z][A-Za-z\s.'-]*)/i);
     if (cust) ignoredCustomer = cust[1].trim();
     // `@` is not a word character, so it needs its own alternative — a
@@ -440,13 +473,10 @@ function parseThanList(raw) {
     }
   }
 
-  if (ret) {
-    return {
-      items, warehouseHint: '', bad, commaThanHint, ignoredCustomer: '', ignoredDate,
-      isReturn: true, returnFrom: ret.from, returnTo: '', returnOther: '',
-    };
+  if (isReturn) {
+    return { items, warehouseHint: '', bad, commaThanHint, ignoredCustomer: '', ignoredDate, isReturn: true, returnFrom: '', returnTo: '', returnOther: '' };
   }
   return { items, warehouseHint, bad, commaThanHint, ignoredCustomer, ignoredDate };
 }
 
-module.exports = { parseThanList, looksLikeThanList, looksLikeReturnList, looksLikeTransferLine, _internals: { parseThanSpec, splitReturnLine } };
+module.exports = { parseThanList, looksLikeThanList, looksLikeReturnList, looksLikeTransferLine, _internals: { parseThanSpec, parseReturnWords, isPureReturn } };
