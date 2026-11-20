@@ -2013,7 +2013,13 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
   // the header and names the approver's role, which is no longer always an
   // admin. Only facts about THIS request survive; the rest reads "Sent for
   // approval". Real reasons (backdated, threshold) are untouched.
-  const shortWhy = require('../services/approvalCards').shortReason(riskReason);
+  // CARD-9 (owner, 20-Nov-2026) — no "Sent for approval" filler: when no
+  // fact survives, the message carries no reason line at all.
+  const cardsMod = require('../services/approvalCards');
+  const fact = cardsMod.reasonFact(riskReason);
+  // CARD-9 — the short reference rides the header; the raw id stays in the
+  // buttons' callback_data only. A TR- transfer id reads "24Jul·03".
+  const shortRef = cardsMod.shortTransferRef(requestId);
   // SUB-1 — the last line of defence against a duplicated submit: if another
   // PENDING row from the same requester carries the same business payload,
   // say so ON THE CARD, where the deciding admin is actually looking. The
@@ -2031,13 +2037,13 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
     const others = group.filter((r) => String(r.requestId) !== String(requestId));
     if (others.length) {
       const refs = others.slice(0, 3)
-        .map((r) => `\`${esc(String(r.requestId).slice(0, 8))}…\``).join(', ');
+        .map((r) => esc(cardsMod.shortTransferRef(r.requestId))).join(', ');
       dupeLine = `⚠️ *Possible duplicate* — same request also pending as ${refs}\\. Approve ONE, reject the rest\\.\n\n`;
     }
   } catch (_) { /* the flag is best-effort; the card must always send */ }
   // APG-1 — the gate's 🔔 reminder goes only to admins who have not signed.
   const excludeIds = new Set((opts && Array.isArray(opts.excludeIds) ? opts.excludeIds : []).map(String));
-  const text = `${noteLine}${dupeLine}🔔 *Approval required*\n\nRef: \`${requestId}\`\nFrom: ${esc(userLabel)}\n\n${esc(actionSummary)}\n\n_${esc(shortWhy)}_\n\nUse buttons below to approve or reject\\.`;
+  const text = `${noteLine}${dupeLine}🔔 *Approval required* · ${esc(shortRef)}\nFrom: ${esc(userLabel)}\n\n${esc(actionSummary)}${fact ? `\n\n_${esc(fact)}_` : ''}`;
   // CNET-2 — a caller may hand the card a routing keyboard (the add-contact
   // destination chips); everything else keeps the standard pair.
   const keyboard = (opts && opts.keyboard) || {
@@ -2074,7 +2080,8 @@ async function notifyAdminsApprovalRequest(bot, requestId, userLabel, actionSumm
     } catch (e) {
       logger.error('Failed to notify admin', adminId, e.message);
       try {
-        const plain = `🔔 Approval required\n\nRef: ${requestId}\nFrom: ${userLabel}\n\n${actionSummary}\n\n${shortWhy}\n\nUse buttons below to approve or reject.`;
+        // CARD-9 — the same frame as the MarkdownV2 text, unescaped.
+        const plain = `🔔 Approval required · ${shortRef}\nFrom: ${userLabel}\n\n${actionSummary}${fact ? `\n\n${fact}` : ''}`;
         await bot.sendMessage(adminId, plain, { reply_markup: keyboard });
         sent += 1;
       } catch (e2) {
@@ -2355,7 +2362,7 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           } catch (_) { /* stale card; not fatal */ }
           try {
             await bot.sendMessage(callbackQuery.message.chat.id,
-              `🔏 Request ${requestId}: your approval is recorded (1 of ${required}). Waiting for a second admin.`);
+              `🔏 Request ${require('../services/approvalCards').shortTransferRef(requestId)}: your approval is recorded (1 of ${required}). Waiting for a second admin.`);
           } catch (_) { /* chat unreachable */ }
           // APG-1 (owner, 10-Nov-2026) — the requester is told at EVERY
           // signature: who signed, when, and how many the request needs.
@@ -2401,7 +2408,7 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           for (const otherId of pingIds) {
             try {
               await bot.sendMessage(otherId,
-                `🔔 Request ${requestId} (${require('../services/approvalCards').actionLabel(actName)}) has its first admin approval and needs a SECOND. Use the approval card in your chat.`);
+                `🔔 Request ${require('../services/approvalCards').shortTransferRef(requestId)} (${require('../services/approvalCards').actionLabel(actName)}) has its first admin approval and needs a SECOND. Use the approval card in your chat.`);
             } catch (e) { logger.warn(`DUAL-1 second-signoff ping failed for ${otherId}: ${e.message}`); }
           }
           return;
@@ -3482,14 +3489,16 @@ async function triageBuyerList() {
 async function renderTriageCard(bot, chatId, messageId, requestId, aj) {
   const approvalCards = require('../services/approvalCards');
   const esc = (t) => (t || '').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
-  const text = `🔔 *Approval required*\n\nRef: \`${requestId}\`\n\n${esc(approvalCards.buildAddContactCard(aj))}`;
+  // CARD-9 — the short reference on the header, no raw id on the screen.
+  const shortRef = approvalCards.shortTransferRef(requestId);
+  const text = `🔔 *Approval required* · ${esc(shortRef)}\n\n${esc(approvalCards.buildAddContactCard(aj))}`;
   const keyboard = approvalCards.keyboardForRequest(requestId, aj);
   try {
     await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, parse_mode: 'MarkdownV2', reply_markup: keyboard });
   } catch (e) {
     if (!/not modified/i.test(String(e.message || ''))) {
       // MarkdownV2 hiccup → plain-text fallback, never a dead card.
-      await bot.editMessageText(`🔔 Approval required\n\nRef: ${requestId}\n\n${approvalCards.buildAddContactCard(aj)}`,
+      await bot.editMessageText(`🔔 Approval required · ${shortRef}\n\n${approvalCards.buildAddContactCard(aj)}`,
         { chat_id: chatId, message_id: messageId, reply_markup: keyboard }).catch(() => {});
     }
   }

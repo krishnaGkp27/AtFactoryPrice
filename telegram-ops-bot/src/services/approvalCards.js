@@ -1527,13 +1527,27 @@ async function buildCardFromActionJSON(aj, opts = {}) {
  * @param {string} reason
  * @returns {string}
  */
-const BOILERPLATE_REASON = /\b(requires?|require)\s+(a\s+|an\s+)?(admin|second admin|dual[- ]admin|manager)?\s*approval\b/i;
-function shortReason(reason) {
-  const kept = String(reason || '')
+// CARD-9 (owner, 20-Nov-2026) — "two-admin" / "2-admin" is boilerplate too:
+// every dual-admin card already carries its own "n signed so far" line.
+// "2nd admin" is NOT in the list on purpose (it still prints, as before).
+const BOILERPLATE_REASON = /\b(requires?|require)\s+(a\s+|an\s+)?(admin|second admin|dual[- ]admin|two[- ]admin|2[- ]admin|manager)?\s*approval\b/i;
+/**
+ * CARD-9 — the part of a riskReason that is a fact about THIS request, or
+ * '' when every sentence was boilerplate. The approval message prints a
+ * reason line only when this is non-empty.
+ *
+ * @param {string} reason
+ * @returns {string}
+ */
+function reasonFact(reason) {
+  return String(reason || '')
     .split(/(?<=\.)\s+|\n+/)
     .map((s) => s.trim())
-    .filter((s) => s && !BOILERPLATE_REASON.test(s));
-  return kept.join(' ') || 'Sent for approval';
+    .filter((s) => s && !BOILERPLATE_REASON.test(s))
+    .join(' ');
+}
+function shortReason(reason) {
+  return reasonFact(reason) || 'Sent for approval';
 }
 
 /**
@@ -1586,6 +1600,7 @@ module.exports = {
   // CARD-4 — the one enrichment every sale door resolves goods through.
   enrichBundleItems,
   shortReason,
+  reasonFact, // CARD-9
   shortRequestRef,
   shortTransferRef,
   buildAddWarehouseCard,

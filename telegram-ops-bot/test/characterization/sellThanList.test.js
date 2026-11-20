@@ -440,7 +440,7 @@ test('SELL-T3e: bales typed bare reach the admin as ONE line each, counted in ba
   assert.match(text, /🧾 Sale · Kano office · 2B · 150 yd\n/, `tally in bales:\n${text}`);
   // Designs sort by number (9043-B before 77014); each is one bale, one line.
   assert.match(text, /\n9043-B · 1B · 60 yd\n Shade 4\n {2}1\. 1091 · 60 yd\n/, `one line for 1091:\n${text}`);
-  assert.match(text, /\n77014 · 1B · 90 yd\n Shade 11\n {2}2\. 1100 · 90 yd\n/, `one line for 1100:\n${text}`);
+  assert.match(text, /\n77014 · 1B · 90 yd\n Shade 11\n {2}2\. 1100 · 90 yd(\n|$)/, `one line for 1100:\n${text}`);
   assert.ok(!/1100\/|1091\//.test(text), 'no than lines for a whole bale');
   // The seller's own receipt speaks the same grammar.
   const mine = bot.calls.filter((c) => ['sendMessage', 'editMessageText'].includes(c.method)

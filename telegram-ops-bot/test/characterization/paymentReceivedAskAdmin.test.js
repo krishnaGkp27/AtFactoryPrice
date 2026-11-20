@@ -885,7 +885,11 @@ test('PRC-2 #8: 👥 Any admin — the card, its recipients and the receipt exac
     'Record Payment Request', 'Customer: ABBA', 'Amount: 50,000', 'Method: Bank — Zenith', `Date: ${fmtDate(todayInLagos())}`,
     'Outstanding today: 120,000', 'After this payment: 70,000',
   ].join('\n');
-  const expected = `🔔 *Approval required*\n\nRef: \`${id}\`\nFrom: Abdul\n\n${esc(legacyCard)}\n\n_${esc(approvalCards.shortReason(rowOf(id)[3]))}_\n\nUse buttons below to approve or reject\\.`;
+  // CARD-9 — the short reference on the header; the two-admin boilerplate
+  // reason prints no line; no "Use buttons below" footer.
+  assert.equal(rowOf(id)[3], 'All payment operations require two-admin approval.');
+  assert.equal(approvalCards.reasonFact(rowOf(id)[3]), '');
+  const expected = `🔔 *Approval required* · ${esc(approvalCards.shortRequestRef(id))}\nFrom: Abdul\n\n${esc(legacyCard)}`;
   for (const a of ADMINS) {
     const cards = cardsTo(bot, a);
     assert.equal(cards.length, 1, `${a} gets the card`);
@@ -897,7 +901,7 @@ test('PRC-2 #8: 👥 Any admin — the card, its recipients and the receipt exac
   const from = bot.calls.length;
   await approveDm(bot, MUSA, id);
   for (const a of [KRISHNA, JOHN]) {
-    assert.deepEqual(textsTo(bot, a, from), [`🔔 Request ${id} (record payment) has its first admin approval and needs a SECOND. Use the approval card in your chat.`]);
+    assert.deepEqual(textsTo(bot, a, from), [`🔔 Request ${approvalCards.shortRequestRef(id)} (record payment) has its first admin approval and needs a SECOND. Use the approval card in your chat.`]);
   }
   assert.equal(jsonOf(id).askWidenedAt, undefined);
   // the legacy typed door's card shape is the same builder, unchanged

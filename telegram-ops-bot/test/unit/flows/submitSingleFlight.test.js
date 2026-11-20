@@ -183,7 +183,9 @@ test('the admin card is stamped when another pending row carries the same payloa
     await approvalEvents.notifyAdminsApprovalRequest(bot, 'BBBB2222', 'Muhammad', 'Sale card', '');
     assert.equal(sentTexts.length, 1);
     assert.match(sentTexts[0], /Possible duplicate/, 'the deciding admin sees the warning ON the card');
-    assert.match(sentTexts[0], /AAAA1111/, 'and which ref it collides with');
+    // CARD-9 — the other request is named by its short ref, not a raw id slice.
+    assert.match(sentTexts[0], /R\\-AAAA/, 'and which ref it collides with');
+    assert.ok(!/AAAA1111/.test(sentTexts[0]), 'no raw id on the card');
     assert.match(sentTexts[0], /Approve ONE, reject the rest/);
   } finally {
     repo.getAllPending = realPending;

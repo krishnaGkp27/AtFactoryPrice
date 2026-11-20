@@ -120,6 +120,7 @@ test('approval sweep honors the 14-day backlog guard', async () => {
   const bot = createFakeBot();
   const sent = await reminder.sweep(bot, { now });
   assert.equal(sent, 1, 'only the fresh row is re-broadcast');
-  assert.match(bot.allText(), /FRESH/);
-  assert.ok(!/ANCIENT/.test(bot.allText()), '60-day-old backlog row stays silent');
+  // CARD-9 — the card names the request by its short ref (R-FRES), not its raw id.
+  assert.match(bot.allText(), /R\\-FRES/);
+  assert.ok(!/R\\-ANCI|ANCIENT/.test(bot.allText()), '60-day-old backlog row stays silent');
 });

@@ -34,6 +34,13 @@ function row(id, createdAt, aj) {
   return { requestId: id, user: 'drive-import', actionJSON: aj, riskReason: 'Photo must be approved', status: 'pending', createdAt };
 }
 
+/** CARD-9 — the request ids the sent cards' ✅ Approve buttons target. */
+const approveTargets = (bot) => bot.calls.filter((c) => c.method === 'sendMessage')
+  .flatMap((c) => ((c.args.opts && c.args.opts.reply_markup && c.args.opts.reply_markup.inline_keyboard) || []).flat())
+  .map((b) => String(b.callback_data || ''))
+  .filter((d) => d.startsWith('approve:'))
+  .map((d) => d.slice('approve:'.length));
+
 test('stale pending rows get cards to every admin; fresh rows are skipped', async () => {
   reminder._resetForTests();
   pendingRows = [
@@ -46,7 +53,9 @@ test('stale pending rows get cards to every admin; fresh rows are skipped', asyn
   const msgs = bot.calls.filter((c) => c.method === 'sendMessage');
   assert.equal(msgs.length, 2, 'one card per admin (777, 888)');
   assert.match(msgs[0].args.text, /Reminder — this approval is still waiting/);
-  assert.match(msgs[0].args.text, /req\-old/);
+  // CARD-9 — the short ref on the header; the full id lives in the buttons.
+  assert.match(msgs[0].args.text, /Approval required\* · R\\-REQO\n/);
+  assert.ok(!/req\\?-old/.test(msgs[0].args.text), 'no raw id on the screen');
   // APU-1: reminder cards now carry labelled per-field detail.
   assert.match(msgs[0].args.text, /design asset upload/);
   assert.match(msgs[0].args.text, /Design: 77014/);
@@ -85,8 +94,9 @@ test('cap: at most 10 cards per sweep, newest first', async () => {
   const bot = createFakeBot();
   const sent = await reminder.sweep(bot, { now: NOW });
   assert.equal(sent, 10, 'capped at 10');
-  assert.match(bot.allText(), /req\-00/, 'newest request included');
-  assert.ok(!/req\-13/.test(bot.allText()), 'oldest of the backlog waits — likely abandoned');
+  // CARD-9 — the raw id is no longer on the screen; the buttons carry it.
+  assert.ok(approveTargets(bot).includes('req-00'), 'newest request included');
+  assert.ok(!approveTargets(bot).includes('req-13'), 'oldest of the backlog waits — likely abandoned');
 });
 
 test('APU-1 3.3: lifecycle rows never get standard approve/reject cards', async () => {
@@ -103,11 +113,11 @@ test('APU-1 3.3: lifecycle rows never get standard approve/reject cards', async 
   const bot = createFakeBot();
   const sent = await reminder.sweep(bot, { now: NOW });
   assert.equal(sent, 1, 'only the admin_review supply request is reminded');
-  assert.match(bot.allText(), /req\-sup\-admin/);
+  assert.deepEqual([...new Set(approveTargets(bot))], ['req-sup-admin']);
   // Review fix: the reminder card must show the requested goods (aj.cart) — UX-2a cart block grammar.
   assert.match(bot.allText().replace(/\\/g, ''), /🧵 77016\n {2}• 5 · 3B\n\nΣ 3B/, 'cart block rendered');
-  assert.ok(!/req\-trf/.test(bot.allText()), 'transfer lifecycle rows skipped');
-  assert.ok(!/req\-sup\-stage1/.test(bot.allText()));
+  assert.ok(!approveTargets(bot).includes('req-trf'), 'transfer lifecycle rows skipped');
+  assert.ok(!approveTargets(bot).includes('req-sup-stage1'));
 });
 
 test('APU-1: sale reminders rebuild the full card and re-forward the bill', async () => {
@@ -155,7 +165,10 @@ test('FIX-INBOX: an expense batch and a payee account are reminded with their su
   const bot = createFakeBot();
   const sent = await reminder.sweep(bot, { now: NOW });
   assert.equal(sent, 2);
-  const cardFor = (id) => bot.calls.filter((c) => c.method === 'sendMessage' && c.args.text.includes(id))
+  // CARD-9 — found by its Approve button (the raw id left the text).
+  const cardFor = (id) => bot.calls.filter((c) => c.method === 'sendMessage'
+    && ((c.args.opts && c.args.opts.reply_markup && c.args.opts.reply_markup.inline_keyboard) || []).flat()
+      .some((b) => b.callback_data === `approve:${id}`))
     .map((c) => c.args.text.replace(/\\/g, ''));
   const expense = cardFor('req-exp');
   assert.equal(expense.length, 2, 'one copy per admin');

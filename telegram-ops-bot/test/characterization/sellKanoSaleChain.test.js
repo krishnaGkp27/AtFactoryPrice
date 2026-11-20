@@ -184,7 +184,9 @@ test('the bill submits the sale, carrying the picked seller and tapped date', as
   assert.match(adminText, /🧑 Abdul/);
   assert.match(adminText, /\n77014 · 1t · 30 yd\n Shade 11\n {2}\d\. 1100\/1 · 30 yd/);
   assert.ok(!/Σ |#11|\d+ bale/.test(adminText), 'no Σ line, no # link, no bale count');
-  assert.match(adminText, /Sent for approval/, 'no "requires admin approval" boilerplate');
+  // CARD-9 — boilerplate leaves no reason line at all (no "Sent for approval").
+  assert.ok(!/Sent for approval|requires? (admin )?approval/i.test(adminText), 'no reason line for boilerplate');
+  assert.ok(!/Use buttons below/.test(adminText), 'no footer line');
   const photos = bot.calls.filter((c) => c.method === 'sendPhoto' && String(c.args.chatId) === '777');
   assert.equal(photos.length, 1, 'the bill follows the card');
   assert.equal(photos[0].args.photo, 'bill-file-1');
