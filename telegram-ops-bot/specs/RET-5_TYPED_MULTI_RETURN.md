@@ -96,3 +96,64 @@ Tests: `test/unit/utils/thanListParser.test.js` (the return verb), `test/unit/fl
    the unticked than still sold, ONE Transactions row per buyer, each statement credited by
    the amount its group showed, the reply `↩️ Credited A … · B …`.
 5. Type `Return than 2 from Bale <n>` the old way — the same review card opens.
+
+## RET-6 (20-Nov-2026) — the words around the numbers
+
+**Why.** Abdul typed a return three ways and got the chips card each time:
+
+```
+Return 631/1+2+3+4+5,614/1 to Idumota
+Return package 631/1+2+3+4+5,614/1 to Idumota
+Return package from soldier madam 631/1+2+3+4+5,614/1 to Idumota
+```
+
+The return line took only a bare list of numbers. `package`, `from soldier
+madam` and `to Idumota` each sent the line to the sentence path, which is
+switched off (TXT-1). Owner: *"Fix it immediately."*
+
+**What the line reads now** (`thanListParser.splitReturnLine`, still parsed
+locally, no AI):
+
+| Typed | Read as |
+|---|---|
+| `Return 631/1+2+3+4+5, 614/1` | the list, as before |
+| `package` · `bale` · `pkg` · `no` in front of the numbers | nothing — set aside |
+| `from Soldier Madam` (before or after the numbers) | the buyer the goods come back from |
+| `to Idumota` · `at` · `in` · `@` | the store they come back to |
+| `than 2 from bale 5801` · `bale 631 than 3` | `5801/2` · `631/3` |
+| a bare word after the numbers (`… idumota`) | the store when it names one on the list, else the buyer when it names one |
+| a date (`18 Nov`) | set aside — the date step asks |
+
+Not claimed (they get the Return hint line): a count (`Return 5 bales of
+9006`), a line with no number list (`Return the goods`).
+
+**The sale record still decides (R3 stands).** The typed buyer and store are
+CHECKED, never used:
+
+- they agree with the sale record → nothing is printed (the header already
+  names the store, the groups name the buyer);
+- the store differs →
+  `⚠️ You wrote "to Lagos". Returned goods go back to the store they were sold from: 631 → IDUMOTA.`
+- the buyer differs →
+  `⚠️ You wrote "from Abba". The sale record names another buyer: 631 → Soldier Madam. The credit goes to the buyer on the sale record.`
+- a word that names neither →
+  `ℹ️ I did not use "urgent". The buyer and the store come from the sale record.`
+
+The two `⚠️` lines show on the review card and the confirm card, ride the
+request as `actionJSON.typedNotes` (the executor does not read it; the
+duplicate detector ignores it) and print on the admin's card as
+`⚠️ The requester wrote …` — so goods that physically went to another store
+get a transfer after the return is approved.
+
+The old line `ℹ️ I ignored "<name>" — the buyer comes from the sale record.`
+is gone: a name is now checked, and silent when it is right.
+
+**Not built.** Changing where returned goods go (R3) or who is credited from
+the typed words. If Abdul often receives returns at a store other than the
+one that sold the goods, that is an owner ruling: either the return may name
+the receiving store, or the bot offers a transfer right after approval.
+
+**Tests.** `test/characterization/typedReturnWords.test.js` (the three lines
+through the real controller; both differences; the admin card),
+`test/unit/utils/thanListParser.test.js` (RET-6 block).
+
