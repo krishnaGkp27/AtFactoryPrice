@@ -431,7 +431,7 @@ h2 { font-size:21pt; color:#0e2a47; margin:0 0 1.4mm; letter-spacing:-.3px; }
        background:#1f6fb2; color:#fff; font-weight:900; font-size:10.4pt; }
 .extitle { font-weight:800; font-size:12pt; color:#0e2a47; margin-bottom:1mm; }
 .grid2 .shot .txt { font-size:7.4pt; line-height:1.25; }
-.cols3 .shot .txt { font-size:8.3pt; line-height:1.3; }
+.cols3 .shot .txt { font-size:8.0pt; line-height:1.28; }
 .cols3 .shot .kbtn { font-size:7.6pt; }
 .grid2 .cap.plain { font-size:9.4pt; }
 .grid2 { gap:3mm 6mm; }

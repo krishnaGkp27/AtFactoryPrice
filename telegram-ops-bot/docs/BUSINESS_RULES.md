@@ -363,7 +363,9 @@ inventory sheet. but you can add in different sheet."*
   (`rateFill`, `rateFillBy`), every signature names the rates it was given
   for, and a second admin sees the entered rate before their approval
   counts. A than that carries its own rate is always credited at it — an
-  entered rate never replaces a recorded one. A return signed before this
+  entered rate never replaces a recorded one. No credit for such a than
+  happens only as that admin's deliberate choice (`⏭ No credit for these`),
+  named on every card after it (`no credit — chosen by Musa`). A return signed before this
   rule finishes as before (no credit for the gap). The entered rate is named
   to admins only; the requester sees the credit, as before. The requester
   may not enter the rate on their own return while another admin exists (the
@@ -1370,6 +1372,6 @@ Spec: `specs/BKP-4_SWITCH_AND_CLEANUP.md`.
 | 19-Nov-2026 | The offsite backup shipped with `📤 Send me a backup now`: one admin, one tap, the whole workbook and the database records in that chat, nobody else told; and its recipient list was a Settings cell any workbook editor could point at any chat. Owner the same day: "This backup job should never be happening alone to a single admin … make it available only through two admins" | §22 (BKP-3) |
 | 19-Nov-2026 | The first nightly backup (02:20) put the whole workbook and the database records in every admin's chat: the job was ON by default and its default recipients were every admin. Owner: "I did not ask you to send the backup of the sheet like this so easily … Can you delete it all? … disable this function entirely for any other admin and give it a switch inside the sheet itself" | §22 tightened (BKP-4) |
 | 20-Nov-2026 | Abdul typed a return three ways (`Return 631/1+2+3+4+5,614/1 to Idumota`, then with `package`, then with `from soldier madam`) and got the generic chips card each time. A first fix that read the words around the numbers was taken out the same day: every wording a person can add is a new way for a count, a phone number or a date to be read as a bale. Owner: *"I want to close all other door of this script … a single window should be there for all this process so that they should not go and make any mistake for my employees."* **A return is typed ONE way: `Return` and numbers only — `Return 631/1+2+3, 614`.** No customer name, no store, no other word; the buyer and the store come from the sale record (R3). Every other message that opens with Return gets that one line back — no numbers are read out of words, no AI, no chips card — and the same rule holds on the open return card. What the one line cannot place is reported, never dropped | RET-7 (`specs/RET-5_TYPED_MULTI_RETURN.md` §RET-7) |
-| 20-Nov-2026 | A return whose sold rows carried no rate was approved with NO credit to the buyer; the only remedy was posting it by hand. Owner: *"Go with all your recommendations"* — the admin who approves enters the missing rate, and the credit posts with the return | RET-8 (`src/services/returnRate.js`, `src/flows/returnRateStep.js`; §6d RET-3 bullet) |
+| 20-Nov-2026 | A return whose sold rows carried no rate was approved with NO credit to the buyer; the only remedy was posting it by hand. Owner: *"Go with all your recommendations"* — the admin who approves enters the missing rate, and the credit posts with the return. An entered rate never replaces a rate on the sale record; no credit only as an admin's deliberate choice (`⏭ No credit for these`), never by default | RET-8 (`specs/RET-8_RETURN_RATE_AND_CARD.md`; `src/services/returnRate.js`, `src/flows/returnRateStep.js`; §6d RET-3 bullet) |
 
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

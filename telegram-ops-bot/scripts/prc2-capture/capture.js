@@ -275,7 +275,7 @@ async function sceneA() {
   await taps('a_open', ABDUL, '💵 Payment Received');
   await taps('a_pick', ABDUL, '👤 ABBA');
   await types('a_amount', ABDUL, '50000', 'Abdul types: 50000');
-  await taps('a_bank', ABDUL, '🏦 Zenith');
+  await taps('a_bank', ABDUL, '🏦 ZENITH — BLACK PANTHER');
   await taps('a_ask', ABDUL, '🛂 Musa');
   at('10:22:00');
   await taps('a_submit', ABDUL, '✅ Submit for approval');
@@ -331,7 +331,7 @@ async function sceneB() {
   await taps('b_open', ABDUL, '💵 Payment Received');
   await taps('b_pick', ABDUL, '👤 ABBA');
   await taps('b_noamt', ABDUL, '⏭ Amount not known');
-  await taps('b_bank', ABDUL, '🏦 Zenith');
+  await taps('b_bank', ABDUL, '🏦 ZENITH — BLACK PANTHER');
   await taps('b_ask', ABDUL, '🛂 Musa');
   at('11:01:00');
   await taps('b_submit', ABDUL, '✅ Submit for approval');
@@ -362,7 +362,7 @@ async function sceneC() {
   await taps('c_open', ABDUL, '💵 Payment Received');
   await taps('c_pick', ABDUL, '👤 ABBA');
   await types('c_amount', ABDUL, '50000', 'Abdul types: 50000');
-  await taps('c_bank', ABDUL, '🏦 Zenith');
+  await taps('c_bank', ABDUL, '🏦 ZENITH — BLACK PANTHER');
   await taps('c_ask', ABDUL, '🛂 Musa');
   await taps('c_submit', ABDUL, '✅ Submit for approval');
   const REQ = String(queueRows()[0][0]);
@@ -403,7 +403,7 @@ async function sceneD() {
   await taps('d_open', ABDUL, '💵 Payment Received');
   await taps('d_pick', ABDUL, '👤 ABBA');
   await types('d_amount', ABDUL, '50000', 'Abdul types: 50000');
-  await taps('d_bank', ABDUL, '🏦 Zenith');
+  await taps('d_bank', ABDUL, '🏦 ZENITH — BLACK PANTHER');
   await taps('d_ask', ABDUL, '👥 Any admin');
   await taps('d_submit', ABDUL, '✅ Submit for approval');
   FACTS.request = String(queueRows()[0][0]);

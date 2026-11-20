@@ -171,7 +171,7 @@ def parts():
         Step("Abdul", f"Type {ty('menu')}. Tap {b('💰 Finance')}. Tap {end('💵 Payment Received')}",
              [Card(S("A", "a_menu")), Card(S("A", "a_fin")), Card(S("A", "a_open"))],
              "The same message changes after each tap."),
-        Step("Abdul", f"Tap {b('👤 ABBA')}. Type {ty('50000')}. Tap the bank the money went into (here {b('🏦 Zenith')}).",
+        Step("Abdul", f"Tap {b('👤 ABBA')}. Type {ty('50000')}. Tap the bank the money went into (here {b('🏦 ZENITH — BLACK PANTHER')}).",
              [Card(S("A", "a_pick")), Card(S("A", "a_amount")), Card(S("A", "a_bank"), new=True)],
              "Your bank list can be different: it is the list in 🏦 Manage Banks. "
              "The last screen is new: “Who should approve it?”. It lists the admins, never Abdul himself."),
@@ -203,7 +203,7 @@ def parts():
               "Same payment, but Abdul does not know how much ABBA paid. Musa types the amount when he approves. "
               "Krishna checks Musa's figure before he approves.", [
         Step("Abdul", f"Tap {b('💰 Finance')} → {b('💵 Payment Received')} → {b('👤 ABBA')} → "
-                      f"{b('⏭ Amount not known')} → {end('🏦 Zenith')}",
+                      f"{b('⏭ Amount not known')} → {end('🏦 ZENITH — BLACK PANTHER')}",
              [Card(S("B", "b_bank"), new=True)],
              "The bank list is the same as in step §a2. From now on the amount line reads "
              "“Amount: to be entered by the admin”."),
@@ -385,7 +385,7 @@ INBOX = "📋 More Options → 🛂 Approvals → 💵 Finance → the row from 
 CHECKS = [
     ("a0", "Krishna", "Before Abdul starts: type Balance ABBA. Write down the figure.",
      "ABBA's outstanding balance (here 120,000)."),
-    ("a1–a2", "Abdul", "💰 Finance → 💵 Payment Received → 👤 ABBA → type 50000 → 🏦 Zenith",
+    ("a1–a2", "Abdul", "💰 Finance → 💵 Payment Received → 👤 ABBA → type 50000 → 🏦 ZENITH — BLACK PANTHER",
      "New screen “Who should approve it?”: every admin (here 🛂 Krishna, 🛂 Musa), then 👥 Any admin — never Abdul."),
     ("a3", "Abdul", "Tap 🛂 Musa, then ✅ Submit for approval",
      "“Ask: Musa”, then “Sent to Musa for approval”. No balance on Abdul's phone."),
@@ -394,7 +394,7 @@ CHECKS = [
     ("a6", "Musa", "Tap ✅ Approve", "Abdul: “Approval 1 of 2”. Krishna: “1 of 2 — signed by Musa. Yours is the second approval.”"),
     ("a7", "Krishna", "Tap ✅ Approve. Then type Balance ABBA.",
      "Abdul: “Approved · 2 of 2”. Krishna: “Outstanding as of today” is 50,000 lower than in row 1."),
-    ("b1–b2", "Abdul", "💰 Finance → 💵 Payment Received → 👤 ABBA → ⏭ Amount not known → 🏦 Zenith → 🛂 Musa → "
+    ("b1–b2", "Abdul", "💰 Finance → 💵 Payment Received → 👤 ABBA → ⏭ Amount not known → 🏦 ZENITH — BLACK PANTHER → 🛂 Musa → "
      "✅ Submit for approval",
      "“Amount: to be entered by the admin” and “The admin enters the amount.”, then “Sent to Musa for approval”."),
     ("b3", "Musa", "Tap ✅ Approve on the card", "Card says “Amount: not entered”. Pop-up “Type the amount first.” and the amount question."),
