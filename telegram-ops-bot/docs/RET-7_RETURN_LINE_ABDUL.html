@@ -1,0 +1,374 @@
+<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>How to type a return</title><style>
+@page { size: A4 portrait; margin: 9mm 10mm 13mm;
+  @bottom-left { content: "black_panther bot · How to type a return · for Abdul · 20-Nov-2026 · page " counter(page); font: 7.6pt "DejaVu Sans", Arial, sans-serif; color: #7d8b99; } }
+* { box-sizing: border-box; }
+body { margin:0; font-family:"DejaVu Sans","Segoe UI",Arial,sans-serif; color:#16202a; font-size:9.6pt; line-height:1.38; }
+section { page-break-after: always; }
+section:last-child { page-break-after: auto; }
+h1 { font-size:30pt; margin:3mm 0 1mm; letter-spacing:-.5px; color:#0e2a47; }
+.brand { font-size:8.4pt; letter-spacing:2px; text-transform:uppercase; color:#7d8b99; font-weight:700; }
+.sub { font-size:11.4pt; color:#3d4b59; margin-bottom:3mm; max-width:240mm; }
+.small { font-size:8.4pt; color:#5d6b79; }
+code { font-family:"DejaVu Sans Mono",monospace; font-size:.9em; background:#eef2f6; border-radius:1mm; padding:0 .8mm; }
+
+.three { display:flex; gap:5mm; margin:4mm 0; }
+.box { flex:1; border:1px solid #dde4ea; border-radius:3mm; padding:3.4mm 4mm; background:#fbfcfd; }
+.btitle { font-weight:700; color:#0e2a47; margin-bottom:2mm; font-size:10.4pt; }
+.box p { margin:0 0 1.8mm; }
+.castrow { display:flex; align-items:center; gap:2.4mm; margin-bottom:2mm; font-size:9pt; }
+.castrow .badge { min-width:20mm; text-align:center; }
+.toc { margin:0; padding-left:5mm; font-size:9pt; } .toc li { margin-bottom:.8mm; }
+
+.badge { display:inline-block; color:#fff; font-weight:800; border-radius:2mm; padding:.6mm 2.6mm; font-size:9.4pt; letter-spacing:.2px; }
+.chip { display:inline-block; background:#22303f; color:#e9eef3; border-radius:1.4mm; padding:0 1.6mm; font-size:.92em; white-space:nowrap; }
+.typed { display:inline-block; background:#fff7dc; border:1px solid #e3c770; color:#3b2f05; border-radius:1.2mm; padding:0 1.4mm;
+         font-family:"DejaVu Sans Mono",monospace; font-size:.9em; }
+
+.legend { display:flex; flex-wrap:wrap; gap:3mm 6mm; border:1px solid #dde4ea; border-radius:3mm; padding:3mm 4mm; background:#f4f7fa; }
+.lgi { display:flex; align-items:center; gap:2.4mm; font-size:8.8pt; width:85mm; }
+.snum.mini { width:9mm; height:9mm; line-height:7.6mm; font-size:11pt; margin:0; }
+.tg.mini { width:22mm; padding:1.4mm; position:relative; } .tg.mini .txt { font-size:7pt; }
+
+/* swim-lane */
+.lanebox { border:1px solid #dde4ea; border-radius:3mm; padding:3mm 4mm 2mm; }
+.ltitle { font-weight:800; color:#0e2a47; font-size:13pt; margin-bottom:2.4mm; }
+.lane { display:grid; grid-template-columns: 13mm repeat(4, 1fr) 38mm; }
+.lh { padding:1.2mm 1.6mm 2mm; text-align:center; border-bottom:2px solid #0e2a47; }
+.lrole { font-size:7.4pt; color:#5d6b79; margin-top:.8mm; }
+.lc { position:relative; padding:1.5mm 1.8mm; min-height:16.5mm; display:flex; align-items:center; justify-content:center;
+      border-bottom:1px solid #eef2f5; }
+.lline { position:absolute; left:50%; top:0; bottom:0; border-left:2px dashed; opacity:.35; }
+.ldo { position:relative; color:#fff; font-weight:700; border-radius:2mm; padding:1.4mm 2mm; font-size:8.4pt; text-align:center; width:100%; }
+.lget { position:relative; background:#fff; border:1.8px solid; border-radius:2mm; padding:1.2mm 1.8mm; font-size:8pt; text-align:center; width:100%; }
+.lstep { font-size:11pt; color:#0e2a47; }
+.lwait { font-size:8.2pt; color:#3d4b59; justify-content:flex-start; text-align:left; }
+.lh.lwait, .lh.lstep { font-weight:700; font-size:8.4pt; display:flex; align-items:flex-end; justify-content:center; }
+.hl { background:#e8f1fa; }
+.lnew { display:inline-block; background:#c0392b; color:#fff; font-size:6.6pt; font-weight:800; border-radius:1mm; padding:0 1mm; margin-left:1.2mm; vertical-align:1px; }
+.lfoot { font-size:8.2pt; color:#5d6b79; margin-top:2mm; }
+
+/* parts and steps */
+.pband { display:flex; align-items:center; gap:3mm; background:#0e2a47; color:#fff; border-radius:2.4mm; padding:2mm 3.4mm; }
+.pkey { display:inline-block; background:#fff; color:#0e2a47; font-weight:900; border-radius:1.6mm; padding:.2mm 2.4mm; font-size:11.6pt; }
+.ptitle { font-size:13.4pt; font-weight:800; }
+.pintro { margin:2.2mm 0 3mm; color:#31404e; font-size:9.6pt; }
+.stepwrap { page-break-inside:avoid; break-inside:avoid; }
+.step { display:flex; gap:4mm; margin:0; }
+.sl { width:54mm; flex:none; border-left:3px solid; padding-left:2.6mm; }
+.sr { flex:1; min-width:0; }
+.snum { display:inline-block; width:12mm; height:12mm; line-height:10mm; text-align:center; border:2.4px solid; border-radius:6mm;
+        font-weight:900; font-size:15pt; background:#fff; }
+.whorow { margin:1.6mm 0 1.6mm; }
+.do { color:#16202a; font-size:9.4pt; }
+.cap { margin-top:1.8mm; font-size:8.8pt; color:#3d4b59; }
+.snote { margin-top:1.8mm; font-size:8.6pt; background:#fff4f4; border-left:3px solid #a3232a; padding:1.2mm 2mm; border-radius:0 2mm 2mm 0; }
+.tick { margin-top:2.2mm; display:inline-block; border:1.4px solid #1c6b45; color:#1c6b45; border-radius:1.6mm; padding:.6mm 2.4mm; font-weight:700; font-size:8.6pt; }
+.part { margin-top:5mm; }
+.part:first-child { margin-top:0; }
+.keep { break-inside:avoid; page-break-inside:avoid; }
+.tsteps { display:flex; gap:4mm; align-items:stretch; break-inside:avoid; page-break-inside:avoid; }
+.tstep { flex:1; border:1px solid #dde4ea; border-top:3px solid; border-radius:2mm; padding:2.4mm 3mm; background:#fbfcfd; }
+.tshead { display:flex; align-items:center; gap:2.4mm; margin-bottom:1.6mm; }
+.then { display:flex; align-items:center; gap:2mm; height:3.4mm; margin:1.4mm 0 .8mm; color:#7d8b99; font-size:7pt; letter-spacing:1px; }
+.then::before, .then::after { content:""; flex:1; border-top:1px dashed #c9d3dc; }
+.then.alt { color:#a3232a; font-weight:700; font-size:7.6pt; letter-spacing:.4px; }
+
+/* cards */
+.cards { display:flex; flex-wrap:wrap; gap:3.4mm 3.6mm; align-items:flex-start; }
+.col { width:52mm; break-inside:avoid; page-break-inside:avoid; }
+.col.wide { width:70mm; }
+.onphone { font-size:7.4pt; color:#3d4b59; font-weight:700; margin:0 0 .8mm; }
+.dot { display:inline-block; width:2.4mm; height:2.4mm; border-radius:1.2mm; margin-right:1mm; vertical-align:-.2mm; }
+.poplbl { font-size:6.8pt; color:#7d8b99; text-transform:uppercase; letter-spacing:.6px; margin-bottom:.4mm; }
+.toast { display:inline-block; background:#3a4652; color:#fff; font-size:7.8pt; border-radius:3mm; padding:.8mm 3mm; margin-bottom:1.2mm; box-shadow:0 .4mm 1mm rgba(0,0,0,.25); }
+.alertbox { background:#fff; border:1px solid #c5ced8; border-radius:2.4mm; padding:2mm 2.6mm 1.4mm; margin-bottom:1.2mm; box-shadow:0 .6mm 1.6mm rgba(0,0,0,.25); font-size:8pt; }
+.aok { text-align:right; color:#1d6fa5; font-weight:700; font-size:8pt; margin-top:1mm; }
+.tg { position:relative; background:#0e1621; border-radius:3mm; padding:2.2mm; }
+.newrib { position:absolute; top:-1.6mm; right:-1.6mm; background:#c0392b; color:#fff; font-weight:900; font-size:7.6pt; letter-spacing:1px;
+          border-radius:1.4mm; padding:.4mm 2.2mm; box-shadow:0 .4mm 1mm rgba(0,0,0,.3); z-index:2; }
+.bubble { background:#182533; border-radius:2.4mm; padding:2mm 2.4mm 1.8mm; }
+.txt { color:#e9eef3; font-size:7.7pt; line-height:1.36; white-space:pre-wrap; word-wrap:break-word; overflow-wrap:anywhere; }
+.txt b { color:#fff; }
+.txt i { color:#b4c4d3; font-style:italic; }
+.txt code { background:#0e1621; border-radius:1mm; padding:0 .6mm; font-family:"DejaVu Sans Mono",monospace; font-size:7.2pt; color:#a9c7e4; }
+.krow { display:flex; gap:1.2mm; margin-top:1mm; }
+.kbtn { flex:1; min-width:0; background:#22303f; color:#e9eef3; text-align:center; font-size:7.3pt; padding:1.3mm 1mm; border-radius:1.6mm; overflow-wrap:anywhere; }
+.pic { height:20mm; border-radius:1.8mm; margin-bottom:1.6mm; overflow:hidden; }
+.doc { display:flex; align-items:center; gap:2mm; background:#0e1621; border-radius:1.8mm; padding:1.6mm 2mm; margin-bottom:1.4mm; }
+.dicon { font-size:12pt; } .dname { color:#a9c7e4; font-size:7.8pt; }
+.mockbill, .mockshot { height:100%; display:flex; align-items:center; justify-content:center; font-size:7.6pt; text-align:center; }
+.mockbill { background:repeating-linear-gradient(0deg,#f3efe4 0 2.4mm,#e6e0cf 2.4mm 2.7mm); color:#3b3524; }
+.mockbill span, .mockshot span { background:rgba(255,255,255,.92); border-radius:1.4mm; padding:1mm 2.4mm; font-weight:700; }
+.mockshot { background:linear-gradient(180deg,#0b5d3b 0 24%,#f6f8f7 24% 100%); color:#0b3b27; }
+.gonebox { border:1px dashed #93a3b2; border-radius:2mm; padding:2mm; font-size:8pt; color:#4a5866; }
+
+/* info boxes */
+.infobox { margin-top:4mm; border:1.6px solid #1d6fa5; background:#f3f8fd; border-radius:3mm; padding:3mm 4mm; page-break-inside:avoid; }
+.ibtitle { font-weight:800; color:#0e2a47; font-size:11pt; margin-bottom:1.6mm; }
+.infobox p { margin:0 0 1.6mm; } .infobox ul { margin:0 0 2mm; padding-left:5mm; } .infobox li { margin-bottom:1mm; }
+.rules { border-collapse:collapse; margin:1mm 0 2mm; font-size:9pt; }
+.rules th { background:#0e2a47; color:#fff; text-align:left; padding:1.2mm 2.4mm; font-size:8.4pt; }
+.rules td { border-bottom:1px solid #d5dde5; padding:1.2mm 2.4mm; vertical-align:top; }
+.rules td:first-child { font-weight:700; white-space:nowrap; }
+.sheet { border-collapse:collapse; font-size:8.4pt; margin:1mm 0 2mm; }
+.sheet th { background:#e8edf2; color:#3d4b59; border:1px solid #c5ced8; padding:.8mm 2.4mm; font-weight:700; }
+.sheet td { border:1px solid #c5ced8; padding:.8mm 2.4mm; background:#fff; white-space:nowrap; }
+.sheet .rn { background:#e8edf2; color:#3d4b59; text-align:center; }
+.sheet .tnew { background:#fdecea; border:2px solid #c0392b; font-weight:700; }
+
+/* checklist */
+.ckgrid { display:grid; grid-template-columns: repeat(4, 1fr); gap:3mm; }
+.ckgrid.two { grid-template-columns: 1fr 1fr; }
+.ckh { margin-bottom:1.4mm; }
+.ckcol ul { list-style:none; margin:0; padding:0; }
+.ckcol li { font-size:7.4pt; line-height:1.3; padding:.7mm 0; border-bottom:1px solid #eef2f5; display:flex; gap:1.2mm; align-items:baseline; }
+.cbx { color:#1c6b45; font-size:9pt; }
+.cstep { display:inline-block; min-width:5mm; font-weight:800; color:#0e2a47; }
+.golden { margin:4mm 0 0; border:2.4px solid #b8860b; background:#fffaf0; border-radius:3mm; padding:3mm 4mm; }
+.gbody { font-size:13pt; font-weight:700; margin:0 0 1.4mm; color:#1d1502; }
+.gwhy { font-size:9pt; color:#4a4231; }
+
+@page { size: A4 portrait; margin: 10mm 11mm 13mm; }
+body { font-size:11pt; line-height:1.4; }
+.pg { page-break-after: always; }
+.pg:last-child { page-break-after: auto; }
+h1 { font-size:28pt; margin:1mm 0 1mm; }
+h2 { font-size:21pt; color:#0e2a47; margin:0 0 1.4mm; letter-spacing:-.3px; }
+.sub { font-size:12.4pt; color:#22303f; margin-bottom:3mm; }
+.sub2 { font-size:11pt; color:#3d4b59; margin-bottom:3mm; }
+.mono { font-family:"DejaVu Sans Mono",monospace; }
+.bigbox { border:3px solid #1f6fb2; background:#f1f7fd; border-radius:4mm; padding:3mm 5mm 3.4mm; margin-bottom:4mm; }
+.bigl { font-size:11pt; font-weight:800; color:#1f6fb2; text-transform:uppercase; letter-spacing:1px; }
+.big { font-family:"DejaVu Sans Mono",monospace; font-weight:700; font-size:31pt; color:#0e2a47; line-height:1.25; margin:1mm 0 1.4mm; }
+.bign { font-size:10.4pt; color:#3d4b59; }
+.two { display:flex; gap:4mm; margin-bottom:4mm; }
+.two .box { padding:3mm 4mm; }
+.rulesbox { flex:1.25; } .recbox { flex:1; }
+.btitle { font-size:12.4pt; }
+.btitle.red { color:#a3232a; }
+.rtab { border-collapse:collapse; width:100%; font-size:11pt; }
+.rtab td { padding:1.2mm 1.6mm; border-bottom:1px solid #dde4ea; vertical-align:top; }
+.rtab .rex { width:34mm; font-weight:700; color:#0e2a47; font-size:12pt; }
+.numonly { margin-top:2.4mm; font-weight:800; color:#a3232a; font-size:11pt; }
+.rec { font-size:12pt; font-weight:700; color:#0e2a47; }
+.box p { margin:0 0 2mm; }
+.small { font-size:9.6pt; }
+.dont { display:flex; gap:4mm; border:2.4px solid #a3232a; background:#fff6f6; border-radius:4mm; padding:3mm 4mm; align-items:flex-start; }
+.dtext { flex:1; } .dtext p { margin:0 0 2mm; }
+.dcard { width:76mm; flex:none; }
+.olds { list-style:none; padding:0; margin:0 0 2.4mm; }
+.olds li { font-family:"DejaVu Sans Mono",monospace; font-size:9.6pt; margin-bottom:1.6mm; background:#fff; border:1px solid #e4c3c3; border-radius:1.4mm; padding:1mm 2mm; }
+.struck { text-decoration:line-through; text-decoration-color:#c0392b; text-decoration-thickness:2px; color:#5d3a3a; }
+.no { color:#c0392b; font-weight:900; font-family:"DejaVu Sans",sans-serif; }
+
+.shot .tg { padding:1.6mm; }
+.shot .txt { font-size:7.6pt; line-height:1.3; }
+.shot .kbtn { font-size:7.1pt; padding:1mm .8mm; }
+.shot .bubble { padding:1.8mm 2.2mm 1.6mm; }
+.cols3 { display:flex; gap:4mm; align-items:flex-start; }
+.colm { flex:1; min-width:0; display:flex; flex-direction:column; gap:4mm; }
+.grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:4mm 6mm; align-items:start; }
+.cell { break-inside:avoid; }
+.cap { display:flex; gap:2mm; align-items:flex-start; font-size:9.6pt; line-height:1.3; margin-bottom:1.4mm; }
+.cap.plain { display:block; min-height:0; }
+.cap .chip, .cap .typed { white-space:normal; }
+.cap .typed { display:inline; box-decoration-break:clone; -webkit-box-decoration-break:clone; }
+.nw { white-space:nowrap; }
+.num { flex:none; display:inline-block; width:7mm; height:7mm; line-height:6.4mm; text-align:center; border-radius:3.5mm;
+       background:#1f6fb2; color:#fff; font-weight:900; font-size:10.4pt; }
+.extitle { font-weight:800; font-size:12pt; color:#0e2a47; margin-bottom:1mm; }
+.grid2 .shot .txt { font-size:7.4pt; line-height:1.25; }
+.grid2 .cap.plain { font-size:9.4pt; }
+.grid2 { gap:3mm 6mm; }
+.cxrow { display:flex; gap:5mm; align-items:center; margin-top:2.4mm; border:1.6px solid #1d6fa5; background:#f3f8fd; border-radius:3mm; padding:1.6mm 3mm; break-inside:avoid; }
+.cxt { flex:1; } .cxt p { margin:0; }
+.cxcard { width:72mm; flex:none; }
+.cxt .btitle { margin-bottom:1mm; }
+
+.warn { border:2.6px solid #a3232a; background:#fff1f1; border-radius:3mm; padding:2mm 3.4mm; font-size:10.6pt; font-weight:700; color:#5a1015; margin-bottom:2.4mm; }
+.tt { width:100%; border-collapse:collapse; font-size:9.2pt; line-height:1.25; }
+.tt th { background:#0e2a47; color:#fff; text-align:left; padding:1.4mm 2mm; font-size:9pt; }
+.tt td { border-bottom:1.2px solid #b9c5d0; padding:1.3mm 1.6mm; vertical-align:top; }
+.tt tr { break-inside:avoid; }
+.tt .tn { width:7mm; font-weight:900; font-size:12pt; color:#0e2a47; }
+.tt .td { width:62mm; } .tt .ts { width:50mm; color:#22303f; }
+.tt .typed { white-space:normal; overflow-wrap:anywhere; }
+.tt .tyn { width:19mm; font-size:9.6pt; white-space:nowrap; } .tt .tyn div { margin-bottom:1.2mm; }
+.tb { display:inline-block; width:4.4mm; height:4.4mm; border:1.6px solid #0e2a47; border-radius:.8mm; vertical-align:-1mm; margin-right:1mm; background:#fff; }
+.tt .tw { width:auto; }
+.wl { display:block; border-bottom:1px solid #7d8b99; height:8mm; }
+.used { margin-top:1.6mm; font-weight:700; color:#0e2a47; }
+.blank { display:inline-block; width:34mm; border-bottom:1.4px solid #0e2a47; height:4mm; vertical-align:-1mm; }
+.endrow { display:flex; gap:6mm; align-items:center; margin-top:2.4mm; break-inside:avoid; }
+.sign { display:flex; flex-direction:column; gap:3mm; font-size:11pt; font-weight:700; flex:none; }
+.sigl { display:inline-block; width:62mm; border-bottom:1.4px solid #0e2a47; height:5mm; vertical-align:-1mm; }
+.sendto { flex:1; font-size:12.4pt; font-weight:800; color:#1e8449; border:2.4px solid #1e8449; border-radius:3mm; padding:2.4mm 4mm; background:#f2fbf5; }
+</style></head><body>
+<section class="pg">
+ <div class="brand">black_panther bot · for Abdul · 20-Nov-2026</div>
+ <h1>How to type a return</h1>
+ <div class="sub">From today the bot takes a return in ONE way only. Type the word Return, then the numbers. Nothing else.</div>
+ <div class="bigbox"><div class="bigl">Type this:</div><div class="big">Return 631/1+2+3, 614</div>
+  <div class="bign">Use your own bale numbers. This line returns thans 1, 2 and 3 of bale 631, and all of bale 614.</div></div>
+ <div class="two">
+  <div class="box rulesbox"><div class="btitle">The five rules</div>
+   <table class="rtab"><tr><td class="rex"><span class="mono">Return</span></td><td>the word Return, then the bale numbers</td></tr><tr><td class="rex"><span class="mono">631/1</span></td><td>one than</td></tr><tr><td class="rex"><span class="mono">631/1+2+3</span></td><td>several thans of one bale</td></tr><tr><td class="rex"><span class="mono">614</span></td><td>a whole bale</td></tr><tr><td class="rex"><span class="mono">,</span></td><td>a comma between bales</td></tr></table>
+   <div class="numonly">Numbers only. No customer name, no store, no other word.</div>
+  </div>
+  <div class="box recbox"><div class="btitle">Who is the customer? Which store?</div>
+   <p class="rec">“The bot takes the buyer and the store from the sale record.”</p>
+   <p>You do not type the customer. You do not type the store. The return card shows them to you. Check them there.</p>
+   <p class="small">Capital letters and extra spaces do not matter. A new line between bales also works.</p>
+  </div>
+ </div>
+ <div class="dont">
+  <div class="dtext"><div class="btitle red">Do not type</div>
+   <p>Words around the numbers. These are your lines from 20-Nov. The bot does not read them now:</p>
+   <ul class="olds"><li><span class="struck">Return 631/1+2+3+4+5,614/1 to Idumota</span> <span class="no">✗</span></li><li><span class="struck">Return package 631/1+2+3+4+5,614/1 to Idumota</span> <span class="no">✗</span></li><li><span class="struck">Return package from soldier madam 631/1+2+3+4+5,614/1 to Idumota</span> <span class="no">✗</span></li></ul>
+   <p>No <b>to Idumota</b>. No <b>package</b>. No customer name.</p>
+   <p>For each of them the bot sends this card, and nothing else happens. Type the line again, the one way.</p>
+  </div>
+  <div class="dcard"><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ Return — type it one way only
+
+Return 631/1+2+3, 614
+
+• the word Return, then the bale numbers
+• one than: 631/1
+• several thans of one bale: 631/1+2+3
+• a whole bale: 614
+• a comma between bales
+
+Numbers only. No customer name, no store, no other word.
+The bot takes the buyer and the store from the sale record.</div></div><div class="krow"><div class="kbtn">🏠 Menu</div></div></div></div></div>
+ </div>
+</section>
+<section class="pg">
+ <h2>What you will see</h2>
+ <div class="sub2">One return, from the line to the receipt. In this example the customer Soldier Madam bought bale 631 (thans 1 to 5) and bale 614 (than 1) from IDUMOTA.</div>
+ <div class="cols3"><div class="colm"><div class="cell"><div class="cap"><span class="num">1</span><span>Type <span class="typed">Return 631/1+2+3+4+5, 614/1</span>. The return card opens. Check the customer and every bale line. Then tap <span class="nw"><span class="chip">✅ Continue — date, condition, photo</span>.</span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b> · 🏭 IDUMOTA
+📦 6t · 180 yd
+
+👤 Soldier Madam · 6t · 180 yd
+9043-B
+ Shade 4
+  1. 631/1 · 30 yd
+  2. 631/2 · 30 yd
+  3. 631/3 · 30 yd
+  4. 631/4 · 30 yd
+  5. 631/5 · 30 yd
+9043-A
+ Shade 7
+  6. 614/1 · 30 yd
+
+💰 Credits: Soldier Madam 270,000 <i>(at the rates charged)</i></div></div><div class="krow"><div class="kbtn">🔎 Open 631</div><div class="kbtn">🔎 Open 614</div></div><div class="krow"><div class="kbtn">✅ Continue — date, condition, photo</div></div><div class="krow"><div class="kbtn">➕ Add more</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div><div class="cell"><div class="cap"><span class="num">2</span><span>Tap the day the goods came back. Here <span class="nw"><span class="chip">📅 Today (20-Nov-2026)</span>.</span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b>  ·  📦 6t · 180 yd
+
+When did the goods come back?</div></div><div class="krow"><div class="kbtn">📅 Today (20-Nov-2026)</div></div><div class="krow"><div class="kbtn">Yesterday (19-Nov-2026)</div></div><div class="krow"><div class="kbtn">18-Nov-2026</div><div class="kbtn">17-Nov-2026</div></div><div class="krow"><div class="kbtn">16-Nov-2026</div><div class="kbtn">15-Nov-2026</div></div><div class="krow"><div class="kbtn">14-Nov-2026</div></div><div class="krow"><div class="kbtn">📆 Older date — calendar</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div></div><div class="colm"><div class="cell"><div class="cap"><span class="num">3</span><span>Tap how the goods look. Here <span class="nw"><span class="chip">✅ Good — back to stock</span>.</span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b>  ·  📦 6t · 180 yd  ·  📅 20-Nov-2026
+
+How do the goods look?
+<i>One condition for the whole line — goods in a different state go as a second return.</i></div></div><div class="krow"><div class="kbtn">✅ Good — back to stock</div></div><div class="krow"><div class="kbtn">⚠️ Damaged</div></div><div class="krow"><div class="kbtn">✂️ Cut / short</div></div><div class="krow"><div class="kbtn">📝 Other — I will type it</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div><div class="cell"><div class="cap"><span class="num">4</span><span>Send one photo of the goods, or tap <span class="nw"><span class="chip">⏭ Skip photo</span>.</span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b>  ·  📅 20-Nov-2026  ·  ✅ Good
+
+📎 Send ONE photo of the goods — the admins see it on the card.</div></div><div class="krow"><div class="kbtn">⏭ Skip photo</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div></div><div class="colm"><div class="cell"><div class="cap"><span class="num">5</span><span>The confirm card. Check it. For a real return tap <span class="nw"><span class="chip">✅ Submit for approval</span>.</span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Confirm return</b> · 🏭 IDUMOTA
+📅 Returned <b>20-Nov-2026</b> · ✅ Good — back to stock
+
+👤 Soldier Madam · 6t · 180 yd
+9043-B
+ Shade 4
+  1. 631/1 · 30 yd
+  2. 631/2 · 30 yd
+  3. 631/3 · 30 yd
+  4. 631/4 · 30 yd
+  5. 631/5 · 30 yd
+9043-A
+ Shade 7
+  6. 614/1 · 30 yd
+
+Σ 6t · 180 yd
+💰 Credits: Soldier Madam 270,000 <i>(at the rates charged)</i>
+
+Approving puts the stock back and credits each customer&#x27;s account.
+Queues dual-admin approval.</div></div><div class="krow"><div class="kbtn">✅ Submit for approval</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div><div class="cell"><div class="cap"><span class="num">6</span><span>Your receipt: “Waiting for two admins to sign.” The stock changes only after two admins approve.</span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return — submitted</b>
+
+📦 6t · 180 yd · Soldier Madam
+
+⏳ Waiting for two admins to sign.
+Request: <code>7e3a9c51-2b4d-4f86-a1c0-5d9e8b7f6a24</code></div></div><div class="krow"><div class="kbtn">⬅ Back to Move Stock</div><div class="kbtn">🏠 Menu</div></div></div></div></div></div></div>
+</section>
+<section class="pg">
+ <h2>More examples</h2>
+ <div class="grid2"><div class="cell"><div class="extitle">A whole bale</div><div class="cap plain">Type <span class="typed">Return 614</span>. The bot loads every sold than of bale 614. To take one out, tap <span class="chip">🔎 Open 614</span>.</div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b> · 🏭 IDUMOTA
+📦 1t · 30 yd
+
+👤 Soldier Madam · 1t · 30 yd
+9043-A
+ Shade 7
+  1. 614/1 · 30 yd
+
+📦 Loaded with every sold than: 614 — tap 🔎 Open to drop one.
+
+💰 Credits: Soldier Madam 45,000 <i>(at the rates charged)</i></div></div><div class="krow"><div class="kbtn">🔎 Open 614</div></div><div class="krow"><div class="kbtn">✅ Continue — date, condition, photo</div></div><div class="krow"><div class="kbtn">➕ Add more</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div><div class="cell"><div class="extitle">A mistake in the line</div><div class="cap plain">Type <span class="typed">Return 631-635</span>. The bot cannot read “-635” and says so: “❓ Could not read: -635”. Bale 631 is still loaded. Tap <span class="chip">❌ Cancel</span> and type the line again, with a comma: <span class="typed">Return 631, 632, 633, 634, 635</span>.</div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b> · 🏭 IDUMOTA
+📦 5t · 150 yd
+
+👤 Soldier Madam · 5t · 150 yd
+9043-B
+ Shade 4
+  1. 631/1 · 30 yd
+  2. 631/2 · 30 yd
+  3. 631/3 · 30 yd
+  4. 631/4 · 30 yd
+  5. 631/5 · 30 yd
+
+📦 Loaded with every sold than: 631 — tap 🔎 Open to drop one.
+
+❓ Could not read: <code>-635</code>
+
+💰 Credits: Soldier Madam 225,000 <i>(at the rates charged)</i></div></div><div class="krow"><div class="kbtn">🔎 Open 631</div></div><div class="krow"><div class="kbtn">✅ Continue — date, condition, photo</div></div><div class="krow"><div class="kbtn">➕ Add more</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div><div class="cell"><div class="extitle">Add a bale on the open card</div><div class="cap plain">The card is open. Type only the numbers: <span class="typed">614/1</span>. The card says “➕ Added 1 bale.”</div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b> · 🏭 IDUMOTA
+📦 6t · 180 yd
+
+➕ Added 1 bale.
+
+👤 Soldier Madam · 6t · 180 yd
+9043-B
+ Shade 4
+  1. 631/1 · 30 yd
+  2. 631/2 · 30 yd
+  3. 631/3 · 30 yd
+  4. 631/4 · 30 yd
+  5. 631/5 · 30 yd
+9043-A
+ Shade 7
+  6. 614/1 · 30 yd
+
+💰 Credits: Soldier Madam 270,000 <i>(at the rates charged)</i></div></div><div class="krow"><div class="kbtn">🔎 Open 631</div><div class="kbtn">🔎 Open 614</div></div><div class="krow"><div class="kbtn">✅ Continue — date, condition, photo</div></div><div class="krow"><div class="kbtn">➕ Add more</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div><div class="cell"><div class="extitle">Words on the open card</div><div class="cap plain">Type <span class="typed">700 to Idumota</span>. The card says “Nothing was added.” Type numbers only.</div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b> · 🏭 IDUMOTA
+📦 6t · 180 yd
+
+❓ Numbers only here, like <code>631/1+2+3, 614</code>. Nothing was added.
+
+👤 Soldier Madam · 6t · 180 yd
+9043-B
+ Shade 4
+  1. 631/1 · 30 yd
+  2. 631/2 · 30 yd
+  3. 631/3 · 30 yd
+  4. 631/4 · 30 yd
+  5. 631/5 · 30 yd
+9043-A
+ Shade 7
+  6. 614/1 · 30 yd
+
+💰 Credits: Soldier Madam 270,000 <i>(at the rates charged)</i></div></div><div class="krow"><div class="kbtn">🔎 Open 631</div><div class="kbtn">🔎 Open 614</div></div><div class="krow"><div class="kbtn">✅ Continue — date, condition, photo</div></div><div class="krow"><div class="kbtn">➕ Add more</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div></div>
+ <div class="cxrow"><div class="cxt"><div class="btitle">Stop at any time: tap <span class="chip">❌ Cancel</span></div>
+  <p>Nothing is sent to the admins. The stock does not change.</p></div><div class="shot cxcard"><div class="tg"><div class="bubble"><div class="txt">❌ Return cancelled — nothing was queued.</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div>
+</section>
+<section class="pg">
+ <h2>Test it on the bot</h2>
+ <div class="sub2">Type each line in the bot, exactly as written. Do the rows in this order. Tick Yes if the bot shows it, No if not. Write what you saw.</div>
+ <div class="warn">⚠️ Do NOT tap <span class="chip">✅ Submit for approval</span> in this test. A submitted return goes to the admins, and when they approve it the stock and the customer's account change. Stop at the confirm card and tap <span class="chip">❌ Cancel</span>.</div>
+ <table class="tt">
+  <tr><th>No</th><th>Type or tap this</th><th>You should see</th><th>Did you see it?</th><th>What I saw</th></tr>
+  <tr><td class="tn">1</td><td class="td">Type <span class="typed">Return 631/1+2+3+4+5,614/1 to Idumota</span></td><td class="ts">The card “↩️ Return — type it one way only”. No return card opens.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">2</td><td class="td">Type <span class="typed">Return package 631/1+2+3+4+5,614/1 to Idumota</span></td><td class="ts">The same card as in row 1.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">3</td><td class="td">Type <span class="typed">Return package from soldier madam 631/1+2+3+4+5,614/1 to Idumota</span></td><td class="ts">The same card as in row 1.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">4</td><td class="td">Type <span class="typed">Return 631-635</span>. Then tap <span class="chip">❌ Cancel</span>.</td><td class="ts">A return card with the line “❓ Could not read: -635”. After Cancel: “nothing was queued”.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">5</td><td class="td">Use a bale you sold. Type <span class="typed">Return</span> and the bale number only. Then tap <span class="chip">❌ Cancel</span>.<div class="used">Bale I used: <span class="blank"></span></div></td><td class="ts">The return card with every sold than of that bale, the customer's name, and “📦 Loaded with every sold than”.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">6</td><td class="td">Use bales you sold. Type <span class="typed">Return</span>, one bale with thans, a comma, a whole bale. Like <span class="typed">Return 631/1+2, 614</span>.<div class="used">Line I typed: <span class="blank"></span></div></td><td class="ts">The return card. The customer and the store are the ones from the sale. Each than you typed is one line.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">7</td><td class="td">On that open card, type the number of ONE MORE bale you sold, numbers only.<div class="used">Bale: <span class="blank"></span></div></td><td class="ts">“➕ Added 1 bale.” The new bale is on the card.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">8</td><td class="td">On the open card, type <span class="typed">700 to Idumota</span></td><td class="ts">“❓ Numbers only here” and “Nothing was added.”</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">9</td><td class="td">Tap <span class="chip">✅ Continue — date, condition, photo</span> → <span class='chip'>📅 Today (…)</span> → <span class="chip">✅ Good — back to stock</span> → <span class="chip">⏭ Skip photo</span></td><td class="ts">The card “Confirm return” with the button ✅ Submit for approval. DO NOT TAP IT.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr><tr><td class="tn">10</td><td class="td">Tap <span class="chip">❌ Cancel</span></td><td class="ts">“❌ Return cancelled — nothing was queued.”</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span></td></tr>
+ </table>
+ <div class="endrow"><div class="sign">
+  <div>Name: <span class="sigl"></span></div><div>Date: <span class="sigl"></span></div>
+ </div>
+ <div class="sendto">📷 Send a photo of this page to Krishna.</div></div>
+</section></body></html>
