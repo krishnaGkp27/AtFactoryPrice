@@ -1,0 +1,350 @@
+<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Returns — test sheet for Abdul</title><style>
+@page { size: A4 portrait; margin: 9mm 10mm 13mm;
+  @bottom-left { content: "black_panther bot · RET-8 test sheet · Abdul · built 21-Nov-2026 · rebuild: python3 scripts/build-return-rate-guides.py · page " counter(page); font: 7.6pt "DejaVu Sans", Arial, sans-serif; color: #7d8b99; } }
+* { box-sizing: border-box; }
+body { margin:0; font-family:"DejaVu Sans","Segoe UI",Arial,sans-serif; color:#16202a; font-size:9.6pt; line-height:1.38; }
+section { page-break-after: always; }
+section:last-child { page-break-after: auto; }
+h1 { font-size:30pt; margin:3mm 0 1mm; letter-spacing:-.5px; color:#0e2a47; }
+.brand { font-size:8.4pt; letter-spacing:2px; text-transform:uppercase; color:#7d8b99; font-weight:700; }
+.sub { font-size:11.4pt; color:#3d4b59; margin-bottom:3mm; max-width:240mm; }
+.small { font-size:8.4pt; color:#5d6b79; }
+code { font-family:"DejaVu Sans Mono",monospace; font-size:.9em; background:#eef2f6; border-radius:1mm; padding:0 .8mm; }
+
+.three { display:flex; gap:5mm; margin:4mm 0; }
+.box { flex:1; border:1px solid #dde4ea; border-radius:3mm; padding:3.4mm 4mm; background:#fbfcfd; }
+.btitle { font-weight:700; color:#0e2a47; margin-bottom:2mm; font-size:10.4pt; }
+.box p { margin:0 0 1.8mm; }
+.castrow { display:flex; align-items:center; gap:2.4mm; margin-bottom:2mm; font-size:9pt; }
+.castrow .badge { min-width:20mm; text-align:center; }
+.toc { margin:0; padding-left:5mm; font-size:9pt; } .toc li { margin-bottom:.8mm; }
+
+.badge { display:inline-block; color:#fff; font-weight:800; border-radius:2mm; padding:.6mm 2.6mm; font-size:9.4pt; letter-spacing:.2px; }
+.chip { display:inline-block; background:#22303f; color:#e9eef3; border-radius:1.4mm; padding:0 1.6mm; font-size:.92em; white-space:nowrap; }
+.typed { display:inline-block; background:#fff7dc; border:1px solid #e3c770; color:#3b2f05; border-radius:1.2mm; padding:0 1.4mm;
+         font-family:"DejaVu Sans Mono",monospace; font-size:.9em; }
+
+.legend { display:flex; flex-wrap:wrap; gap:3mm 6mm; border:1px solid #dde4ea; border-radius:3mm; padding:3mm 4mm; background:#f4f7fa; }
+.lgi { display:flex; align-items:center; gap:2.4mm; font-size:8.8pt; width:85mm; }
+.snum.mini { width:9mm; height:9mm; line-height:7.6mm; font-size:11pt; margin:0; }
+.tg.mini { width:22mm; padding:1.4mm; position:relative; } .tg.mini .txt { font-size:7pt; }
+
+/* swim-lane */
+.lanebox { border:1px solid #dde4ea; border-radius:3mm; padding:3mm 4mm 2mm; }
+.ltitle { font-weight:800; color:#0e2a47; font-size:13pt; margin-bottom:2.4mm; }
+.lane { display:grid; grid-template-columns: 13mm repeat(4, 1fr) 38mm; }
+.lh { padding:1.2mm 1.6mm 2mm; text-align:center; border-bottom:2px solid #0e2a47; }
+.lrole { font-size:7.4pt; color:#5d6b79; margin-top:.8mm; }
+.lc { position:relative; padding:1.5mm 1.8mm; min-height:16.5mm; display:flex; align-items:center; justify-content:center;
+      border-bottom:1px solid #eef2f5; }
+.lline { position:absolute; left:50%; top:0; bottom:0; border-left:2px dashed; opacity:.35; }
+.ldo { position:relative; color:#fff; font-weight:700; border-radius:2mm; padding:1.4mm 2mm; font-size:8.4pt; text-align:center; width:100%; }
+.lget { position:relative; background:#fff; border:1.8px solid; border-radius:2mm; padding:1.2mm 1.8mm; font-size:8pt; text-align:center; width:100%; }
+.lstep { font-size:11pt; color:#0e2a47; }
+.lwait { font-size:8.2pt; color:#3d4b59; justify-content:flex-start; text-align:left; }
+.lh.lwait, .lh.lstep { font-weight:700; font-size:8.4pt; display:flex; align-items:flex-end; justify-content:center; }
+.hl { background:#e8f1fa; }
+.lnew { display:inline-block; background:#c0392b; color:#fff; font-size:6.6pt; font-weight:800; border-radius:1mm; padding:0 1mm; margin-left:1.2mm; vertical-align:1px; }
+.lfoot { font-size:8.2pt; color:#5d6b79; margin-top:2mm; }
+
+/* parts and steps */
+.pband { display:flex; align-items:center; gap:3mm; background:#0e2a47; color:#fff; border-radius:2.4mm; padding:2mm 3.4mm; }
+.pkey { display:inline-block; background:#fff; color:#0e2a47; font-weight:900; border-radius:1.6mm; padding:.2mm 2.4mm; font-size:11.6pt; }
+.ptitle { font-size:13.4pt; font-weight:800; }
+.pintro { margin:2.2mm 0 3mm; color:#31404e; font-size:9.6pt; }
+.stepwrap { page-break-inside:avoid; break-inside:avoid; }
+.step { display:flex; gap:4mm; margin:0; }
+.sl { width:54mm; flex:none; border-left:3px solid; padding-left:2.6mm; }
+.sr { flex:1; min-width:0; }
+.snum { display:inline-block; width:12mm; height:12mm; line-height:10mm; text-align:center; border:2.4px solid; border-radius:6mm;
+        font-weight:900; font-size:15pt; background:#fff; }
+.whorow { margin:1.6mm 0 1.6mm; }
+.do { color:#16202a; font-size:9.4pt; }
+.cap { margin-top:1.8mm; font-size:8.8pt; color:#3d4b59; }
+.snote { margin-top:1.8mm; font-size:8.6pt; background:#fff4f4; border-left:3px solid #a3232a; padding:1.2mm 2mm; border-radius:0 2mm 2mm 0; }
+.tick { margin-top:2.2mm; display:inline-block; border:1.4px solid #1c6b45; color:#1c6b45; border-radius:1.6mm; padding:.6mm 2.4mm; font-weight:700; font-size:8.6pt; }
+.part { margin-top:5mm; }
+.part:first-child { margin-top:0; }
+.keep { break-inside:avoid; page-break-inside:avoid; }
+.tsteps { display:flex; gap:4mm; align-items:stretch; break-inside:avoid; page-break-inside:avoid; }
+.tstep { flex:1; border:1px solid #dde4ea; border-top:3px solid; border-radius:2mm; padding:2.4mm 3mm; background:#fbfcfd; }
+.tshead { display:flex; align-items:center; gap:2.4mm; margin-bottom:1.6mm; }
+.then { display:flex; align-items:center; gap:2mm; height:3.4mm; margin:1.4mm 0 .8mm; color:#7d8b99; font-size:7pt; letter-spacing:1px; }
+.then::before, .then::after { content:""; flex:1; border-top:1px dashed #c9d3dc; }
+.then.alt { color:#a3232a; font-weight:700; font-size:7.6pt; letter-spacing:.4px; }
+
+/* cards */
+.cards { display:flex; flex-wrap:wrap; gap:3.4mm 3.6mm; align-items:flex-start; }
+.col { width:52mm; break-inside:avoid; page-break-inside:avoid; }
+.col.wide { width:70mm; }
+.onphone { font-size:7.4pt; color:#3d4b59; font-weight:700; margin:0 0 .8mm; }
+.dot { display:inline-block; width:2.4mm; height:2.4mm; border-radius:1.2mm; margin-right:1mm; vertical-align:-.2mm; }
+.poplbl { font-size:6.8pt; color:#7d8b99; text-transform:uppercase; letter-spacing:.6px; margin-bottom:.4mm; }
+.toast { display:inline-block; background:#3a4652; color:#fff; font-size:7.8pt; border-radius:3mm; padding:.8mm 3mm; margin-bottom:1.2mm; box-shadow:0 .4mm 1mm rgba(0,0,0,.25); }
+.alertbox { background:#fff; border:1px solid #c5ced8; border-radius:2.4mm; padding:2mm 2.6mm 1.4mm; margin-bottom:1.2mm; box-shadow:0 .6mm 1.6mm rgba(0,0,0,.25); font-size:8pt; }
+.aok { text-align:right; color:#1d6fa5; font-weight:700; font-size:8pt; margin-top:1mm; }
+.tg { position:relative; background:#0e1621; border-radius:3mm; padding:2.2mm; }
+.newrib { position:absolute; top:-1.6mm; right:-1.6mm; background:#c0392b; color:#fff; font-weight:900; font-size:7.6pt; letter-spacing:1px;
+          border-radius:1.4mm; padding:.4mm 2.2mm; box-shadow:0 .4mm 1mm rgba(0,0,0,.3); z-index:2; }
+.bubble { background:#182533; border-radius:2.4mm; padding:2mm 2.4mm 1.8mm; }
+.txt { color:#e9eef3; font-size:7.7pt; line-height:1.36; white-space:pre-wrap; word-wrap:break-word; overflow-wrap:anywhere; }
+.txt b { color:#fff; }
+.txt i { color:#b4c4d3; font-style:italic; }
+.txt code { background:#0e1621; border-radius:1mm; padding:0 .6mm; font-family:"DejaVu Sans Mono",monospace; font-size:7.2pt; color:#a9c7e4; }
+.krow { display:flex; gap:1.2mm; margin-top:1mm; }
+.kbtn { flex:1; min-width:0; background:#22303f; color:#e9eef3; text-align:center; font-size:7.3pt; padding:1.3mm 1mm; border-radius:1.6mm; overflow-wrap:anywhere; }
+.pic { height:20mm; border-radius:1.8mm; margin-bottom:1.6mm; overflow:hidden; }
+.doc { display:flex; align-items:center; gap:2mm; background:#0e1621; border-radius:1.8mm; padding:1.6mm 2mm; margin-bottom:1.4mm; }
+.dicon { font-size:12pt; } .dname { color:#a9c7e4; font-size:7.8pt; }
+.mockbill, .mockshot { height:100%; display:flex; align-items:center; justify-content:center; font-size:7.6pt; text-align:center; }
+.mockbill { background:repeating-linear-gradient(0deg,#f3efe4 0 2.4mm,#e6e0cf 2.4mm 2.7mm); color:#3b3524; }
+.mockbill span, .mockshot span { background:rgba(255,255,255,.92); border-radius:1.4mm; padding:1mm 2.4mm; font-weight:700; }
+.mockshot { background:linear-gradient(180deg,#0b5d3b 0 24%,#f6f8f7 24% 100%); color:#0b3b27; }
+.gonebox { border:1px dashed #93a3b2; border-radius:2mm; padding:2mm; font-size:8pt; color:#4a5866; }
+
+/* info boxes */
+.infobox { margin-top:4mm; border:1.6px solid #1d6fa5; background:#f3f8fd; border-radius:3mm; padding:3mm 4mm; page-break-inside:avoid; }
+.ibtitle { font-weight:800; color:#0e2a47; font-size:11pt; margin-bottom:1.6mm; }
+.infobox p { margin:0 0 1.6mm; } .infobox ul { margin:0 0 2mm; padding-left:5mm; } .infobox li { margin-bottom:1mm; }
+.rules { border-collapse:collapse; margin:1mm 0 2mm; font-size:9pt; }
+.rules th { background:#0e2a47; color:#fff; text-align:left; padding:1.2mm 2.4mm; font-size:8.4pt; }
+.rules td { border-bottom:1px solid #d5dde5; padding:1.2mm 2.4mm; vertical-align:top; }
+.rules td:first-child { font-weight:700; white-space:nowrap; }
+.sheet { border-collapse:collapse; font-size:8.4pt; margin:1mm 0 2mm; }
+.sheet th { background:#e8edf2; color:#3d4b59; border:1px solid #c5ced8; padding:.8mm 2.4mm; font-weight:700; }
+.sheet td { border:1px solid #c5ced8; padding:.8mm 2.4mm; background:#fff; white-space:nowrap; }
+.sheet .rn { background:#e8edf2; color:#3d4b59; text-align:center; }
+.sheet .tnew { background:#fdecea; border:2px solid #c0392b; font-weight:700; }
+
+/* checklist */
+.ckgrid { display:grid; grid-template-columns: repeat(4, 1fr); gap:3mm; }
+.ckgrid.two { grid-template-columns: 1fr 1fr; }
+.ckh { margin-bottom:1.4mm; }
+.ckcol ul { list-style:none; margin:0; padding:0; }
+.ckcol li { font-size:7.4pt; line-height:1.3; padding:.7mm 0; border-bottom:1px solid #eef2f5; display:flex; gap:1.2mm; align-items:baseline; }
+.cbx { color:#1c6b45; font-size:9pt; }
+.cstep { display:inline-block; min-width:5mm; font-weight:800; color:#0e2a47; }
+.golden { margin:4mm 0 0; border:2.4px solid #b8860b; background:#fffaf0; border-radius:3mm; padding:3mm 4mm; }
+.gbody { font-size:13pt; font-weight:700; margin:0 0 1.4mm; color:#1d1502; }
+.gwhy { font-size:9pt; color:#4a4231; }
+
+@page { size: A4 portrait; margin: 10mm 11mm 13mm; }
+body { font-size:10.4pt; line-height:1.38; }
+.pg { page-break-after: always; }
+.pg:last-child { page-break-after: auto; }
+h1 { font-size:20pt; margin:1mm 0 1.4mm; }
+h2 { font-size:17pt; color:#0e2a47; margin:0 0 1.6mm; letter-spacing:-.3px; }
+h2.mt { margin-top:3.4mm; }
+.sub { font-size:11.6pt; color:#22303f; margin-bottom:3mm; }
+.sub2 { font-size:10.4pt; color:#3d4b59; margin-bottom:2.6mm; }
+.small { font-size:9.2pt; }
+.nw { white-space:nowrap; }
+.hl { background:#f6d860; color:#1b1405; border-radius:.8mm; padding:0 .4mm; }
+.hl b { color:#1b1405; }
+.shot .tg { padding:1.6mm; }
+.shot .txt { font-size:7.4pt; line-height:1.28; }
+.shot .kbtn { font-size:6.9pt; padding:.9mm .8mm; }
+.shot .bubble { padding:1.8mm 2.2mm 1.6mm; }
+.cap .chip, .cap .typed, .ntext .typed, .td .typed { white-space:normal; }
+.typed { display:inline; box-decoration-break:clone; -webkit-box-decoration-break:clone; }
+.fl .chip { white-space:nowrap; }
+.after1 { margin-top:3mm; font-weight:800; color:#1e8449; font-size:10.4pt; }
+.g2.first { margin-top:0; }
+
+/* page 1 of Abdul */
+.news { display:flex; gap:5mm; margin-bottom:4mm; }
+.new { flex:1; border:1.6px solid #1f6fb2; background:#f5f9fd; border-radius:3mm; padding:2.6mm 3mm; break-inside:avoid; }
+.nhead { display:flex; align-items:center; gap:2.4mm; font-weight:800; font-size:12.4pt; color:#0e2a47; margin-bottom:1.6mm; }
+.nnum { flex:none; display:inline-block; width:7mm; height:7mm; line-height:6.6mm; text-align:center; border-radius:3.5mm;
+        background:#1f6fb2; color:#fff; font-weight:900; font-size:10.4pt; margin-right:1.6mm; }
+.ntext { font-size:10pt; margin-bottom:2mm; } .ntext p { margin:1.6mm 0 0; }
+.ntext.small { font-size:9pt; margin-top:2mm; margin-bottom:0; }
+.note { font-weight:800; color:#a3232a; }
+.row3 { display:flex; gap:4mm; align-items:flex-start; }
+.row3 .ntext { flex:1; } .row3 .c3 { flex:1.05; min-width:0; }
+
+/* the walk */
+.cols3 { display:flex; gap:4mm; align-items:flex-start; }
+.colm { flex:1; min-width:0; display:flex; flex-direction:column; gap:4mm; }
+.cell { break-inside:avoid; min-width:0; }
+.cap { display:flex; gap:2mm; align-items:flex-start; font-size:9.3pt; line-height:1.3; margin-bottom:1.4mm; }
+.num { flex:none; display:inline-block; width:6.6mm; height:6.6mm; line-height:6.2mm; text-align:center; border-radius:3.3mm;
+       background:#1f6fb2; color:#fff; font-weight:900; font-size:10pt; }
+.cols3 .shot .txt { font-size:7.6pt; }
+.cxrow { margin-top:3mm; border:1.6px solid #1d6fa5; background:#f3f8fd; border-radius:3mm; padding:1.8mm 3mm; break-inside:avoid; }
+
+/* test sheets */
+.rules { border:2.6px solid #a3232a; background:#fff4f4; border-radius:3mm; padding:2mm 3.4mm; margin-bottom:2.4mm; font-size:10pt; color:#3a0f12; }
+.rules .rl { margin-bottom:1.4mm; } .rules .rl:last-child { margin-bottom:0; }
+.parth { background:#1e8449; color:#fff; font-weight:800; font-size:10.6pt; border-radius:2mm 2mm 0 0; padding:1.2mm 3mm; margin-top:1mm; break-after:avoid; }
+.parth.p2h { background:#a3232a; margin-top:3mm; }
+.tt { width:100%; border-collapse:collapse; font-size:8.9pt; line-height:1.25; }
+.tt th { background:#0e2a47; color:#fff; text-align:left; padding:1.2mm 1.6mm; font-size:8.6pt; }
+.tt td { border-bottom:1.2px solid #b9c5d0; padding:1.1mm 1.4mm; vertical-align:top; }
+.tt tr { break-inside:avoid; }
+.tt .tn { width:7mm; font-weight:900; font-size:11.4pt; color:#0e2a47; }
+.tt .tp { width:15mm; font-weight:800; color:#0e2a47; }
+.tt .td { width:60mm; } .tt .ts { width:58mm; color:#22303f; }
+.tt .tyn { width:15mm; font-size:9pt; white-space:nowrap; } .tt .tyn div { margin-bottom:.8mm; }
+.tb { display:inline-block; width:4.2mm; height:4.2mm; border:1.6px solid #0e2a47; border-radius:.8mm; vertical-align:-1mm; margin-right:1mm; background:#fff; }
+.tt .tw { width:auto; }
+.wl { display:block; border-bottom:1px solid #7d8b99; height:5.6mm; }
+.used { margin-top:1.4mm; font-weight:700; color:#0e2a47; }
+.blank { display:inline-block; border-bottom:1.4px solid #0e2a47; height:4mm; vertical-align:-1mm; }
+.endrow { display:flex; gap:5mm; align-items:center; margin-top:2.4mm; break-inside:avoid; }
+.sign { display:flex; flex-direction:column; gap:2mm; font-size:10.6pt; font-weight:700; flex:none; }
+.sigl { display:inline-block; width:50mm; border-bottom:1.4px solid #0e2a47; height:5mm; vertical-align:-1mm; }
+.sendto { flex:1; font-size:10.4pt; font-weight:800; color:#1e8449; border:2.4px solid #1e8449; border-radius:3mm; padding:1.6mm 3mm; background:#f2fbf5; }
+.noprint { font-size:9.4pt; font-weight:600; color:#14532d; margin-top:1mm; }
+
+/* the admins' pages */
+.five { border:1.6px solid #1f6fb2; background:#f5f9fd; border-radius:3mm; padding:2.4mm 3.4mm; margin-bottom:3.4mm; }
+.fl { display:flex; align-items:flex-start; font-size:10pt; margin-bottom:1.6mm; } .fl:last-child { margin-bottom:0; }
+.two { display:flex; gap:5mm; align-items:flex-start; }
+.half { flex:1; min-width:0; }
+.lbl { font-weight:800; color:#0e2a47; font-size:10.2pt; margin-bottom:1.4mm; }
+.box2 { margin-top:3mm; border:1px solid #dde4ea; background:#fbfcfd; border-radius:2.4mm; padding:2.4mm 3mm; font-size:9.6pt; }
+.half .shot .txt { font-size:7.9pt; }
+.g3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:3.4mm; align-items:start; }
+.g2 { display:grid; grid-template-columns: 1fr 1fr; gap:3.4mm 5mm; align-items:start; margin-top:2.4mm; }
+.g4 { display:grid; grid-template-columns: 1fr 1fr; gap:3mm 5mm; align-items:start; }
+.g3 .shot .txt, .g2 .shot .txt, .g4 .shot .txt { font-size:7.1pt; line-height:1.25; }
+.g2 .shot + .shot { margin-top:1.6mm; }
+.pop { margin-bottom:1.2mm; }
+.poplbl { font-size:6.8pt; color:#7d8b99; text-transform:uppercase; letter-spacing:.6px; margin-bottom:.4mm; }
+.btab { width:100%; border-collapse:collapse; margin-top:2.4mm; font-size:9pt; }
+.btab td { border-bottom:1px solid #dde4ea; padding:1mm 1.6mm; vertical-align:top; }
+.btab td:first-child { width:72mm; }
+.rlist { margin:0 0 1mm; padding-left:5mm; font-size:10.4pt; } .rlist li { margin-bottom:1.6mm; }
+</style></head><body>
+<section class="pg">
+ <div class="brand">black_panther bot · for Abdul · 21-Nov-2026</div>
+ <h1>Returns — what is new, and how to test it</h1>
+ <div class="sub">You type a return the same way as before: the word Return, then the numbers. Three things on the cards are new.</div>
+ <div class="news">
+  <div class="new"><div class="nhead"><span class="nnum">1</span><span>A full bale is ONE line</span></div>
+   <div class="ntext">All five thans of bale 631 come back. The card shows one line: “631 · 5 thans · 150 yd”. Before, it showed five lines.</div>
+   <div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b> · 🏭 IDUMOTA
+📦 1B · 150 yd
+
+👤 solder madam · 1B · 150 yd · sold 02-Nov-2026
+44200
+ Shade BLACK
+  1. <span class="hl">631 · 5 thans · 150 yd</span>
+
+💰 Credits: solder madam — no rate on record <i>(at the rates charged)</i></div></div><div class="krow"><div class="kbtn">🔎 Open 631</div></div><div class="krow"><div class="kbtn">✅ Continue — date, condition, photo</div></div><div class="krow"><div class="kbtn">➕ Add more</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div>
+   <div class="ntext small">Only some thans of a bale come back? Each than is still its own line. Here: <span class="typed">Return 614/1</span> gives “614/1 · 30 yd”.</div>
+  </div>
+  <div class="new"><div class="nhead"><span class="nnum">2</span><span>The day the goods were sold</span></div>
+   <div class="ntext">The customer line now ends with the day of the sale: “· sold 02-Nov-2026”. Check that it is the right customer and the right day.</div>
+   <div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b> · 🏭 IDUMOTA
+📦 1t · 30 yd
+
+👤 solder madam · 1t · 30 yd <span class="hl">· sold 02-Nov-2026</span>
+44200
+ Shade BLACK
+  1. <span class="hl">614/1 · 30 yd</span>
+
+💰 Credits: solder madam — no rate on record <i>(at the rates charged)</i></div></div><div class="krow"><div class="kbtn">🔎 Open 614</div></div><div class="krow"><div class="kbtn">✅ Continue — date, condition, photo</div></div><div class="krow"><div class="kbtn">➕ Add more</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div>
+  </div>
+ </div>
+ <div class="new wide3"><div class="nhead"><span class="nnum">3</span><span>Goods with no rate on the sale</span></div>
+  <div class="row3">
+   <div class="ntext">Sometimes the sale was saved with no rate. Before, such a return gave the customer NO credit.
+    <p>Now your confirm card says “⚠️ Thans without a rate: the approving admin is asked for the rate.” You do nothing more. Submit as always.</p>
+    <p>The first admin types the rate. The second admin checks it. When both approve, your last card shows the credit: “↩️ Credited solder madam 261,000”.</p>
+    <p class="note">You never see the rate the admin typed. You see only the credit.</p></div>
+   <div class="c3"><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Confirm return</b> · 🏭 IDUMOTA
+📅 Returned <b>21-Nov-2026</b> · ✅ Good — back to stock
+
+👤 solder madam · 1B + 1t · 180 yd · sold 02-Nov-2026
+44200
+ Shade BLACK
+  1. 631 · 5 thans · 150 yd
+  2. 614/1 · 30 yd
+
+Σ 1B + 1t · 180 yd
+💰 Credits: solder madam — no rate on record <i>(at the rates charged)</i>
+<span class="hl">⚠️ Thans without a rate: the approving admin is asked for the rate.</span>
+
+Approving puts the stock back and credits each customer&#x27;s account.
+Queues dual-admin approval.</div></div><div class="krow"><div class="kbtn">✅ Submit for approval</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div>
+   <div class="c3"><div class="shot "><div class="tg"><div class="bubble"><div class="txt">✅ Approved · 2 of 2
+Return goods
+✅ Musa · 21-Nov 10:16
+✅ Krishna · 21-Nov 10:41
+<span class="hl">↩️ Credited solder madam 261,000 (6 thans, 180 yd).</span>
+Ref R-4B2E</div></div></div></div></div>
+  </div>
+ </div>
+</section>
+<section class="pg">
+ <h2>The whole return, card by card</h2>
+ <div class="sub2">In this example solder madam bought all of bale 631 (5 thans) and than 1 of bale 614 on 02-Nov-2026. The sale has no rate.</div>
+ <div class="cols3"><div class="colm"><div class="cell"><div class="cap"><span class="num">1</span><span>Type <span class="typed">Return 631/1+2+3+4+5, 614/1</span>. The card opens. Check the customer, the day, every line. Tap <span class="nw"><span class="chip">✅ Continue — date, condition, photo</span></span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return</b> · 🏭 IDUMOTA
+📦 1B + 1t · 180 yd
+
+👤 solder madam · 1B + 1t · 180 yd · sold 02-Nov-2026
+44200
+ Shade BLACK
+  1. 631 · 5 thans · 150 yd
+  2. 614/1 · 30 yd
+
+💰 Credits: solder madam — no rate on record <i>(at the rates charged)</i></div></div><div class="krow"><div class="kbtn">🔎 Open 631</div><div class="kbtn">🔎 Open 614</div></div><div class="krow"><div class="kbtn">✅ Continue — date, condition, photo</div></div><div class="krow"><div class="kbtn">➕ Add more</div></div><div class="krow"><div class="kbtn">❌ Cancel</div></div></div></div></div><div class="cell"><div class="cap"><span class="num">2</span><span>Tap the day, how the goods look, a photo or <span class="chip">⏭ Skip photo</span>. The confirm card has the new line. Tap <span class="nw"><span class="chip">✅ Submit for approval</span></span></span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Confirm return</b> · 🏭 IDUMOTA
+📅 Returned <b>21-Nov-2026</b> · ✅ Good — back to stock
+
+👤 solder madam · 1B + 1t · 180 yd · sold 02-Nov-2026
+44200
+ Shade BLACK
+  1. 631 · 5 thans · 150 yd
+  2. 614/1 · 30 yd
+
+Σ 1B + 1t · 180 yd
+💰 Credits: solder madam — no rate on record <i>(at the rates charged)</i>
+⚠️ Thans without a rate: the approving admin is asked for the rate.
+
+Approving puts the stock back and credits each customer&#x27;s account.
+Queues dual-admin approval.</div></div><div class="krow"><div class="kbtn">✅ Submit for approval</div></div><div class="krow"><div class="kbtn">⬅ Back</div><div class="kbtn">❌ Cancel</div></div><div class="krow"><div class="kbtn">🏠 Back to menu</div></div></div></div></div></div><div class="colm"><div class="cell"><div class="cap"><span class="num">3</span><span>Your receipt: “⏳ Waiting for two admins to sign.” Nothing in stock changes yet.</span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">↩️ <b>Return — submitted</b>
+
+📦 1B + 1t · 180 yd · solder madam
+
+⏳ Waiting for two admins to sign.
+Request: <code>4b2e7f10-2b4d-4f86-a1c0-000000000000</code></div></div><div class="krow"><div class="kbtn">⬅ Back to Move Stock</div><div class="kbtn">🏠 Menu</div></div></div></div></div><div class="cell"><div class="cap"><span class="num">4</span><span>The first admin typed the rate and approved. You get “🔏 Approval 1 of 2”. No rate on it.</span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">🔏 Approval 1 of 2
+Return goods
+✅ Musa · 21-Nov 10:16
+⏳ Waiting on 1 more admin
+Ref R-4B2E</div></div><div class="krow"><div class="kbtn">🔔 Remind approvers</div><div class="kbtn">📋 Status</div></div></div></div></div></div><div class="colm"><div class="cell"><div class="cap"><span class="num">5</span><span>The second admin approved. You get “✅ Approved · 2 of 2” with the credit. The thans are in stock again.</span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">✅ Approved · 2 of 2
+Return goods
+✅ Musa · 21-Nov 10:16
+✅ Krishna · 21-Nov 10:41
+↩️ Credited solder madam 261,000 (6 thans, 180 yd).
+Ref R-4B2E</div></div></div></div></div><div class="cell"><div class="cap"><span class="num">6</span><span>Or: the admins chose no credit. Then the card says “No credit to solder madam — chosen at approval”. That is their choice. Nothing to do.</span></div><div class="shot "><div class="tg"><div class="bubble"><div class="txt">✅ Approved · 2 of 2
+Return goods
+✅ Musa · 21-Nov 12:10
+✅ Krishna · 21-Nov 12:20
+↩️ No credit to solder madam — chosen at approval (6 thans, 180 yd).
+Ref R-9D51</div></div></div></div></div></div></div>
+ <div class="cxrow"><div class="cxt"><b>Stop at any time before Submit:</b> tap <span class="chip">❌ Cancel</span>. The card says “❌ Return cancelled — nothing was queued.” Nothing goes to the admins.</div></div>
+</section>
+<section class="pg">
+ <h2>Test it on the bot</h2>
+ <div class="rules">
+  <div class="rl"><b>⚠️ Part 2 moves real stock and the customer's real balance. Do it only with goods that really came back. Never send a made-up return to test.</b></div>
+  <div class="rl">Krishna tells you which bale numbers to use. You cannot see which sales have no rate. <b>Write them here:</b> <span class="blank" style="width:62mm"></span></div>
+  <div class="rl small">On paper: tick Yes or No on each row and write what you saw. No printer? Send Krishna one message per row: row number, Yes or No, what you saw. Like: 4 No — two lines for bale 631.</div>
+ </div>
+ <div class="parth">PART 1 — look only. Nothing is sent. Safe on any day.</div>
+ <table class="tt"><tr><th>No</th><th>Do this</th><th>You must see</th><th>Seen?</th><th>What I saw</th></tr><tr><td class="tn">1</td><td class="td">Is a return card still open in your chat? Tap its <span class="chip">❌ Cancel</span>. No card open: go to row 2.</td><td class="ts">“❌ Return cancelled — nothing was queued.” Or nothing, if no card was open.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span><span class="wl"></span></td></tr><tr><td class="tn">2</td><td class="td">Pick a bale you sold, where ALL its thans went to one customer. Type <span class="typed">Return</span> and every than: like <span class="typed">Return 631/1+2+3+4+5</span>.<div class="used">Line I typed: <span class="blank" style="width:40mm"></span></div></td><td class="ts">The bale is ONE line, like “631 · 5 thans · 150 yd”. Not one line per than.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span><span class="wl"></span></td></tr><tr><td class="tn">3</td><td class="td">Look at the customer line on the same card.</td><td class="ts">It ends with the day of the sale, like “· sold 02-Nov-2026”. The right customer, the right day.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span><span class="wl"></span></td></tr><tr><td class="tn">4</td><td class="td">Tap <span class="chip">❌ Cancel</span></td><td class="ts">“❌ Return cancelled — nothing was queued.”</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span><span class="wl"></span></td></tr><tr><td class="tn">5</td><td class="td">Type <span class="typed">Return</span> and ONE than of a bale you sold: like <span class="typed">Return 614/1</span>. Then tap <span class="chip">❌ Cancel</span>.<div class="used">Line I typed: <span class="blank" style="width:40mm"></span></div></td><td class="ts">The than is its own line, like “614/1 · 30 yd”, and the customer line ends “· sold …”.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span><span class="wl"></span></td></tr><tr><td class="tn">6</td><td class="td">Type <span class="typed">Return</span> and a bale number only. Tap <span class="chip">✅ Continue — date, condition, photo</span> → the day → <span class="chip">✅ Good — back to stock</span> → <span class="chip">⏭ Skip photo</span> → <span class="chip">❌ Cancel</span><div class="used">Bale: <span class="blank" style="width:30mm"></span></div></td><td class="ts">The confirm card shows “💰 Credits:” with an amount. If the sale had a rate, there is NO line “Thans without a rate”. Do NOT tap Submit.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span><span class="wl"></span></td></tr></table>
+ <div class="after1">Part 1 done? Send Krishna the results of rows 1 to 6 before you start Part 2.</div>
+</section>
+<section class="pg">
+ <h2>Test it on the bot — Part 2</h2>
+ <div class="rules"><div class="rl"><b>⚠️ Only with goods that really came back, on the bale numbers Krishna gave you. Never send a made-up return to test.</b></div></div>
+ <div class="parth p2h">PART 2 — only with goods that really came back</div>
+ <table class="tt"><tr><th>No</th><th>Do this</th><th>You must see</th><th>Seen?</th><th>What I saw</th></tr><tr><td class="tn">7</td><td class="td">Goods really came back. Type the return line, as always.<div class='used'>Line I typed: <span class="blank" style="width:40mm"></span></div></td><td class="ts">The card shows each full bale as one line, and “· sold …” with the day of the sale.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span><span class="wl"></span></td></tr><tr><td class="tn">8</td><td class="td">Tap <span class="chip">✅ Continue — date, condition, photo</span>. Pick the day and the condition. Send a photo.</td><td class="ts">The confirm card. For goods with no rate on the sale it says “⚠️ Thans without a rate: the approving admin is asked for the rate.”</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span><span class="wl"></span></td></tr><tr><td class="tn">9</td><td class="td">Tap <span class="chip">✅ Submit for approval</span></td><td class="ts">“↩️ Return — submitted” and “⏳ Waiting for two admins to sign.”</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span><span class="wl"></span></td></tr><tr><td class="tn">10</td><td class="td">Wait for the first admin.</td><td class="ts">A new card: “🔏 Approval 1 of 2” and “⏳ Waiting on 1 more admin”. No rate on it.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span><span class="wl"></span></td></tr><tr><td class="tn">11</td><td class="td">Wait for the second admin.</td><td class="ts">“✅ Approved · 2 of 2” and “↩️ Credited …” with the customer and an amount. Or “No credit to … — chosen at approval”. No rate on it.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span><span class="wl"></span></td></tr><tr><td class="tn">12</td><td class="td">Tap <span class="chip">📨 My Requests</span> (in 📋 Tasks & Planning), then <span class="chip">✅ Approved · 1</span> (your number may be bigger).</td><td class="ts">“Return goods” is on the list with “✅ 21-Nov …” and the two admins' names (your own day).</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span><span class="wl"></span></td></tr><tr><td class="tn">13</td><td class="td">Type the bale number only, like 631.</td><td class="ts">The bale card. The thans that came back show 🟢 and “available”.</td><td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td><td class="tw"><span class="wl"></span><span class="wl"></span></td></tr></table>
+ <div class="endrow"><div class="sign">
+  <div>Name: <span class="sigl"></span></div><div>Date: <span class="sigl"></span></div>
+ </div>
+ <div class="sendto">📷 Send Krishna a photo of these pages, or one message per row.
+  <div class="noprint">You cannot type into this page on the phone. Write on paper, or send messages.</div></div></div>
+</section></body></html>

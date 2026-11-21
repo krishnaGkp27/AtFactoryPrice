@@ -460,6 +460,8 @@ bale sold to the same customer.
 8. Any other request (a payment, a supply request): its message also starts
    `🔔 Approval required · R-XXXX`, with no `Use buttons below`.
 
+Printable test sheets for these steps, built from the bot's real cards: `docs/RET-8_TEST_ABDUL.pdf` (Abdul) and `docs/RET-8_TEST_ADMINS.pdf` (the two admins) — rebuild with `python3 scripts/build-return-rate-guides.py`.
+
 ## 8. Not done
 
 - The two older single-than / single-bale return doors (`return_than`,
