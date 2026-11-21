@@ -534,3 +534,35 @@ test('final review F4: `price 1,450` keeps the step, as `1,450` and `price 1450`
   const s = sessionStore.get(A1);
   assert.ok(s && s.step === 'admin_rate', 'the step stays open');
 });
+
+// ── 21-Nov-2026: the guide capture showed the no-credit path still said "rate" ──
+
+test('no credit for every gap: no screen of the entering admin says a rate was entered', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = seed(bundleAJ(SOLDER.slice(0, 2)));
+  const step = await openStep(bot, A1, id);
+  await controller.handleCallbackQuery(bot, cb(chip(step.chips, /No credit/), A1, 1));
+  const check = lastScreen(bot, A1);
+  assert.match(check.text, /\nno credit\n/);
+  assert.match(check.text, /Your approval is the first of two\. A second admin checks it\./);
+  assert.doesNotMatch(check.text, /checks the rate/);
+  assert.deepEqual(check.chips.map((c) => c.split('|')[0]), ['✅ Approve with no credit', '✏️ Change rate', '✖ Not now']);
+  await controller.handleCallbackQuery(bot, cb(chip(check.chips, /^✅ Approve with no credit/), A1, 1));
+  assert.equal(jsonOf(id).approvals.length, 1, 'the chip is his approval');
+  assert.match(lastScreen(bot, A1).text, /✅ You chose no credit and gave approval 1 of 2\. A second admin checks it\./);
+  assert.doesNotMatch(lastScreen(bot, A1).text, /entered the rate/);
+});
+
+test('a typed rate keeps the wording it had: "with this credit", "checks the rate", "entered the rate"', async () => {
+  reset();
+  const bot = createFakeBot();
+  const id = seed(bundleAJ(SOLDER.slice(0, 2)));
+  await openStep(bot, A1, id);
+  await controller.handleMessage(bot, msg(A1, '1450'));
+  const check = lastScreen(bot, A1);
+  assert.match(check.text, /A second admin checks the rate\./);
+  assert.equal(check.chips[0].split('|')[0], '✅ Approve with this credit');
+  await controller.handleCallbackQuery(bot, cb(chip(check.chips, /^✅ Approve with this credit/), A1, 1));
+  assert.match(lastScreen(bot, A1).text, /✅ You entered the rate and gave approval 1 of 2\. A second admin checks it\./);
+});

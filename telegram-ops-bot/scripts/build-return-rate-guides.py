@@ -397,7 +397,7 @@ def admin_pages(sh, refs):
  <h2 class="mt">When the first admin chooses no credit</h2>
  <div class="sub2">{P("The same return, a second time. Musa taps “⏭ No credit for these”. The statement does not move, and nobody is asked to post anything by hand.")}</div>
  <div class="g4">
-  <div class="cell"><div class="cap"><span class="num">1</span><span>{P(f"Musa's check card says “no credit”. He still taps {b('✅ Approve with this credit')} — the button keeps that name. His reply says he entered the rate; he did not.")}</span></div>{card(nc_check, ["no credit"])}</div>
+  <div class="cell"><div class="cap"><span class="num">1</span><span>{P(f"Musa's check card says “no credit”. He taps {b('✅ Approve with no credit')}. That is his approval, 1 of 2.")}</span></div>{card(nc_check, ["no credit"])}</div>
   <div class="cell"><div class="cap"><span class="num">2</span><span>{P("Krishna's card names who chose it.")}</span></div>{card(nc_again, ["⚠️ solder madam · 44200 · 6 thans: no credit — chosen by Musa"])}</div>
   <div class="cell"><div class="cap"><span class="num">3</span><span>{P(f"Krishna's check card and chip {b('✅ Approve · no credit')}")}</span></div>{card(nc_check2, ["Musa chose no credit for these. Check it before you approve."])}</div>
   <div class="cell"><div class="cap"><span class="num">4</span><span>{P("Krishna's reply. Abdul is told “No credit to solder madam — chosen at approval”.")}</span></div>{card(nc_reply, ["↩️ No credit to solder madam — chosen at approval (6 thans, 180 yd)."])}</div>
@@ -417,7 +417,7 @@ def admin_pages(sh, refs):
         ("Abdul", "Abdul shows you his phone.", "“✅ Approved · 2 of 2” with “↩️ Credited …”. No rate on it."),
         ("Krishna", "Open the customer's statement (📒, or type Ledger and the name).",
          "The credit is there ONCE, for the amount on the check card. The thans are available again in Inventory."),
-        ("both", f"Once more with the second real return. Musa taps “⏭ No credit for these”, then {b('✅ Approve with this credit')}",
+        ("both", f"Once more with the second real return. Musa taps “⏭ No credit for these”, then {b('✅ Approve with no credit')}",
          "Krishna's chip reads “✅ Approve · no credit”. The statement does not move. Nobody is told to post by hand."),
         ("any", f"Raise a small price change. Look at its message only. Then the other admin taps {b('❌ Reject')}: it is only a test. Do NOT approve it.",
          "Its message also starts “🔔 Approval required · R-…”, with no line about the buttons. After ❌ Reject the price is unchanged."),

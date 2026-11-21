@@ -340,7 +340,7 @@ async function sceneF() {
   at('12:10:00');
   await taps('f_approve', MUSA, '✅ Approve');
   await taps('f_nocredit', MUSA, '⏭ No credit for these');
-  await taps('f_confirm', MUSA, '✅ Approve with this credit');
+  await taps('f_confirm', MUSA, '✅ Approve with no credit');
   at('12:20:00');
   await taps('f_k_approve', KRISHNA, '✅ Approve');
   await taps('f_k_confirm', KRISHNA, '✅ Approve · no credit');

@@ -285,6 +285,10 @@ Your approval is the first of two. A second admin checks the rate.
   out when the ledger cannot be read.
 - When his approval finishes the return, the last line reads
   `Your approval completes the return.`
+- When he answered `⏭ No credit for these` for every gap, no screen says a
+  rate was entered (21-Nov-2026): the button reads `✅ Approve with no credit`,
+  the last line `… A second admin checks it.`, and his line after the tap
+  `✅ You chose no credit and gave approval 1 of 2. A second admin checks it.`
 
 Only `✅ Approve with this credit` writes anything. The rates are saved on the
 request in one write, read back, an AuditLog line `return_rate_entered` is

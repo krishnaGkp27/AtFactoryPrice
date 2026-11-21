@@ -157,6 +157,14 @@ async function creditBlocks(aj, fills) {
 const shownCredit = (aj, fills) => returnRate.round2(returnRate.creditByBuyer(aj, fills)
   .filter((b) => b.gaps.length).reduce((s, b) => s + b.total, 0));
 
+/**
+ * True when the admin answered `⏭ No credit for these` for EVERY gap: no
+ * rate was typed, so no screen may say one was ("with this credit", "checks
+ * the rate", "you entered the rate").
+ */
+const allNoCredit = (fills) => Array.isArray(fills) && fills.length > 0
+  && fills.every((f) => !(returnRate.fillRate(f) > 0));
+
 async function checkText(row, fills) {
   const { required, signed } = approvalCount(row);
   const completes = signed + 1 >= required;
@@ -165,14 +173,14 @@ async function checkText(row, fills) {
     (await creditBlocks(row.actionJSON || {}, fills)).join('\n\n'),
     '',
     completes ? 'Your approval completes the return.'
-      : `Your approval is the first of ${required === 2 ? 'two' : required}. A second admin checks the rate.`,
+      : `Your approval is the first of ${required === 2 ? 'two' : required}. A second admin checks ${allNoCredit(fills) ? 'it' : 'the rate'}.`,
   ].join('\n');
 }
 
 function checkKeyboard(requestId, fills) {
   const hash = returnRate.hashOf(returnRate.printOf(fills));
   return [
-    [{ text: '✅ Approve with this credit', callback_data: `${NS}ry:${requestId}:${hash}` }],
+    [{ text: allNoCredit(fills) ? '✅ Approve with no credit' : '✅ Approve with this credit', callback_data: `${NS}ry:${requestId}:${hash}` }],
     [
       { text: '✏️ Change rate', callback_data: `${NS}rc:${requestId}` },
       { text: '✖ Not now', callback_data: `${NS}rx:${requestId}` },
@@ -187,7 +195,7 @@ async function secondCheckText(row) {
   const { required, signed } = approvalCount(row);
   const fills = returnRate.fillsOf(aj);
   // Review 2 (R2-1) — "typed this rate" only when a rate was typed.
-  const allNone = fills.length > 0 && fills.every((f) => !(returnRate.fillRate(f) > 0));
+  const allNone = allNoCredit(fills);
   return [
     `↩️ Return ${refOf(row.requestId)} · check the credit`, '',
     (await creditBlocks(aj, fills)).join('\n\n'),
@@ -566,9 +574,9 @@ async function delegateApprove(bot, query, requestId, opts) {
   if (st === 'approved') closing = `✅ Return ${ref} is approved.`;
   else if (st === 'pending' && signedNow) {
     const { required, signed } = approvalCount(after);
-    closing = opts.rateChecked
-      ? `✅ You approved the credit — approval ${signed} of ${required}.`
-      : `✅ You entered the rate and gave approval ${signed} of ${required}. A second admin checks it.`;
+    const none = allNoCredit(returnRate.fillsOf(aaj));
+    if (opts.rateChecked) closing = `✅ You approved ${none ? 'it with no credit' : 'the credit'} — approval ${signed} of ${required}.`;
+    else closing = `✅ You ${none ? 'chose no credit' : 'entered the rate'} and gave approval ${signed} of ${required}. A second admin checks it.`;
   } else if (st === 'rejected') closing = 'Already rejected — nothing to do.';
   else if (st === 'pending' && opts.rateFill && returnRate.fillsOf(aaj).length && aaj.rateFillBy && String(aaj.rateFillBy.id) !== uid) {
     closing = `${aaj.rateFillBy.name || 'Another admin'} already entered the rate for this return. Open the card to approve or reject it.`;
