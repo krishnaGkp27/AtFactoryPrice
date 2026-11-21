@@ -167,9 +167,9 @@ def popup(c):
     return f'<div class="pop"><div class="poplbl">pop-up</div>{G.popup_html(c)}</div>'
 
 
-def tick_cells():
+def tick_cells(lines=3):
     return ('<td class="tyn"><div><span class="tb"></span> Yes</div><div><span class="tb"></span> No</div></td>'
-            '<td class="tw"><span class="wl"></span><span class="wl"></span></td>')
+            '<td class="tw">' + '<span class="wl"></span>' * lines + '</td>')
 
 
 def test_table(sh, rows, start=1):
@@ -230,7 +230,7 @@ def abdul_pages(sh):
         (S("c_photo", kind="edit", to=A, text="Confirm return"),
          f"Tap the day, how the goods look, a photo or {b('⏭ Skip photo')}. The confirm card has the new line. Tap {end('✅ Submit for approval')}"),
         (S("c_submit", kind="edit", to=A, text="submitted"), "Your receipt: “⏳ Waiting for two admins to sign.” Nothing in stock changes yet."),
-        (S("d_confirm", to=A), "The first admin typed the rate and approved. You get “🔏 Approval 1 of 2”. No rate on it."),
+        (S("d_confirm", to=A), "The first admin approved (1 of 2). You get “🔏 Approval 1 of 2”. No rate on it."),
         (done, "The second admin approved. You get “✅ Approved · 2 of 2” with the credit. The thans are in stock again."),
         (S("f_k_confirm", to=A), "Or: the admins chose no credit. Then the card says “No credit to solder madam — chosen at approval”. That is their choice. Nothing to do."),
     ]
@@ -249,7 +249,7 @@ def abdul_pages(sh):
     part1 = [
         (f"Is a return card still open in your chat? Tap its {b('❌ Cancel')}. No card open: go to row 2.",
          "“❌ Return cancelled — nothing was queued.” Or nothing, if no card was open."),
-        (f"Pick a bale you sold, where ALL its thans went to one customer. Type {ty('Return')} and every than: like {ty('Return 631/1+2+3+4+5')}."
+        (f"Pick a bale you sold, where ALL its thans went to one customer. Type {ty('Return')} and the bale number: like {ty('Return 631')}."
          f'<div class="used">Line I typed: {blank("40mm")}</div>',
          "The bale is ONE line, like “631 · 5 thans · 150 yd”. Not one line per than."),
         ("Look at the customer line on the same card.",
@@ -258,10 +258,10 @@ def abdul_pages(sh):
         (f"Type {ty('Return')} and ONE than of a bale you sold: like {ty('Return 614/1')}. Then tap {b('❌ Cancel')}."
          f'<div class="used">Line I typed: {blank("40mm")}</div>',
          "The than is its own line, like “614/1 · 30 yd”, and the customer line ends “· sold …”."),
-        (f"Type {ty('Return')} and a bale number only. Tap {b('✅ Continue — date, condition, photo')} → the day → {b('✅ Good — back to stock')} → {b('⏭ Skip photo')} "
+        (f"Type {ty('Return')} and the row 6 bale Krishna wrote above (sold WITH a rate). Tap {b('✅ Continue — date, condition, photo')} → the day → {b('✅ Good — back to stock')} → {b('⏭ Skip photo')} "
          f"→ {b('❌ Cancel')}"
          f'<div class="used">Bale: {blank("30mm")}</div>',
-         "The confirm card shows “💰 Credits:” with an amount. If the sale had a rate, there is NO line “Thans without a rate”. Do NOT tap Submit."),
+         "The confirm card shows “💰 Credits:” with an amount, and NO line “Thans without a rate”. Do NOT tap Submit."),
     ]
     part2 = [
         (f"Goods really came back. Type the return line, as always.<div class='used'>Line I typed: {blank('40mm')}</div>",
@@ -281,7 +281,9 @@ def abdul_pages(sh):
  <h2>Test it on the bot</h2>
  <div class="rules">
   <div class="rl"><b>⚠️ Part 2 moves real stock and the customer's real balance. Do it only with goods that really came back. Never send a made-up return to test.</b></div>
-  <div class="rl">{P("Krishna tells you which bale numbers to use. You cannot see which sales have no rate.")} <b>Write them here:</b> {blank("62mm")}</div>
+  <div class="rl">{P("Krishna tells you which bale numbers to use: one bale sold WITH a rate for row 6, and the goods for Part 2. You cannot see which sales have no rate. Krishna may ask you to do Part 2 twice.")}
+   <div class="used">Row 6 bale (sold with a rate): {blank("40mm")}</div>
+   <div class="used">Part 2 bales: {blank("46mm")} · second time: {blank("40mm")}</div></div>
   <div class="rl small">{P("On paper: tick Yes or No on each row and write what you saw. No printer? Send Krishna one message per row: row number, Yes or No, what you saw. Like: 4 No — two lines for bale 631.")}</div>
  </div>
  <div class="parth">PART 1 — look only. Nothing is sent. Safe on any day.</div>
@@ -325,7 +327,7 @@ def admin_pages(sh, refs):
  <div class="brand">black_panther bot · for Krishna and Musa · {DATE}</div>
  <h1>Returns with no rate — what changed for you</h1>
  <div class="five">
-  <div class="fl"><span class="nnum">1</span><span>{P(f"Every approval message now starts with one line: the request and its short number, like “🔔 Approval required · {ref}”. Then “From: Abdul”, then the card. The long reference and the line about the buttons are gone.")}</span></div>
+  <div class="fl"><span class="nnum">1</span><span>{P(f"Every approval message now starts with one line: the request and its short number, like “🔔 Approval required · {ref}” (after one admin signed, a “🔏 1 of 2 — signed by …” line comes first). Then “From: Abdul”, then the card. The long reference and the line about the buttons are gone.")}</span></div>
   <div class="fl"><span class="nnum">2</span><span>{P("On a return, a bale whose thans ALL come back is one line: “631 · 5 thans · 150 yd”. The customer line says the day of the sale: “· sold 02-Nov-2026”.")}</span></div>
   <div class="fl"><span class="nnum">3</span><span>{P("If the sale has no rate, the card says so: “⚠️ No rate on the sale record: … The admin who approves first is asked for it.”")}</span></div>
   <div class="fl"><span class="nnum">4</span><span>{P(f"The FIRST admin to tap {b('✅ Approve')} types the rate (or taps “last paid”, or “⏭ No credit for these”). Only “✅ Approve with this credit” gives the approval.")}</span></div>
@@ -358,7 +360,7 @@ def admin_pages(sh, refs):
  <div class="g3">
   <div class="cell"><div class="cap"><span class="num">1</span><span>{P(f"Tap {b('✅ Approve')}. Nothing is approved yet. A pop-up, and the rate card arrives as a reply.")}</span></div>
    {popup(pop1)}{card(need)}</div>
-  <div class="cell"><div class="cap"><span class="num">2</span><span>{P("Type the rate per yard. 1450, 1,450 and 3.20 are taken. 0, a minus number or words are refused:")}</span></div>
+  <div class="cell"><div class="cap"><span class="num">2</span><span>{P(f"Type the rate per yard. 1450, 1,450 and 3.20 are taken. 0, a minus number or {ty('rate 1450')} are refused. A word with no number (or {ty('cancel')}) closes the step: tap {b('✏️ Type the rate')} to open it again.")}</span></div>
    {card(zero, ["⚠️ That is not a rate. Type a number above zero, for example 1450."])}</div>
   <div class="cell"><div class="cap"><span class="num">3</span><span>{P(f"The check card: the credit, and the balance before and after. Tap {end('✅ Approve with this credit')}")}</span></div>
    {card(check1, ["1,450/yd → credit 261,000", "Outstanding 500,000 → 239,000"])}</div>
@@ -395,7 +397,7 @@ def admin_pages(sh, refs):
  <h2 class="mt">When the first admin chooses no credit</h2>
  <div class="sub2">{P("The same return, a second time. Musa taps “⏭ No credit for these”. The statement does not move, and nobody is asked to post anything by hand.")}</div>
  <div class="g4">
-  <div class="cell"><div class="cap"><span class="num">1</span><span>{P("Musa's check card says “no credit”.")}</span></div>{card(nc_check, ["no credit"])}</div>
+  <div class="cell"><div class="cap"><span class="num">1</span><span>{P(f"Musa's check card says “no credit”. He still taps {b('✅ Approve with this credit')} — the button keeps that name. His reply says he entered the rate; he did not.")}</span></div>{card(nc_check, ["no credit"])}</div>
   <div class="cell"><div class="cap"><span class="num">2</span><span>{P("Krishna's card names who chose it.")}</span></div>{card(nc_again, ["⚠️ solder madam · 44200 · 6 thans: no credit — chosen by Musa"])}</div>
   <div class="cell"><div class="cap"><span class="num">3</span><span>{P(f"Krishna's check card and chip {b('✅ Approve · no credit')}")}</span></div>{card(nc_check2, ["Musa chose no credit for these. Check it before you approve."])}</div>
   <div class="cell"><div class="cap"><span class="num">4</span><span>{P("Krishna's reply. Abdul is told “No credit to solder madam — chosen at approval”.")}</span></div>{card(nc_reply, ["↩️ No credit to solder madam — chosen at approval (6 thans, 180 yd)."])}</div>
@@ -415,24 +417,26 @@ def admin_pages(sh, refs):
         ("Abdul", "Abdul shows you his phone.", "“✅ Approved · 2 of 2” with “↩️ Credited …”. No rate on it."),
         ("Krishna", "Open the customer's statement (📒, or type Ledger and the name).",
          "The credit is there ONCE, for the amount on the check card. The thans are available again in Inventory."),
-        ("both", "Once more with a second real return. Musa taps “⏭ No credit for these”.",
+        ("both", f"Once more with the second real return. Musa taps “⏭ No credit for these”, then {b('✅ Approve with this credit')}",
          "Krishna's chip reads “✅ Approve · no credit”. The statement does not move. Nobody is told to post by hand."),
-        ("any", "Raise any other request (a payment, a price change).", "Its message also starts “🔔 Approval required · R-…”, with no line about the buttons."),
+        ("any", f"Raise a small price change. Look at its message only. Then the other admin taps {b('❌ Reject')}: it is only a test. Do NOT approve it.",
+         "Its message also starts “🔔 Approval required · R-…”, with no line about the buttons. After ❌ Reject the price is unchanged."),
     ]
     trs = []
     for k, (whom, do, see) in enumerate(rows, start=1):
         P(do)
         P(see)
-        trs.append(f'<tr><td class="tn">{k}</td><td class="tp">{html.escape(whom)}</td><td class="td">{do}</td><td class="ts">{see}</td>{tick_cells()}</tr>')
+        trs.append(f'<tr><td class="tn">{k}</td><td class="tp">{html.escape(whom)}</td><td class="td">{do}</td><td class="ts">{see}</td>{tick_cells(2)}</tr>')
     p4 = f"""
 <section class="pg">
  <h2>Test it — two admin phones and Abdul</h2>
  <div class="rules">
-  <div class="rl"><b>{P("Find goods whose sale has no rate: Inventory column J empty or 0, status sold. Give Abdul the bale numbers.")}</b></div>
-  <div class="rl">{P("Best: a whole bale and one than of another bale, sold to the same customer. Use only goods that really came back: approving moves real stock and the real balance.")}</div>
-  <div class="rl">Bales given to Abdul: {blank("70mm")}</div>
+  <div class="rl"><b>{P("Find goods whose sale has no rate: Inventory column J empty or 0, status sold. Find TWO such returns: one for rows 1 to 8, one for row 9. Give Abdul the bale numbers.")}</b></div>
+  <div class="rl">{P("Also give Abdul ONE bale sold WITH a rate (column J filled), for his row 6. He only looks at it; nothing is sent.")}
+   {P("Best: a whole bale and one than of another bale, sold to the same customer. Use only goods that really came back: approving moves real stock and the real balance.")}</div>
+  <div class="rl">Row 6 bale (with a rate): {blank("28mm")} · Return 1: {blank("28mm")} · Return 2: {blank("28mm")}</div>
  </div>
- <table class="tt">
+ <table class="tt adm">
   <tr><th>No</th><th>Who</th><th>Do this</th><th>You must see</th><th>Seen?</th><th>What I saw</th></tr>
   {"".join(trs)}
  </table>
@@ -604,11 +608,12 @@ h2.mt { margin-top:3.4mm; }
 .tt tr { break-inside:avoid; }
 .tt .tn { width:7mm; font-weight:900; font-size:11.4pt; color:#0e2a47; }
 .tt .tp { width:15mm; font-weight:800; color:#0e2a47; }
-.tt .td { width:60mm; } .tt .ts { width:58mm; color:#22303f; }
+.tt .td { width:55mm; } .tt .ts { width:52mm; color:#22303f; }
+.tt.adm .td { width:50mm; } .tt.adm .ts { width:50mm; }
 .tt .tyn { width:15mm; font-size:9pt; white-space:nowrap; } .tt .tyn div { margin-bottom:.8mm; }
 .tb { display:inline-block; width:4.2mm; height:4.2mm; border:1.6px solid #0e2a47; border-radius:.8mm; vertical-align:-1mm; margin-right:1mm; background:#fff; }
 .tt .tw { width:auto; }
-.wl { display:block; border-bottom:1px solid #7d8b99; height:5.6mm; }
+.wl { display:block; border-bottom:1px solid #7d8b99; height:6.8mm; }
 .used { margin-top:1.4mm; font-weight:700; color:#0e2a47; }
 .blank { display:inline-block; border-bottom:1.4px solid #0e2a47; height:4mm; vertical-align:-1mm; }
 .endrow { display:flex; gap:5mm; align-items:center; margin-top:2.4mm; break-inside:avoid; }
