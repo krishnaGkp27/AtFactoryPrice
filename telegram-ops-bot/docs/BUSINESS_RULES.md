@@ -437,6 +437,16 @@ inventory sheet. but you can add in different sheet."*
   row (`receivedBales`, `receivedUids`, `receipts[]`) — no column, no
   sheet. `approved` still means received in full. Dispatch is unchanged:
   one load, one photo.
+- **TRF-24 (owner, 22-Nov-2026): a delivery is reported when it arrives, or
+  everything received is reported together in ONE receipt** ("the recipient
+  has to log all the bales which he has received over the period of time
+  instantly … or, if he is logging at the end of the day, he must raise a
+  single request card having all the bales which he has received"). Several
+  receipts raised together for goods that arrived over the day are not the
+  rule. An admin holds it with `✖ Cancel Receipt n` on the first card: the
+  receipt is cancelled with a reason (the first one-tap reason is this
+  rule), nothing moves, and the receiver has his card back to report once.
+  A cancelled receipt keeps its number and its document on the record.
 
 ## 9 · Customers are entities; assignment happens at approval
 

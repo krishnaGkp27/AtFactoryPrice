@@ -85,6 +85,13 @@ admin confirms` chip (`trf:noop`) is inert and session-free — a tap is acknowl
 and nothing is sent. Before, with no transfer session live, it answered "This transfer
 session has expired …".
 
+Amended 22-Nov-2026 (TRF-24, `specs/TRF-24_CANCEL_RECEIPT.md`): the way out is on the FIRST
+card as `✖ Cancel Receipt n`, with one-tap reasons (`trf:rcnr:<id>:<n>:<k>`) beside the typed
+line; the word on every card and message is **cancel** (`✖ Cancel receipt` in the drill-down,
+`✖ cancelled by Ajeet — reason` on the report line) — wherever this document says "send back"
+for a RECEIPT, read "cancel". The record is unchanged (`sent_back`). The typed step now ends
+when its prompt is redrawn; before, a line typed after ⬅ Back was taken as the reason.
+
 ## 8 · Tests
 
 `test/unit/services/transferService.receiptGate.test.js` and

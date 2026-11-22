@@ -3,8 +3,8 @@
  * TRF-22 (owner, 07-Oct-2026) — the receipt gate, end to end through the
  * real controller: the receiver reports with the document, nothing moves,
  * the admins get the transfer card with 🛂 Confirm Receipt n and the PDF,
- * the drill-down shows that delivery, ↩️ Send back returns the card with a
- * reason, ✅ Confirm flips exactly the reported bales; the row stays yellow
+ * the drill-down shows that delivery, ✖ Cancel returns the card with a
+ * reason (TRF-24: the button sits on the first card too, with one-tap reasons), ✅ Confirm flips exactly the reported bales; the row stays yellow
  * until the last delivery; one dispatch document, one receipt document per
  * report, all on one card.
  */
@@ -127,6 +127,7 @@ test('report (two bales + PDF) → nothing moves, admins get the card with 🛂 
     assert.ok(card, `${a} got the review card`);
     const kb = card.args.opts.reply_markup.inline_keyboard.flat().map((b) => `${b.text}|${b.callback_data}`);
     assert.ok(kb.includes(`🛂 Confirm Receipt 1|trf:rcok:${requestId}:1`), `confirm button, got ${kb}`);
+    assert.equal(kb[kb.indexOf(`🛂 Confirm Receipt 1|trf:rcok:${requestId}:1`) + 1], `✖ Cancel Receipt 1|trf:rcno:${requestId}:1`, 'TRF-24: the way out sits right under the way in');
     assert.ok(kb.includes(`📎 Receipt 1|trf:vd:r:${requestId}:1`), 'the receipt document chip');
     assert.match(card.args.text, /L1B1 🛂, L1B2 🛂, L1B3\)/, 'per-bale marks');
     assert.match(card.args.text, /📎 Receipt 1 · Musa · .* · L1B1, L1B2 · 🛂 awaiting an admin/);
@@ -147,7 +148,7 @@ test('report (two bales + PDF) → nothing moves, admins get the card with 🛂 
   assert.ok(kbTexts(l).some((t) => t.includes('🟡') && t.includes(`trf:lcard:${requestId}`)), 'the row stays yellow');
 });
 
-test('the admin taps the row → the card with 🛂 Confirm Receipt 1 → the drill-down → ↩️ Send back with a reason → Musa gets the card back; then a fresh report and ✅ Confirm flips exactly those bales', async () => {
+test('the admin taps the row → the card with 🛂 Confirm Receipt 1 → the drill-down → ✖ Cancel receipt with a typed reason → Musa gets the card back; then a fresh report and ✅ Confirm flips exactly those bales', async () => {
   // four bales: a different load from the first test's (TRF-20 refuses an identical open one)
   const requestId = await onTheRoad(4);
   txns.length = 0; transitions.length = 0;
@@ -171,16 +172,16 @@ test('the admin taps the row → the card with 🛂 Confirm Receipt 1 → the dr
   assert.match(drill, /This delivery \(2\):\n • L2B1 · 9006 · Shade 3\n • L2B2 · 9006 · Shade 3/);
   assert.match(drill, /After this: 2 of 4 received — 2 still on the road/);
   assert.ok(a.callsTo('sendDocument').some((c) => c.args.doc === 'PDF1'), 'the PDF is delivered beneath the card');
-  assert.deepEqual(kbTexts(a).map((t) => t.split('|')[0]), ['✅ Confirm receipt', '↩️ Send back', '⬅ Back to the transfer']);
-  // 3. send back with a reason
+  assert.deepEqual(kbTexts(a).map((t) => t.split('|')[0]), ['✅ Confirm receipt', '✖ Cancel receipt', '⬅ Back to the transfer']);
+  // 3. cancel with a typed reason
   await controller.handleCallbackQuery(a, cb(`trf:rcno:${requestId}:1`, '777', 9));
-  assert.match(a.callsTo('editMessageText').at(-1).args.text, /Why\? Reply in one line/);
+  assert.match(a.callsTo('editMessageText').at(-1).args.text, /Why\? Tap a reason, or reply with your own in one line/);
   await controller.handleMessage(a, txt('bale L2B2 is not in the warehouse, only its label', '777'));
   assert.equal(flips().length, 0, 'nothing moved');
-  assert.match(a.callsTo('editMessageText').at(-1).args.text, /Receipt 1 of .* — sent back by you\*\nReason: bale L2B2 is not in the warehouse/);
+  assert.match(a.callsTo('editMessageText').at(-1).args.text, /Receipt 1 of .* — cancelled by you\*\nReason: bale L2B2 is not in the warehouse/);
   const back = a.callsTo('sendMessage').find((c) => String(c.args.chatId) === 'musa');
   assert.ok(back, 'Musa has the card back');
-  assert.match(back.args.text, /sent back by Ajeet\*\nReason: bale L2B2/);
+  assert.match(back.args.text, /cancelled by Ajeet\*\nReason: bale L2B2/);
   const bk = back.args.opts.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
   assert.ok(bk.includes(`trf:rcv:${requestId}`) && bk.includes(`trf:rcvp:${requestId}`), 'Received and the tick door are back');
   let row = await approvalQueueRepository.getByRequestId(requestId);
@@ -195,7 +196,7 @@ test('the admin taps the row → the card with 🛂 Confirm Receipt 1 → the dr
   await controller.handleCallbackQuery(b, cb('trf:rp:go', 'musa', pid2));
   await controller.handleFileMessage(b, pdf('musa', 'PDF2'));
   row = await approvalQueueRepository.getByRequestId(requestId);
-  assert.equal(row.actionJSON.pendingReceipt, 2, 'a sent-back report keeps its number; the new one is 2');
+  assert.equal(row.actionJSON.pendingReceipt, 2, 'a cancelled report keeps its number; the new one is 2');
   const j = createFakeBot();
   await controller.handleCallbackQuery(j, cb(`trf:rcyes:${requestId}:2`, '888', 11));
   assert.deepEqual(byStatus('available'), ['L2B1', 'P9'], 'exactly the reported bale flipped');
@@ -267,4 +268,156 @@ test('two people on every receipt: an admin who reported cannot confirm; the val
   assert.equal(row.actionJSON.pendingReceipt, undefined);
   fakeSheets._store.get('Settings').pop();
   require(path.join(SRC, 'repositories/settingsRepository')).invalidateCache();
+});
+
+/* ── TRF-24 (owner, 22-Nov-2026): ✖ Cancel Receipt n on the first card ── */
+
+/** Musa reports the first `k` bales of an on-the-road load with a PDF. */
+async function reportSome(requestId, k, fid = 'PDFX') {
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb(`trf:rcvp:${requestId}`, 'musa', 5));
+  const pid = sessionStore.get('musa').flowMessageId;
+  for (let i = 0; i < k; i += 1) await controller.handleCallbackQuery(bot, cb(`trf:rp:t:${i}`, 'musa', pid));
+  await controller.handleCallbackQuery(bot, cb('trf:rp:go', 'musa', pid));
+  await controller.handleFileMessage(bot, pdf('musa', fid));
+  return bot;
+}
+const pendingNo = async (requestId) => (await approvalQueueRepository.getByRequestId(requestId)).actionJSON.pendingReceipt;
+
+test('TRF-24: ✖ Cancel Receipt 1 on the first card → one-tap reasons → the owner\'s rule in one tap: nothing moves, Musa has the card back with the reason, and his next report is ONE receipt for everything', async () => {
+  const requestId = await onTheRoad(5);
+  await reportSome(requestId, 2, 'PDF-A');
+  txns.length = 0; transitions.length = 0;
+
+  // the card from the list: Confirm, and Cancel directly under it
+  const a = createFakeBot();
+  await controller.handleCallbackQuery(a, cb(`trf:lcard:${requestId}`, '777', 9));
+  const kb = kbTexts(a);
+  assert.equal(kb[kb.indexOf(`🛂 Confirm Receipt 1|trf:rcok:${requestId}:1`) + 1], `✖ Cancel Receipt 1|trf:rcno:${requestId}:1`, `got ${kb}`);
+
+  // Cancel → the reasons, the rule first
+  await controller.handleCallbackQuery(a, cb(`trf:rcno:${requestId}:1`, '777', 9));
+  const prompt = a.callsTo('editMessageText').at(-1).args;
+  assert.match(prompt.text, /✖ \*Cancel receipt 1 of .*\*\nNothing moves\. Musa gets the card back and reports again\./);
+  assert.deepEqual(prompt.opts.reply_markup.inline_keyboard.flat().map((b) => `${b.text}|${b.callback_data}`), [
+    `📦 Report all bales in one receipt|trf:rcnr:${requestId}:1:0`,
+    `🔢 The bales do not match|trf:rcnr:${requestId}:1:1`,
+    `📎 Document missing or unclear|trf:rcnr:${requestId}:1:2`,
+    `⬅ Back to the transfer|trf:lcard:${requestId}`,
+  ]);
+  for (const b of prompt.opts.reply_markup.inline_keyboard.flat()) assert.ok(Buffer.byteLength(b.callback_data) <= 64, b.callback_data);
+  assert.equal(await pendingNo(requestId), 1, 'nothing is cancelled by opening the reasons');
+
+  // one tap on the rule
+  await controller.handleCallbackQuery(a, cb(`trf:rcnr:${requestId}:1:0`, '777', 9));
+  assert.equal(flips().length, 0, 'nothing moved');
+  assert.equal(txns.length, 0);
+  assert.deepEqual(byStatus('in_transit').length, 5);
+  let row = await approvalQueueRepository.getByRequestId(requestId);
+  assert.equal(row.status, 'pending');
+  assert.equal(row.actionJSON.pendingReceipt, null);
+  assert.equal(row.actionJSON.receiptReports[0].status, 'sent_back');
+  assert.equal(row.actionJSON.receiptReports[0].sentBackBy, '777');
+  assert.equal(row.actionJSON.receiptReports[0].reason, 'Report all the bales you have received in one receipt.');
+  assert.equal(sessionStore.get('777'), null, 'the "why?" step is over');
+  assert.match(a.callsTo('editMessageText').at(-1).args.text, /Receipt 1 of .* — cancelled by you\*\nReason: Report all the bales you have received in one receipt\.\n\nNothing changed\. Musa has the card back to report again\./);
+  const back = a.callsTo('sendMessage').find((c) => String(c.args.chatId) === 'musa');
+  assert.match(back.args.text, /✖ \*Receipt 1 of .* cancelled by Ajeet\*\nReason: Report all the bales you have received in one receipt\.\nNothing moved\. Report again from this card\./);
+  const bk = back.args.opts.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(bk.includes(`trf:rcv:${requestId}`) && bk.includes(`trf:rcvp:${requestId}`), 'Received and the tick door are back');
+  assert.ok(a.callsTo('sendMessage').some((c) => String(c.args.chatId) === '888' && /receipt 1 cancelled ✖ by Ajeet/.test(c.args.text)), 'the other admin is told');
+
+  assert.ok(!/was cancelled/.test(back.args.text), 'the message says the reason once, not twice');
+
+  // the reason stays on Musa's card until he reports again; no decision is offered to anyone
+  const mine = createFakeBot();
+  await controller.handleCallbackQuery(mine, cb(`trf:card:${requestId}`, 'musa', 5));
+  assert.match(mine.allText(), /✖ Receipt 1 was cancelled — Report all the bales you have received in one receipt\.\n\nConfirm when the goods arrive/);
+  const after = createFakeBot();
+  await controller.handleCallbackQuery(after, cb(`trf:lcard:${requestId}`, '888', 9));
+  assert.match(after.allText(), /✖ Receipt 1 was cancelled — Report all the bales/);
+  assert.ok(!kbTexts(after).some((t) => /trf:rc(ok|no|nr):/.test(t)), 'no receipt waits, so nothing to confirm or cancel');
+
+  // Musa reports everything in ONE receipt: number 2, all five bales
+  const m = createFakeBot();
+  await controller.handleCallbackQuery(m, cb(`trf:rcv:${requestId}`, 'musa', 5));
+  await controller.handleFileMessage(m, pdf('musa', 'PDF-B'));
+  row = await approvalQueueRepository.getByRequestId(requestId);
+  assert.equal(row.actionJSON.pendingReceipt, 2);
+  assert.equal(row.actionJSON.receiptReports[1].bales.length, 5, 'one receipt, every bale');
+  // the admins' card now lists both: the cancelled one with its reason, and the one waiting
+  const both = createFakeBot();
+  await controller.handleCallbackQuery(both, cb(`trf:lcard:${requestId}`, '888', 9));
+  assert.match(both.allText(), /Receipt 1 · Musa · .* · L\d+B1, L\d+B2 · ✖ cancelled by Ajeet — Report all the bales you have received in one receipt\./);
+  assert.match(both.allText(), /Receipt 2 · Musa · .* · 🛂 awaiting an admin/);
+  const waiting = createFakeBot();
+  await controller.handleCallbackQuery(waiting, cb(`trf:card:${requestId}`, 'musa', 5));
+  assert.ok(!/was cancelled/.test(waiting.allText()), 'a fresh report replaces the cancelled note on his card');
+  await controller.handleCallbackQuery(createFakeBot(), cb(`trf:rcyes:${requestId}:2`, '888', 11));
+  assert.equal((await approvalQueueRepository.getByRequestId(requestId)).status, 'approved');
+});
+
+test('TRF-24: the typed "why?" belongs to the prompt on screen — ⬅ Back ends it, a look at another message does not', async () => {
+  const requestId = await onTheRoad(6);
+  await reportSome(requestId, 1, 'PDF-C');
+
+  // Back on the prompt's own message: a line typed afterwards is NOT a reason
+  const a = createFakeBot();
+  await controller.handleCallbackQuery(a, cb(`trf:rcno:${requestId}:1`, '777', 9));
+  assert.equal(sessionStore.get('777').step, 'receipt_sendback');
+  await controller.handleCallbackQuery(a, cb(`trf:lcard:${requestId}`, '777', 9));
+  assert.equal(sessionStore.get('777'), null, 'the prompt is gone, so is its typed step');
+  await controller.handleMessage(a, txt('remember to call the driver tomorrow', '777'));
+  assert.equal(await pendingNo(requestId), 1, 'the receipt still waits — nothing typed cancelled it');
+
+  // The prompt still on screen while the admin opens the document elsewhere: the typed reason still works
+  const b = createFakeBot();
+  await controller.handleCallbackQuery(b, cb(`trf:rcno:${requestId}:1`, '777', 9));
+  await controller.handleCallbackQuery(b, cb(`trf:vd:r:${requestId}:1`, '777', 44));
+  assert.equal(sessionStore.get('777').step, 'receipt_sendback', 'a tap on another message leaves the prompt armed');
+  await controller.handleMessage(b, txt('one bale is torn open', '777'));
+  const row = await approvalQueueRepository.getByRequestId(requestId);
+  assert.equal(row.actionJSON.pendingReceipt, null);
+  assert.equal(row.actionJSON.receiptReports[0].reason, 'one bale is torn open');
+});
+
+test('TRF-24: a reason chip is re-checked at the tap — a non-admin, a receipt already decided and an unknown reason change nothing, and an old chip never wipes another flow', async () => {
+  const requestId = await onTheRoad(7);
+  await reportSome(requestId, 2, 'PDF-D');
+
+  // the receiver cannot cancel through a forwarded chip
+  const m = createFakeBot();
+  await controller.handleCallbackQuery(m, cb(`trf:rcnr:${requestId}:1:0`, 'musa', 9));
+  assert.ok(m.callsTo('answerCallbackQuery').some((c) => /Admin only/.test((c.args.opts && c.args.opts.text) || '')));
+  assert.equal(await pendingNo(requestId), 1);
+
+  // a reason that does not exist
+  const u = createFakeBot();
+  await controller.handleCallbackQuery(u, cb(`trf:rcnr:${requestId}:1:9`, '777', 9));
+  assert.equal(await pendingNo(requestId), 1);
+
+  // John confirms; Ajeet's old chip then says so and cancels nothing
+  await controller.handleCallbackQuery(createFakeBot(), cb(`trf:rcyes:${requestId}:1`, '888', 11));
+  sessionStore.set('777', { type: 'some_other_flow', step: 'x' });
+  const late = createFakeBot();
+  await controller.handleCallbackQuery(late, cb(`trf:rcnr:${requestId}:1:0`, '777', 9));
+  assert.ok(late.callsTo('answerCallbackQuery').some((c) => /Receipt 1 is no longer awaiting confirmation/.test((c.args.opts && c.args.opts.text) || '')));
+  const row = await approvalQueueRepository.getByRequestId(requestId);
+  assert.equal(row.actionJSON.receiptReports[0].status, 'confirmed', 'a confirmed receipt stays confirmed');
+  assert.equal(sessionStore.get('777').type, 'some_other_flow', 'the other flow is untouched');
+  sessionStore.clear('777');
+});
+
+test('TRF-24: the admin who reported a receipt gets neither Confirm nor Cancel on it', async () => {
+  const requestId = await onTheRoad(8);
+  const a = createFakeBot();
+  await controller.handleCallbackQuery(a, cb(`trf:rcv:${requestId}`, '777', 5));
+  await controller.handleFileMessage(a, pdf('777', 'PDF-E'));
+  const own = createFakeBot();
+  await controller.handleCallbackQuery(own, cb(`trf:lcard:${requestId}`, '777', 9));
+  assert.ok(kbTexts(own).some((t) => t.startsWith('🔒 Receipt 1 — you reported it')), `got ${kbTexts(own)}`);
+  assert.ok(!kbTexts(own).some((t) => /trf:rc(ok|no):/.test(t)));
+  const other = createFakeBot();
+  await controller.handleCallbackQuery(other, cb(`trf:lcard:${requestId}`, '888', 9));
+  assert.ok(kbTexts(other).includes(`✖ Cancel Receipt 1|trf:rcno:${requestId}:1`));
 });

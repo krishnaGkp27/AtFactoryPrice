@@ -569,7 +569,7 @@ function reportsBlock(aj, names = {}) {
   const nameOf = (id) => mdEscape(names[String(id)] || String(id || '—'));
   const lines = reports.map((r) => {
     const verdict = r.status === 'confirmed' ? `✅ confirmed by ${nameOf(r.confirmedBy)}`
-      : r.status === 'sent_back' ? `↩️ sent back by ${nameOf(r.sentBackBy)}${r.reason ? ` — ${mdEscape(r.reason)}` : ''}`
+      : r.status === 'sent_back' ? `✖ cancelled by ${nameOf(r.sentBackBy)}${r.reason ? ` — ${mdEscape(r.reason)}` : ''}`
         : '🛂 awaiting an admin';
     const bales = r.all && !(r.bales || []).length ? 'everything outstanding' : baleListPreview(r.bales || []);
     return `${r.doc && (r.doc.fileId || r.doc.url) ? '📎' : '📄'} Receipt ${r.n} · ${nameOf(r.by)} · ${fmtDate(r.on || r.at)} · ${bales} · ${verdict}`;
@@ -996,7 +996,7 @@ async function handleReviewReconcile(bot, query, requestId) {
   return true;
 }
 
-function receiverCard(requestId, aj, statusLine = '') {
+function receiverCard(requestId, aj, statusLine = '', opts = {}) {
   const shortNote = aj.short ? '\n⚠️ _Partially dispatched — some lines were short of stock._' : '';
   const status = statusLine ? `${statusLine}\n` : '';
   // TRF-22 — a report is with the admins: the receiver's card shows it and
@@ -1026,8 +1026,17 @@ function receiverCard(requestId, aj, statusLine = '') {
   const someRow = st.remaining.length > 1 && !repeated
     ? [[{ text: '📦 Only some arrived — tick them', callback_data: `trf:rcvp:${requestId}` }]]
     : [];
+  // TRF-24 — the last report was cancelled: its reason stays on the card
+  // until the receiver reports again, so the instruction is in front of
+  // him where he acts and not only in a message that scrolls away. (The
+  // cancellation message itself already says it — `opts.noCancelNote`.)
+  const reports = transferService.receiptReports(aj);
+  const lastReport = reports[reports.length - 1];
+  const cancelled = !opts.noCancelNote && lastReport && lastReport.status === 'sent_back'
+    ? `\n\n✖ Receipt ${lastReport.n} was cancelled${lastReport.reason ? ` — ${mdEscape(lastReport.reason)}` : ''}`
+    : '';
   return {
-    text: `📦 *Transfer ${shortTransferRef(requestId)} incoming*\n${status}${headOf(aj)}${departedLine(aj)}\n${dispatchedBlock(aj)}${shortNote}${receiptLine(aj)}${prompt}`,
+    text: `📦 *Transfer ${shortTransferRef(requestId)} incoming*\n${status}${headOf(aj)}${departedLine(aj)}\n${dispatchedBlock(aj)}${shortNote}${receiptLine(aj)}${cancelled}${prompt}`,
     kb: { inline_keyboard: [[
       { text: '✅ Received', callback_data: `trf:rcv:${requestId}` },
       { text: '⚠️ Reject', callback_data: `trf:rej:${requestId}` },
@@ -1717,7 +1726,7 @@ async function handleText(bot, msg) {
     });
     return true;
   }
-  // TRF-22 — the admin's typed send-back reason.
+  // TRF-22 / TRF-24 — the admin's typed reason for cancelling a receipt.
   if (session.step === 'receipt_sendback') {
     const reason = String(msg.text || '').trim().replace(/\s+/g, ' ');
     if (reason.length < 3 || reason.length > 120) {
@@ -2420,7 +2429,11 @@ async function receiptReviewCard(requestId, row, names, viewerId) {
   const rows = [];
   if (pend) {
     if (String(pend.by) === String(viewerId)) rows.push([{ text: `🔒 Receipt ${pend.n} — you reported it; another admin confirms`, callback_data: 'trf:noop' }]);
-    else rows.push([{ text: `🛂 Confirm Receipt ${pend.n}`, callback_data: `trf:rcok:${requestId}:${pend.n}` }]);
+    else {
+      rows.push([{ text: `🛂 Confirm Receipt ${pend.n}`, callback_data: `trf:rcok:${requestId}:${pend.n}` }]);
+      // TRF-24 — the way out sits on the FIRST card, beside the way in.
+      rows.push([{ text: `✖ Cancel Receipt ${pend.n}`, callback_data: `trf:rcno:${requestId}:${pend.n}` }]);
+    }
   }
   rows.push(...balesChipRow(requestId, aj), ...docRows(requestId, aj));
   return { text, rows };
@@ -2493,7 +2506,7 @@ async function showReceiptReview(bot, query, requestId, n) {
   await bot.editMessageText(text, {
     chat_id: chatId, message_id: query.message.message_id, parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [
-      [{ text: '✅ Confirm receipt', callback_data: `trf:rcyes:${requestId}:${pend.n}` }, { text: '↩️ Send back', callback_data: `trf:rcno:${requestId}:${pend.n}` }],
+      [{ text: '✅ Confirm receipt', callback_data: `trf:rcyes:${requestId}:${pend.n}` }, { text: '✖ Cancel receipt', callback_data: `trf:rcno:${requestId}:${pend.n}` }],
       [{ text: '⬅ Back to the transfer', callback_data: `trf:lcard:${requestId}` }],
     ] },
   }).catch(() => {});
@@ -2567,7 +2580,29 @@ async function handleReceiptConfirm(bot, query, requestId, n) {
   return showActionCard(bot, query, requestId);
 }
 
-/** trf:rcno — ask the admin why; the typed reason lands in handleText (step receipt_sendback). */
+/**
+ * TRF-24 (owner, 22-Nov-2026) — one-tap reasons for cancelling a waiting
+ * receipt. The first is the owner's rule itself: bales are reported as each
+ * delivery arrives, or all together in ONE receipt at the end of the day.
+ * `chip` is the button, `reason` is what the receiver and the record read.
+ */
+const RECEIPT_CANCEL_REASONS = [
+  { chip: '📦 Report all bales in one receipt', reason: 'Report all the bales you have received in one receipt.' },
+  { chip: '🔢 The bales do not match', reason: 'The bales reported do not match the goods.' },
+  { chip: '📎 Document missing or unclear', reason: 'The receipt document is missing or unclear.' },
+];
+
+/** Is this user's live step the typed "why?" of a receipt being cancelled? */
+function cancelStepOf(userId) {
+  const s = sessionStore.get(userId);
+  return s && s.type === SESSION_TYPE && s.step === 'receipt_sendback' ? s : null;
+}
+
+/**
+ * trf:rcno — ✖ Cancel Receipt n: ask the admin why. A reason chip
+ * (trf:rcnr) answers in one tap; a typed line lands in handleText (step
+ * receipt_sendback). Nothing is cancelled until one of the two arrives.
+ */
 async function askSendBackReason(bot, query, requestId, n) {
   const userId = String(query.from.id);
   if (!auth.isAdmin(userId)) {
@@ -2585,18 +2620,45 @@ async function askSendBackReason(bot, query, requestId, n) {
     type: SESSION_TYPE, step: 'receipt_sendback', requestId, reportNo: Number(n),
     flowMessageId: query.message.message_id, ttlMs: 30 * 60 * 1000,
   });
+  const names = await nameMap([pend.by]);
+  const who = mdEscape(names[String(pend.by)] || 'The receiver');
   await bot.editMessageText(
-    `↩️ *Send back receipt ${n} of ${shortTransferRef(requestId)}*\nNothing will move. The receiver gets the card back with your reason and reports again.\n\n✍️ Why? Reply in one line (3–120 characters).`,
+    `✖ *Cancel receipt ${n} of ${shortTransferRef(requestId)}*\nNothing moves. ${who} gets the card back and reports again.\n\nWhy? Tap a reason, or reply with your own in one line (3–120 characters).`,
     { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: [[{ text: '⬅ Back', callback_data: `trf:rcok:${requestId}:${n}` }]] } },
+      reply_markup: { inline_keyboard: [
+        ...RECEIPT_CANCEL_REASONS.map((r, k) => [{ text: r.chip, callback_data: `trf:rcnr:${requestId}:${n}:${k}` }]),
+        [{ text: '⬅ Back to the transfer', callback_data: `trf:lcard:${requestId}` }],
+      ] } },
   ).catch(() => {});
   return true;
 }
 
-/** The typed reason arrived: send the report back, re-arm the receiver, tell the admins. */
+/** trf:rcnr — a reason chip: the receipt is cancelled with that reason, in one tap. Session-free. */
+async function handleCancelReason(bot, query, requestId, n, k) {
+  const userId = String(query.from.id);
+  if (!auth.isAdmin(userId)) {
+    await bot.answerCallbackQuery(query.id, { text: 'Admin only.', show_alert: true }).catch(() => {});
+    return true;
+  }
+  const picked = RECEIPT_CANCEL_REASONS[Number(k)];
+  const row = await transferService.findTransfer(requestId);
+  const pend = row && transferService.pendingReport(row.actionJSON);
+  if (!picked || !pend || Number(pend.n) !== Number(n)) {
+    await bot.answerCallbackQuery(query.id, { text: `Receipt ${n} is no longer awaiting confirmation.`, show_alert: true }).catch(() => {});
+    return showActionCard(bot, query, requestId);
+  }
+  await bot.answerCallbackQuery(query.id, { text: `Receipt ${n} cancelled` }).catch(() => {});
+  await completeSendBack(bot, query.message.chat.id, userId,
+    { requestId, reportNo: Number(n), flowMessageId: query.message.message_id }, picked.reason);
+  return true;
+}
+
+/** The reason arrived (a chip or a typed line): cancel the report, re-arm the receiver, tell the admins. */
 async function completeSendBack(bot, chatId, userId, session, reason) {
   const { requestId, reportNo: n, flowMessageId } = session;
-  sessionStore.clear(userId, 'completed');
+  // Only the "why?" step is ended — a chip on an old prompt must not wipe
+  // whatever other flow this admin has opened since.
+  if (cancelStepOf(userId)) sessionStore.clear(userId, 'completed');
   const res = await transferService.sendBackReceipt(requestId, userId, reason);
   if (!res.ok) {
     await bot.sendMessage(chatId, `⚠️ ${res.message}`).catch(() => {});
@@ -2606,19 +2668,19 @@ async function completeSendBack(bot, chatId, userId, session, reason) {
   const names = await nameMap([userId, aj.receiver]);
   const admin = mdEscape(names[String(userId)] || userId);
   await bot.editMessageText(
-    `📥 *Receipt ${n} of ${shortTransferRef(requestId)} — sent back by you*\nReason: ${mdEscape(reason)}\n\nNothing changed. ${mdEscape(names[String(aj.receiver)] || 'The receiver')} has the card back to report again.`,
+    `📥 *Receipt ${n} of ${shortTransferRef(requestId)} — cancelled by you*\nReason: ${mdEscape(reason)}\n\nNothing changed. ${mdEscape(names[String(aj.receiver)] || 'The receiver')} has the card back to report again.`,
     { chat_id: chatId, message_id: flowMessageId, parse_mode: 'Markdown',
       reply_markup: { inline_keyboard: [[{ text: '📋 Transfers', callback_data: 'trf:list' }, { text: '🏠 Menu', callback_data: 'act:__back__' }]] } },
   ).catch(() => {});
   if (aj.receiver) {
     try {
-      const card = receiverCard(requestId, aj, await pushStatus(requestId, aj));
+      const card = receiverCard(requestId, aj, await pushStatus(requestId, aj), { noCancelNote: true });
       await bot.sendMessage(aj.receiver,
-        `↩️ *Receipt ${n} of ${shortTransferRef(requestId)} sent back by ${admin}*\nReason: ${mdEscape(reason)}\nNothing moved — report again when the goods in front of you match.\n\n${card.text}`,
+        `✖ *Receipt ${n} of ${shortTransferRef(requestId)} cancelled by ${admin}*\nReason: ${mdEscape(reason)}\nNothing moved. Report again from this card.\n\n${card.text}`,
         { parse_mode: 'Markdown', reply_markup: card.kb });
     } catch (_) { /* best-effort */ }
   }
-  await notifyAdmins(bot, requestId, aj, `receipt ${n} sent back ↩️ by ${admin}`, userId);
+  await notifyAdmins(bot, requestId, aj, `receipt ${n} cancelled ✖ by ${admin}`, userId);
 }
 
 /* ── My Tasks integration: "transfers waiting on you" queue ────────────── */
@@ -3128,6 +3190,12 @@ async function handleCallback(bot, query) {
     await bot.answerCallbackQuery(query.id).catch(() => {});
     return true;
   }
+  // TRF-24 — the typed "why?" belongs to the prompt on screen. A tap that
+  // redraws THAT message (⬅ Back, any card button) ends the step, so a line
+  // typed later is never taken as the reason for a prompt that is gone.
+  const whyStep = cancelStepOf(userId);
+  if (whyStep && query.message && whyStep.flowMessageId === query.message.message_id
+    && !/^trf:rcn[or]:/.test(data)) sessionStore.clear(userId);
   const m = data.match(/^trf:(acc|dec|rcv|rcvp|rej|rejc):(.+)$/);
   if (m) return handleAction(bot, query, m[2], m[1]);
   // TRF-21 — arrival picker "Not now": drop the ticks, restore the card.
@@ -3154,11 +3222,14 @@ async function handleCallback(bot, query) {
   }
   const mInfo = data.match(/^trf:info:(.+)$/);
   if (mInfo) return showInfo(bot, query, mInfo[1], true);
-  // TRF-22 — the receipt gate: drill-down · confirm · send back (session-free).
+  // TRF-22 — the receipt gate: drill-down · confirm · cancel (session-free).
+  // TRF-24 — trf:rcnr is a one-tap cancel reason.
   const mRcok = data.match(/^trf:rcok:(.+):(\d+)$/);
   if (mRcok) return showReceiptReview(bot, query, mRcok[1], mRcok[2]);
   const mRcyes = data.match(/^trf:rcyes:(.+):(\d+)$/);
   if (mRcyes) return handleReceiptConfirm(bot, query, mRcyes[1], mRcyes[2]);
+  const mRcnr = data.match(/^trf:rcnr:(.+):(\d+):(\d+)$/);
+  if (mRcnr) return handleCancelReason(bot, query, mRcnr[1], mRcnr[2], mRcnr[3]);
   const mRcno = data.match(/^trf:rcno:(.+):(\d+)$/);
   if (mRcno) return askSendBackReason(bot, query, mRcno[1], mRcno[2]);
   const mVd = data.match(/^trf:vd:([dr]):(.+)$/);
@@ -3434,6 +3505,7 @@ module.exports = {
     parseTypedTransfer, typedBaleMap, typedHits,
     startDispatchPicker, askDispatchDoc, completeDispatch, completeReceipt,
     receiptReviewOn, receiptReviewCard, sendReceiptReviewCards, showReceiptReview, handleReceiptConfirm, // TRF-22
+    RECEIPT_CANCEL_REASONS, // TRF-24
     armDocGate, gateNotNow, showInfo, promptForDoc, handleFile,
     docRows, sendTransferDoc, balesChipRow, showBaleNumbers, reconcileBaleNumbers,
     buildBaleBreakdown, baleCardRows, effectiveBales, ensureLineBales,
