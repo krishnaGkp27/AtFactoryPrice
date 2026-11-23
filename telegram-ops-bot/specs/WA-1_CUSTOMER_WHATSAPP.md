@@ -253,6 +253,9 @@ Message templates to submit, drafted for the owner's approval:
 | 7 | The test customer's name and WhatsApp number | The pilot | Later |
 | 8 | Sign-off on section 7 (two columns) and section 8 (three files) | The build | **Ask** |
 
+The list to forward to whoever holds the papers is `docs/WA-1_DOCUMENTS_NEEDED.pdf`
+(source `docs/WA-1_DOCUMENTS_NEEDED.html`, printed to PDF with the pre-installed browser).
+
 **The company documents (owner, 23-Nov-2026).** "I will be uploading the all
 necessary documents related to the company, which will be stored in Drive …
 you can fetch it as and when needed, asking me the permission, since those
