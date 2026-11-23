@@ -373,6 +373,10 @@ async function renderCard(bot, chatId, userId) {
   let label = null;
   try { label = await unitDisplayService.createQtyLabeller(all); } catch (_) { label = null; }
   const qty = (rows) => (label ? label(rows) : `${rows.length}t`);
+  // TV-9 — the ✅ Available section counts what the store HOLDS: closed
+  // bale = B, opened bale = t, than-selling stores included. Sold and in
+  // transit keep `qty` (goods a customer took — TV-8).
+  const heldQty = (rows) => (label ? label(rows, { holding: true }) : `${rows.length}t`);
 
   const { avail, sold, transit } = sliceRows(all, session, session.shade);
 
@@ -420,7 +424,7 @@ async function renderCard(bot, chatId, userId) {
   // warehouse — so a place the owner has not marked can never silently
   // switch units.
   body += `\n✅ *Available — ${isStore
-    ? availHeadQty([...availBales.values()], qty)
+    ? availHeadQty([...availBales.values()], heldQty)
     : balesWord(availBales.size)}*\n`;
   if (availBales.size) {
     const entries = [...availBales.entries()].sort((a, b) => byBaleNo(a[1][0].packageNo, b[1][0].packageNo));
@@ -428,11 +432,11 @@ async function renderCard(bot, chatId, userId) {
       // Group the comma list per container so re-used numbers read apart.
       const perCt = groupBy(entries.map(([, rows]) => rows), (rows) => String(rows[0].arrivalBatch).trim() || '(unlabelled)');
       body += [...perCt.entries()]
-        .map(([ct, groups]) => `${ct}: ${groups.map((rows) => availLabel(rows, qty)).join(', ')}`)
+        .map(([ct, groups]) => `${ct}: ${groups.map((rows) => availLabel(rows, heldQty)).join(', ')}`)
         .join('\n');
       body += '\n';
     } else {
-      body += `${entries.map(([, rows]) => availLabel(rows, qty)).join(', ')}\n`;
+      body += `${entries.map(([, rows]) => availLabel(rows, heldQty)).join(', ')}\n`;
     }
   } else {
     body += '_none_\n';

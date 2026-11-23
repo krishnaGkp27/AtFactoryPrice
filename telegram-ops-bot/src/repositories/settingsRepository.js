@@ -59,7 +59,10 @@ const DEFAULTS = {
   EXT_OTP_DAILY_CAP: 200,
   // TV-1 — CSV of warehouse names whose stock listings show than counts
   // instead of bale counts. Override via a Settings sheet row of the same
-  // key; an empty value disables the behavior everywhere.
+  // key; an empty value disables the behavior everywhere. TV-9
+  // (23-Nov-2026): a store's AVAILABLE stock on the supply-request store
+  // screen, Check Stock and the Stock-by-shade card ignores it — closed
+  // bales print as B, opened bales as t, in every store.
   THAN_VISIBILITY_WAREHOUSES: 'Kano office',
   // SJ-1 — stale-flow janitor grace periods (minutes from last activity
   // before an abandoned flow's hanging message is tombstoned). Generous

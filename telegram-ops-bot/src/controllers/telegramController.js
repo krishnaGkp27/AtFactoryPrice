@@ -3053,7 +3053,7 @@ async function sendCheckStockReport(bot, chatId, design, userId = null) {
     const sp = pricingService.resolveSalePrice(allInv, design);
     reply += fmtSellingHeaderLine(sp);
   }
-  reply += `Available Σ ${qty(avail)} · ${fmtQty(stock.totalYards)} yds\n`;
+  reply += `Available Σ ${qty(avail, { holding: true })} · ${fmtQty(stock.totalYards)} yds\n`; // TV-9
 
   if (avail.length) {
     const byShade = new Map();
@@ -3068,7 +3068,7 @@ async function sendCheckStockReport(bot, chatId, design, userId = null) {
     reply += `\n*By shade*\n`;
     for (const [sh, s] of [...byShade.entries()].sort((a, b) => b[1].yards - a[1].yards)) {
       const whList = [...s.warehouses].join(', ');
-      reply += `  • ${formatShadeRef(sh, nameMap.get(String(sh)))} · ${qty(s.rows)} · ${fmtQty(s.yards)} yds · ${whList}\n`;
+      reply += `  • ${formatShadeRef(sh, nameMap.get(String(sh)))} · ${qty(s.rows, { holding: true })} · ${fmtQty(s.yards)} yds · ${whList}\n`;
     }
   }
 
@@ -6292,9 +6292,14 @@ async function proceedAfterContainer(bot, chatId, userId) {
     const rab = (r.arrivalBatch || '').toUpperCase();
     return isUnlabelled ? rab === '' : rab === ab;
   });
-  const rows = warehouses.map((w) => [{
-    text: `🏭 ${w} · ${qty(inPlay.filter((r) => r.warehouse === w))}`, callback_data: `srf_wh:${w}`,
-  }]);
+  // TV-9 — a store's holding: closed bale = B, opened bale = t (Kano too);
+  // the Total below is the SUM of these chips.
+  const held = { bales: 0, thans: 0 };
+  const rows = warehouses.map((w) => {
+    const c = qty.count(inPlay.filter((r) => r.warehouse === w), { holding: true });
+    held.bales += c.bales; held.thans += c.thans;
+    return [{ text: `🏭 ${w} · ${unitDisplayService.formatCounts({ ...c, empty: '0B' })}`, callback_data: `srf_wh:${w}` }];
+  });
   rows.push([{ text: '🏠 Back to menu', callback_data: 'act:__back__' }]);
   const safe = (v) => String(v).replace(/[*_`[\]]/g, '\\$&');
   const catLabel = supplyCategoryLabel(session.category);
@@ -6302,10 +6307,9 @@ async function proceedAfterContainer(bot, chatId, userId) {
   const catLine = catLabel
     ? `\n${session.category === SUPPLY_OTHERS_CATEGORY ? '📦' : designCategoriesRepo.iconFor(catLabel)} Category: *${safe(catLabel)}*`
     : '';
-  const bales = new Set(inPlay.map((r) => `${r.warehouse}||${r.packageNo}`)).size;
   const yards = inPlay.reduce((a, r) => a + (Number(r.yards) || 0), 0);
   await editOrSendAnchored(bot, chatId, userId,
-    `📦 *Supply Request*${ctLine}${catLine}\nTotal: ${bales} bls · ${fmtQty(yards)} yds\n\nSelect warehouse:`, {
+    `📦 *Supply Request*${ctLine}${catLine}\nTotal: ${unitDisplayService.formatCounts({ ...held, empty: '0B' })} · ${fmtQty(yards)} yds\n\nSelect warehouse:`, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: rows },
   });

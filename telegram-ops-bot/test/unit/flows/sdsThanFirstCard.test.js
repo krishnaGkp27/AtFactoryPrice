@@ -84,9 +84,13 @@ async function renderCard(kind) {
 test('at a STORE the card counts thans, and the sold day-line carries its than total', async () => {
   const card = await renderCard('store');
 
-  assert.match(card, /✅ \*Available — 4t\*/,
-    'the header answers "how much is left" in thans — 1t + 3t, his `Available = 21t` form');
-  assert.match(card, /624 \(1t\), 784 \(3t\)/, 'the roster keeps bale (thans) and drops "left"');
+  // TV-9 (owner, 23-Nov-2026) — the Available section counts what the store
+  // HOLDS: this fixture records no other than of 784 or 624, so by their
+  // roster both bales are CLOSED and read as 1B each (an opened bale's
+  // thans as t is pinned in test/characterization/storeStockHolding.test.js).
+  assert.match(card, /✅ \*Available — 2B\*/,
+    'the header counts the store\'s holding — two closed bales');
+  assert.match(card, /\n624, 784\n/, 'a closed bale is its plain number; the word "left" stays gone');
   assert.match(card, /💰 \*Sold\*/, 'no bale figure on a sold header — the bales are open');
   assert.doesNotMatch(card, /💰 \*Sold — \d+ Bale/, 'specifically NOT the bale count');
   assert.match(card, /12-Jul-26 — Owaibula \(26t\)/,
@@ -101,7 +105,7 @@ test('at a WAREHOUSE the card is unchanged — sealed bales still count in bales
   assert.match(card, /✅ \*Available — 2 Bales\*/, 'bale count kept');
   assert.match(card, /💰 \*Sold — 2 Bales\*/, 'sold header kept');
   assert.match(card, /12-Jul-26 — Owaibula \(2B\)/, 'the day-line keeps its bale figure');
-  assert.match(card, /624 \(1t\), 784 \(3t\)/, 'only "left" is dropped — that change is global');
+  assert.match(card, /\n624, 784\n/, 'TV-9: closed bales (whole roster available) print as plain numbers');
 });
 
 test('an UNREGISTERED place gets the warehouse card — units never switch by accident', async () => {

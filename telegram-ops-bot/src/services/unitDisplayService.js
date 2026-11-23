@@ -7,6 +7,12 @@
  * instead of container (bale) counts. Matching is trimmed and
  * case-insensitive; an empty value disables the feature everywhere.
  *
+ * TV-9 (owner, 23-Nov-2026): what a store HOLDS NOW is NOT governed by this
+ * set on three surfaces — the 📦 Supply Request store screen, Check Stock and
+ * the 🎨 Stock-by-shade card's ✅ Available section pass `holding: true`
+ * (see countQty): a closed bale is 1B, an opened bale's thans are t, in every
+ * store. The set still decides every other label (goods a customer took).
+ *
  * DISPLAY-ONLY: quantity selection, the cart, and approvals stay in bales.
  * The list is cached for ~60s so pickers don't add a Settings read per tap;
  * edits to the Settings sheet are picked up within a minute.
@@ -79,6 +85,8 @@ function invalidateCache() {
  * `bales` is still accepted so callers stay unchanged, and because the physical
  * bale count (inventoryPickers.baleGroupKey) still drives selection.
  * Display-only, like all of TV-1..6: carts and approvals stay in bales.
+ * TV-9 (23-Nov-2026) superseded "thans only" for a store's HOLDING on the
+ * three holding surfaces (countQty `holding: true`: closed bale B, opened t).
  * @param {{bales:number|*, thans:number|*}} counts
  * @returns {string} e.g. "88t"
  */
@@ -247,13 +255,24 @@ function buildBaleRoster(allRows) {
 }
 
 /**
- * Format one row set in the owner's grammar.
- * @param {Array<object>} rows sold/held Inventory rows (one row = one than)
- * @param {{thanWarehouses?:Set<string>, roster?:Map<string,number>, empty?:string}} opts
- * @returns {string} "6B" · "250t" · "4B + 21t"
+ * Count one row set in the owner's grammar — the figures {@link formatQty}
+ * prints, for a caller that must ADD several labels (TV-9: the supply
+ * request's Total is the sum of its store chips).
+ *
+ * TV-9 (owner, 23-Nov-2026) — `holding: true` counts what a store HOLDS
+ * NOW: the than-store branch is skipped and the roster alone decides, in
+ * every store, than-selling ones included — a CLOSED bale (every than of
+ * its roster among `rows`) is 1B, an OPENED bale's thans are t. Pass the
+ * available rows of ONE store to get that store's holding. Without
+ * `holding` nothing changes: a than-store row is +1t whatever its bale.
+ * Without a roster every bale's rows count as the whole bale (B) — the
+ * pre-TV-8 degradation, in both modes.
+ * @param {Array<object>} rows Inventory rows (one row = one than)
+ * @param {{thanWarehouses?:Set<string>, roster?:Map<string,number>, holding?:boolean}} opts
+ * @returns {{bales:number, thans:number}}
  */
-function formatQty(rows, opts = {}) {
-  const thanSet = opts.thanWarehouses || new Set();
+function countQty(rows, opts = {}) {
+  const thanSet = opts.holding ? new Set() : (opts.thanWarehouses || new Set());
   const roster = opts.roster || null;
   let thans = 0;
   let bales = 0;
@@ -270,7 +289,18 @@ function formatQty(rows, opts = {}) {
     if (taken >= total) bales += 1;                  // the whole bale
     else thans += taken;                             // a broken bale
   }
-  return formatCounts({ bales, thans, empty: opts.empty || '0B' });
+  return { bales, thans };
+}
+
+/**
+ * Format one row set in the owner's grammar.
+ * @param {Array<object>} rows sold/held Inventory rows (one row = one than)
+ * @param {{thanWarehouses?:Set<string>, roster?:Map<string,number>, empty?:string, holding?:boolean}} opts
+ *   `holding: true` = TV-9, a store's stock now (see {@link countQty})
+ * @returns {string} "6B" · "250t" · "4B + 21t"
+ */
+function formatQty(rows, opts = {}) {
+  return formatCounts({ ...countQty(rows, opts), empty: opts.empty || '0B' });
 }
 
 /**
@@ -294,13 +324,18 @@ function formatCounts({ bales, thans, empty = '' } = {}) {
 /**
  * One-call helper for a render: resolves the than-visible set once and
  * (optionally) builds the roster, returning a SYNC labeller.
+ * `label(rows, { holding: true })` is TV-9's store-stock reading;
+ * `label.count(rows, opts)` returns the same figures as `{ bales, thans }`.
  * @param {Array<object>} [allRows] every Inventory row, for whole/loose
  * @returns {Promise<function(Array<object>, object=):string>}
  */
 async function createQtyLabeller(allRows) {
   const thanWarehouses = await getThanVisibilityWarehouses();
   const roster = allRows ? buildBaleRoster(allRows) : null;
-  return (rows, extra = {}) => formatQty(rows, { thanWarehouses, roster, ...extra });
+  const label = (rows, extra = {}) => formatQty(rows, { thanWarehouses, roster, ...extra });
+  // TV-9 — the same options, as counts (for a caller that sums labels).
+  label.count = (rows, extra = {}) => countQty(rows, { thanWarehouses, roster, ...extra });
+  return label;
 }
 
 module.exports = {
@@ -317,6 +352,7 @@ module.exports = {
   invalidateCache,
   // TV-8 / CARD-5
   formatQty,
+  countQty,
   formatCounts,
   buildBaleRoster,
   createQtyLabeller,

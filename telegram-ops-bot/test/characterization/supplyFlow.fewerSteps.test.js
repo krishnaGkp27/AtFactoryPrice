@@ -79,10 +79,10 @@ test('the tile opens on the STORE — no container screen, every store chip says
   await controller.handleCallbackQuery(bot, cb('act:supply_request', '777', 5));
   const text = bot.allText();
   assert.ok(!/Select container/.test(text), `container step must be gone: ${text}`);
-  assert.match(lastText(bot), /^📦 \*Supply Request\*\nTotal: 4 bls · 200 yds\n\nSelect warehouse:$/);
+  assert.match(lastText(bot), /^📦 \*Supply Request\*\nTotal: 4B · 200 yds\n\nSelect warehouse:$/);
   const buttons = lastKeyboard(bot);
   assert.ok(buttons.some((t) => /^🏭 Lagos · 3B$/.test(t)), `Lagos chip with its holding: ${buttons}`);
-  assert.ok(buttons.some((t) => /^🏭 Kano office · 1[Bt]$/.test(t)), `Kano chip with its holding: ${buttons}`);
+  assert.ok(buttons.includes('🏭 Kano office · 1B'), `Kano chip with its holding (TV-9: one closed bale = 1B): ${buttons}`);
   assert.ok(buttons.includes('🏠 Back to menu'), `the way back is the menu: ${buttons}`);
   const s = sessionStore.get('777');
   assert.equal(s.step, 'warehouse');
