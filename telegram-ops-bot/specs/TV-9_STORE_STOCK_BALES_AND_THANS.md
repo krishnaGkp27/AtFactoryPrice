@@ -68,7 +68,10 @@ design `LONGDESIGN-ABCDEFGHIJ` 840 sealed + 841 3 of 5 left.
 - **Opening** (what the slice received — GRN-anchored, in transit left out,
   as TV-6) counts a bale as `1B` only when every than of it belongs to that
   design or shade, judged against the whole bale wherever its thans sit now
-  (a bale moved to another store still counts as received). So **one shade of a
+  (a bale received here under a goods receipt and moved on still counts as
+  received; a bale with no goods-receipt record counts where its thans sit now,
+  as TV-6 — two of its five thans moved away leave `3t` here, and a than still
+  in transit is left out). So **one shade of a
   multi-colour bale reads `1t`, never `1B`** — the K6 shades above.
 - **The cart.** The screen keeps its old assumption that the cart takes
   bales in sheet order: with one bale of 9006 in the cart, 801 is skipped and
@@ -138,6 +141,9 @@ built as TV-9b above.)
    **store** (`node scripts/seed-locations.js --commit`, still pending); until
    then the header counts bales (`5 Bales`) as it always has for a warehouse.
 4. 🏬 Store Sales → Kano office: the totals are the same as yesterday.
-5. (TV-9b) 📦 Supply Request → Kano office: the 📊 line and each design chip
-   read `…B + …t / …B`; open a design of several shades → the shade chips and
-   `✅ Take ALL` use the same grammar; IDUMOTA's screens still read `…B / …B`.
+5. (TV-9b) 📦 Supply Request → Kano office: on the 📊 line and every design
+   chip, closed bales read `B` and opened bales read `t`, on both halves — for
+   example `9006 (1B + 3t / 3B)`, `K6 (4t / 1B)`; a design with no opening at
+   this store shows one figure (`T5 (1B + 3t)`). Open a design of several
+   shades → the shade chips and `✅ Take ALL` use the same grammar; IDUMOTA's
+   screens still read `…B / …B`.

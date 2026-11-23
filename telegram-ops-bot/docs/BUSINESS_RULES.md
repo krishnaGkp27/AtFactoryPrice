@@ -323,8 +323,8 @@ unchanged.
   is a bug.
 - Navigation tiles that describe a **stock position** rather than what a
   customer received (container and category filter chips, the design
-  remaining / opening pair) stay as they are — owner's call, so the pairs
-  stay readable. The pair is counted in **bales** in a bale store
+  remaining / opening pair) keep their stock-position form rather than the
+  sold-goods rule — owner's call, so the pairs stay readable. The pair is counted in **bales** in a bale store
   (`2B / 2B`) and, in a than-selling store, as **closed bales + loose thans**
   (`1B + 3t / 3B`, TV-9b). A store's holding on the three TV-9 screens
   follows the 23-Nov-2026 amendment above.

@@ -114,6 +114,9 @@ function formatBalesThansCompact({ thans } = {}) {
 }
 
 /**
+ * SUPERSEDED by {@link formatHoldingPair} (TV-9b, 23-Nov-2026): no live caller
+ * under src/ — kept (with its unit tests) until the owner rules on removing it.
+ *
  * TV-4 + TV-7 — "remaining / opening" display for than-visibility warehouses,
  * thans only: "<remT>t / <openT>t", e.g. "88t / 132t" (spaces around "/").
  * remaining = rows still available today (cart-adjusted); opening = every

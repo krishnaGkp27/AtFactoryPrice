@@ -246,3 +246,21 @@ test('IDUMOTA design and shade screens keep the bales pair', async () => {
   assert.deepEqual(labelsWith(shades, 'srf_sh:'), ['RED (1B / 1B)', 'BLUE (1B / 1B)']);
   assert.deepEqual(labelsWith(shades, 'srf_all:'), ['✅ Take ALL 2 shades (2 bales)']);
 });
+
+/* ── TV-9b review — a single-shade design jumps to the quantity card ─── */
+
+test('Kano office single-shade design: the quantity card opens without building the chip roster', async () => {
+  const orig = unitDisplayService.buildBaleRoster;
+  let built = 0;
+  unitDisplayService.buildBaleRoster = (...a) => { built += 1; return orig(...a); };
+  try {
+    const { call } = await shadeScreen('Kano office', '9006');
+    assert.match(textOf(call), /How many bales\?/, 'one shade = straight to the quantity card');
+    assert.equal(built, 0, 'no roster for chips that are never drawn');
+    const { call: shades } = await shadeScreen('Kano office', '9045');
+    assert.deepEqual(labelsWith(shades, 'srf_sh:'), ['RED (1B / 1B)', 'BLUE (4t / 1B)'], 'a two-shade design still builds it');
+    assert.equal(built, 1);
+  } finally {
+    unitDisplayService.buildBaleRoster = orig;
+  }
+});

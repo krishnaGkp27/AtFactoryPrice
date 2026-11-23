@@ -6603,10 +6603,8 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
     unlabelledBatch: inventoryRepository.UNLABELLED_BATCH,
     designMatch: (d) => matchesSupplyCategory(d, session && session.category),
     grnWarehouseById: await loadGrnWarehouseMap(),
-    keepRows: useThans,
+    keepRows: useThans && shades.length !== 1, // TV-9b review — a single shade jumps to the quantity card and never reads them
   });
-  // TV-9b — one roster per render for a than-selling store's chips.
-  const roster = useThans ? unitDisplayService.buildBaleRoster(allRows) : null;
   // Map<shadeKey, {bales, thans}> for this design
   const openShades = model.opening.shades.get(String(design)) || new Map();
   const inStock = new Set(shades.map((s) => String(s.shade)));
@@ -6666,6 +6664,8 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   // TV-4/TV-5 — in-stock shades first (availPkgs desc, as before),
   // fully-sold shades appended after as info buttons — on EVERY warehouse.
   const listedShades = [...shades, ...soldOutShades];
+  // TV-9b — one roster per render for a than-selling store's chips (built after the single-shade jump).
+  const roster = useThans ? unitDisplayService.buildBaleRoster(allRows) : null;
   const shadeTag = (s) => {
     const rem = { bales: s.availPkgs, thans: s.availThans || 0 };
     const open = openShades.get(String(s.shade));
