@@ -36,10 +36,15 @@ function rememberHub(userId, hubId) {
   else _hubByUser.delete(String(userId));
 }
 
-/** The footer row for this person: `⬅ Back to <Hub>` + `🏠 Menu`, or `🏠 Back to menu`. */
+/**
+ * The footer row for this person: `⬅ Back to <Hub>` + `🏠 Menu`, or `🏠 Back to menu`.
+ * NAV-3 — a DOOR module (`opens`) has no screen to go back to: "⬅ Back to
+ * Sales & Marketing" would restart the request, so a tile opened through a
+ * door gets `🏠 Back to menu`, as a tile with no hub does.
+ */
 function footerFor(userId) {
   const hub = activityRegistry.getHub(_hubByUser.get(String(userId)));
-  return [hub ? menuNav.hubAndMenuFooterRow(hub.id, hub.label) : menuNav.backToMenuRow()];
+  return [hub && !hub.opens ? menuNav.hubAndMenuFooterRow(hub.id, hub.label) : menuNav.backToMenuRow()];
 }
 
 /** True when the keyboard already offers a way out (a nav word / emoji, or a menu tile). */

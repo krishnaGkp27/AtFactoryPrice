@@ -21,10 +21,17 @@ test('an inline keyboard with no way out gains the footer; one that has it, an e
   await bot.sendMessage(UID, 'pick', { reply_markup: { inline_keyboard: [[{ text: 'A', callback_data: 'x:a' }]] } });
   assert.deepEqual(texts(kbOf(last(bot))), ['A', '🏠 Back to menu'], 'no hub remembered → the plain menu row');
 
+  navGuard.rememberHub(UID, 'inventory');
+  await bot.sendMessage(UID, 'pick', { reply_markup: { inline_keyboard: [[{ text: 'A', callback_data: 'x:a' }]] } });
+  assert.deepEqual(texts(kbOf(last(bot))), ['A', '⬅ Back to Inventory', '🏠 Menu']);
+  assert.deepEqual(kbOf(last(bot))[1].map((b) => b.callback_data), ['act:__hub__:inventory', 'act:__back__']);
+
+  // NAV-3 — Sales & Marketing is a DOOR onto the Supply Request: going "back"
+  // to it would restart the request, so a tile opened through it gets the menu.
   navGuard.rememberHub(UID, 'sales');
   await bot.sendMessage(UID, 'pick', { reply_markup: { inline_keyboard: [[{ text: 'A', callback_data: 'x:a' }]] } });
-  assert.deepEqual(texts(kbOf(last(bot))), ['A', '⬅ Back to Sales & Marketing', '🏠 Menu']);
-  assert.deepEqual(kbOf(last(bot))[1].map((b) => b.callback_data), ['act:__hub__:sales', 'act:__back__']);
+  assert.deepEqual(texts(kbOf(last(bot))), ['A', '🏠 Back to menu']);
+  assert.deepEqual(kbOf(last(bot))[1].map((b) => b.callback_data), ['act:__back__']);
 
   for (const kb of [[[{ text: '❌ Cancel', callback_data: 'x:c' }]], [[{ text: '⬅️ Back', callback_data: 'x:b' }]], [[{ text: '📦 Tile', callback_data: 'act:check_stock' }]], []]) {
     await bot.sendMessage(UID, 'card', { reply_markup: { inline_keyboard: kb } });

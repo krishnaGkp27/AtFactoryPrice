@@ -5143,13 +5143,17 @@ async function runS29() {
     pass('S29.2b schemaMapper: Shades seeded with Red+Black canonical entries');
   } else fail('S29.2b', 'expected seed rows for Red and Black not found');
 
-  // ---- S29.3: activity registry surfaces bundle_sale in stock hub ----
+  // ---- S29.3: activity registry surfaces bundle_sale in the Inventory module ----
+  // NAV-3 (owner, 23-Nov-2026) — moved from Sales & Marketing › Orders to
+  // Inventory's own tiles, declared first (before Sell Bale and Check Stock).
   delete require.cache[require.resolve('../src/services/activityRegistry')];
   const reg29 = require('../src/services/activityRegistry');
   const entry29 = reg29.getAll().find((a) => a.code === 'bundle_sale');
-  if (entry29 && entry29.hub === 'orders' && entry29.callback === 'act:bundle_sale') {
-    pass('S29.3 activityRegistry: bundle_sale in orders hub');
-  } else fail('S29.3 activityRegistry', JSON.stringify(entry29));
+  const inv29 = reg29.getAll().filter((a) => a.hub === 'inventory').map((a) => a.code);
+  if (entry29 && entry29.hub === 'inventory' && entry29.callback === 'act:bundle_sale'
+      && inv29.slice(0, 3).join(',') === 'bundle_sale,sell_bale,check_stock') {
+    pass('S29.3 activityRegistry: bundle_sale in inventory hub, first (then sell_bale, check_stock)');
+  } else fail('S29.3 activityRegistry', JSON.stringify({ entry29, inv29 }));
 
   // ---- S29.4: controller wiring — act dispatcher + bs:* router + text router ----
   // The bs:* callback route lives in the FLOW_CALLBACK_ROUTES table
@@ -7501,8 +7505,9 @@ async function runS43() {
   const reg43 = require('../src/services/activityRegistry');
   const flat43 = typeof reg43.getAll === 'function' ? reg43.getAll() : [];
   const entry43 = flat43.find((a) => a.code === 'set_design_category');
-  if (entry43 && entry43.hub === 'designs' && entry43.callback === 'act:set_design_category') {
-    pass('S43.2 activityRegistry: set_design_category in designs hub → act:set_design_category');
+  if (entry43 && entry43.hub === 'designs' && entry43.callback === 'act:set_design_category'
+      && reg43.getHub('designs').parent === 'inventory') {
+    pass('S43.2 activityRegistry: set_design_category in designs hub (under Inventory, NAV-3) → act:set_design_category');
   } else fail('S43.2', JSON.stringify(entry43));
 
   // ---- S43.3 — storage: Inventory gains design_category (column W); NO new sheet ----
@@ -7620,8 +7625,9 @@ async function runS44() {
   delete require.cache[require.resolve('../src/services/activityRegistry')];
   const reg44 = require('../src/services/activityRegistry');
   const entry44 = reg44.getAll().find((a) => a.code === 'allocate_marketer');
-  if (entry44 && entry44.hub === 'marketers' && entry44.callback === 'act:allocate_marketer') {
-    pass('S44.2 activityRegistry: allocate_marketer in marketers hub → act:allocate_marketer');
+  if (entry44 && entry44.hub === 'marketers' && entry44.callback === 'act:allocate_marketer'
+      && reg44.getHub('marketers').parent === 'crm') {
+    pass('S44.2 activityRegistry: allocate_marketer in marketers hub (under CRM, NAV-3) → act:allocate_marketer');
   } else fail('S44.2', JSON.stringify(entry44));
 
   // ---- S44.3 — allocations repo: upsert + list + counts on stub sheets ----

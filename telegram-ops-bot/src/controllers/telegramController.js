@@ -5597,6 +5597,7 @@ async function buildGreetingMenuMarkup(userId, showAll = false) {
   // each with an aggregated usage count for sorting.
   const entries = [];
   for (const { hub, activities } of hubs) {
+    if (hub.opens) { entries.push({ kind: 'door', hub, activity: activities[0], count: 0 }); continue; } // NAV-3
     if (activities.length === 1) {
       // Promote a single-item hub directly to top level.
       const a = activities[0];
@@ -5651,6 +5652,8 @@ function entryToButton(entry) {
     };
   }
   const a = entry.activity;
+  // NAV-3 — a door: the module's own name, the activity's own callback.
+  if (entry.kind === 'door') return { text: `${entry.hub.icon} ${entry.hub.label}`, callback_data: a.callback };
   return { text: `${a.icon} ${a.label}`, callback_data: a.callback };
 }
 
@@ -5839,6 +5842,9 @@ async function renderHubSubmenu(bot, chatId, messageId, userId, hubId, callbackQ
   const childHubs = activityRegistry.getChildHubs(hubId)
     .filter((ch) => allowed.some((a) => a.hub === ch.id));
   const directSubs = allowed.filter((a) => a.hub === hubId);
+  // NAV-3 — a door has no screen: the caller opens its activity (someone not
+  // allowed it falls through to "No actions available", as before).
+  if (hub.opens && directSubs.some((a) => a.code === hub.opens)) return 'door';
 
   if (!childHubs.length && !directSubs.length) {
     await bot.editMessageText(`${hub.icon} *${hub.label}*\n\n_No actions available in this section._`, {
@@ -6057,7 +6063,7 @@ async function supplyScopeWarehouses(userId) {
   return groupWhs.length ? groupWhs : ((user && user.warehouses) || []);
 }
 
-async function startSupplyRequestFlow(bot, chatId, userId) {
+async function startSupplyRequestFlow(bot, chatId, userId, menuMessageId = null) {
   const user = await usersRepository.findByUserId(userId);
   // MG-1: marketers are pinned to their marketing group's warehouse(s)
   // (spec: marketing-group-catalog.md §4.1). For non-marketers, admins,
@@ -6104,6 +6110,9 @@ async function startSupplyRequestFlow(bot, chatId, userId) {
     arrivalBatch: '',
     cart: [],
     _scopeWarehouses: scopeWarehouses,
+    // NAV-3 — opened from the menu, the store (or design) screen REPLACES the
+    // tapped menu message instead of landing under it (§15: navigation edits).
+    flowMessageId: menuMessageId || null,
   });
   await proceedAfterContainer(bot, chatId, userId);
 }
@@ -10209,7 +10218,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
 
   /* ─── GREETING MENU ACTIVITY TAP ─── */
   } else if (data.startsWith('act:')) {
-    const actCode = data.slice(4);
+    let actCode = data.slice(4); // NAV-3 — `let`: an old door button becomes its activity below
     const chatId = callbackQuery.message.chat.id;
     const messageId = callbackQuery.message.message_id;
     const uid = String(callbackQuery.from.id);
@@ -10228,8 +10237,8 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     if (actCode.startsWith('__hub__:')) {
       const hubId = actCode.slice('__hub__:'.length);
       navGuard.rememberHub(uid, hubId);
-      await renderHubSubmenu(bot, chatId, messageId, uid, hubId, callbackQuery);
-      return;
+      if (await renderHubSubmenu(bot, chatId, messageId, uid, hubId, callbackQuery) !== 'door') return;
+      actCode = activityRegistry.doorOf(hubId).code; // NAV-3 — a door (old button too) opens its activity, as the tile does
     }
 
     // Back tap → restore greeting menu in place.
@@ -10256,7 +10265,7 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
 
     switch (actCode) {
-      case 'supply_request': await startSupplyRequestFlow(bot, chatId, uid); break;
+      case 'supply_request': await startSupplyRequestFlow(bot, chatId, uid, messageId); break; // NAV-3 — opens in place of the menu
       case 'upload_receipt': await startReceiptFlow(bot, chatId, uid); break;
       case 'my_orders': {
         const orders = await ordersRepo.getByAssignee(uid);

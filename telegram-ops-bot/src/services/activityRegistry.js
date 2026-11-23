@@ -7,24 +7,42 @@
  *        top-level standalone tile, or '_hidden' to keep it resolvable
  *        (text intents) without surfacing it in any menu grid.
  *
- * Each hub entry: { id, label, icon, parent? }
+ * Each hub entry: { id, label, icon, parent?, opens? }
  *   Hubs are virtual groupings; they do not have their own callback — the
  *   greeting menu emits callback_data `act:__hub__:<hubId>` when a hub is
  *   tapped, which expands to that hub's contents. A hub may declare a
  *   `parent` hub id, making it a SUB-HUB rendered one level below its
  *   parent module (nesting is capped at two levels: module → sub-hub →
  *   activity).
+ *   NAV-3 (owner, 23-Nov-2026) — a top-level module may be a DOOR:
+ *   `opens: '<activity code>'`. A door has no screen of its own. The main
+ *   menu draws it with the MODULE's icon and label in the module's slot,
+ *   offered exactly to the people who may open that one activity, and a tap
+ *   (the button, or an old `act:__hub__:<id>` button) opens the activity
+ *   directly. A door holds that one activity and nothing else, and the
+ *   NAV-1 footer never offers "⬅ Back to <door>" (that would restart it).
  *
  * Top-level hubs follow an ERP-style module layout (Sales & Marketing,
  * Inventory, CRM, Finance, HR, Reporting, Tasks & Planning, Daily). There
  * is intentionally no catch-all "Admin" hub — admin-only actions live in
  * the business module they belong to and are gated by visibility (admin /
  * department CSV / per-user injection) in the controller, not by location.
+ *
+ * NAV-3 layout (owner, 23-Nov-2026: "if the user taps on sales and
+ * marketing, goes to [the Supply Request store screen] … distribute [the
+ * rest] among other tiles in any other second most relevant place"):
+ *   🛒 Sales & Marketing = a door onto 🏭 Supply Request;
+ *   🧵 Sell Bundles / Than · 💰 Sell Bale = 📦 Inventory's first tiles;
+ *   🎨 Designs → under 📦 Inventory · 🧑‍💼 Marketers → under 👥 CRM ·
+ *   📝 Orders (Quick Order Entry, My Orders, Mark Order Delivered) → under
+ *   📋 Tasks & Planning. Codes, labels, icons and callbacks never moved, so
+ *   department lists, old buttons, audit history and usage counts hold.
  */
 
 const HUBS = [
   // ── Top-level ERP-style modules ──────────────────────────────────────
-  { id: 'sales',      label: 'Sales & Marketing', icon: '🛒' },
+  // NAV-3 — a door: the tile opens 🏭 Supply Request directly, no screen.
+  { id: 'sales',      label: 'Sales & Marketing', icon: '🛒', opens: 'supply_request' },
   { id: 'inventory',  label: 'Inventory',         icon: '📦' },
   { id: 'crm',        label: 'CRM',               icon: '👥' },
   { id: 'finance',    label: 'Finance',           icon: '💰' },
@@ -34,32 +52,30 @@ const HUBS = [
   { id: 'daily',      label: 'Daily',             icon: '🌅' },
 
   // ── Sub-hubs (one level below a parent module) ───────────────────────
-  // Sales & Marketing splits into its three concerns so no single screen
-  // is overcrowded.
-  { id: 'orders',     label: 'Orders',     icon: '📝', parent: 'sales' },
-  { id: 'marketers',  label: 'Marketers',  icon: '🧑‍💼', parent: 'sales' },
-  { id: 'designs',    label: 'Designs',    icon: '🎨', parent: 'sales' },
+  // Declaration order is the order of the group chips on the parent screen.
+  // NAV-3 (23-Nov-2026) — the three groups that sat under Sales & Marketing
+  // moved WHOLE to their second most relevant home (ids and tiles kept):
+  // Orders → Tasks & Planning, Marketers → CRM, Designs → Inventory.
+  { id: 'orders',     label: 'Orders',     icon: '📝', parent: 'planning' },
+  { id: 'marketers',  label: 'Marketers',  icon: '🧑‍💼', parent: 'crm' },
   // Inventory keeps stock lookups shallow; the rarer write ops + warehouse
   // admin sit one tap deeper.
   { id: 'stock_add',  label: 'Add Stock',  icon: '📥', parent: 'inventory' },
   { id: 'stock_move', label: 'Move Stock', icon: '🔁', parent: 'inventory' },
   { id: 'warehouses', label: 'Warehouses', icon: '🏭', parent: 'inventory' },
+  { id: 'designs',    label: 'Designs',    icon: '🎨', parent: 'inventory' },
 ];
 
 const ACTIVITIES = [
-  // ── Sales & Marketing › Orders ───────────────────────────────────────
-  { code: 'supply_request',        label: 'Supply Request (detailed)', icon: '🏭', callback: 'act:supply_request',     hub: 'orders' },
+  // ── Sales & Marketing (a door — NAV-3, 23-Nov-2026) ──────────────────
+  // The 🛒 Sales & Marketing tile IS this activity: drawn with the module's
+  // icon and label, it opens the store screen in one tap.
+  { code: 'supply_request',        label: 'Supply Request (detailed)', icon: '🏭', callback: 'act:supply_request',     hub: 'sales' },
+
+  // ── Tasks & Planning › Orders (NAV-3: moved whole from Sales & Marketing) ──
   { code: 'create_order',          label: 'Quick Order Entry',         icon: '📝', callback: 'act:create_order',       hub: 'orders' },
   { code: 'my_orders',             label: 'My Orders',                 icon: '📋', callback: 'act:my_orders',          hub: 'orders' },
   { code: 'mark_order_delivered',  label: 'Mark Order Delivered',      icon: '✅', callback: 'act:mark_delivered',     hub: 'orders' },
-  // BUNDLE-SALE C1 — design-first, colour-aggregate, bale-by-bale than
-  // picker. Reuses the existing `sale_bundle` action so the approval
-  // pipeline, ledger emission, and audit log keep working unchanged.
-  { code: 'bundle_sale',           label: 'Sell Bundles / Than',       icon: '🧵', callback: 'act:bundle_sale',        hub: 'orders' },
-  // ST-1 — fully tappable bale sale: container → warehouse → design →
-  // bale cart → customer/salesperson/bank/date chips. Typed sale commands
-  // redirect here (owner mandate 14-Jul).
-  { code: 'sell_bale',             label: 'Sell Bale',                 icon: '💰', callback: 'act:sell_bale',          hub: 'orders' },
   // SNAP-1 — photo-to-sale: photograph the bale label, OCR matches the
   // bale, tap the customer. Same approval + enrichment as any sale.
   // Standalone (hub: null, owner 18-Jul): sits DIRECTLY on the greeting
@@ -67,7 +83,7 @@ const ACTIVITIES = [
   // like Yarima reach it in one tap, no hub drill-down.
   { code: 'snap_sale',             label: 'Snap Sale',                 icon: '📸', callback: 'act:snap_sale',          hub: null },
 
-  // ── Sales & Marketing › Marketers (catalog consignment) ──────────────
+  // ── CRM › Marketers (catalog consignment; NAV-3: moved whole from Sales & Marketing) ──
   { code: 'register_marketer',     label: 'Register Marketer',         icon: '🧑‍💼', callback: 'act:register_marketer',    hub: 'marketers' },
   { code: 'supply_catalog',        label: 'Supply Catalog',            icon: '📦', callback: 'act:supply_catalog',       hub: 'marketers' },
   { code: 'loan_catalog',          label: 'Loan to Marketer',          icon: '📋', callback: 'act:loan_catalog',         hub: 'marketers' },
@@ -78,7 +94,7 @@ const ACTIVITIES = [
   // quantities). Admin-only entry gate in the controller; direct write.
   { code: 'allocate_marketer',     label: 'Allocate to Marketer',      icon: '🧑‍💼', callback: 'act:allocate_marketer',    hub: 'marketers' },
 
-  // ── Sales & Marketing › Designs (photo catalog) ──────────────────────
+  // ── Inventory › Designs (photo catalog; NAV-3: moved whole from Sales & Marketing) ──
   { code: 'upload_design_photo',   label: 'Upload Product Photo',      icon: '📷', callback: 'act:upload_design_photo',  hub: 'designs' },
   { code: 'manage_design_photos',  label: 'Manage Product Photos',     icon: '🖼️', callback: 'act:manage_design_photos', hub: 'designs' },
   // SHP-1 — one garment photo per shade tab; shown on the shade tap in
@@ -93,6 +109,18 @@ const ACTIVITIES = [
   { code: 'set_design_category',   label: 'Set Design Category',       icon: '🏷️', callback: 'act:set_design_category',  hub: 'designs' },
 
   // ── Inventory (stock lookups — shallow, high-frequency) ──────────────
+  // NAV-3 (23-Nov-2026) — the two selling tiles moved here from Sales &
+  // Marketing › Orders and are declared FIRST, so an admin sees them first
+  // among Inventory's own tiles (an employee's order follows their
+  // department list, as for every tile).
+  // BUNDLE-SALE C1 — design-first, colour-aggregate, bale-by-bale than
+  // picker. Reuses the existing `sale_bundle` action so the approval
+  // pipeline, ledger emission, and audit log keep working unchanged.
+  { code: 'bundle_sale',           label: 'Sell Bundles / Than',       icon: '🧵', callback: 'act:bundle_sale',        hub: 'inventory' },
+  // ST-1 — fully tappable bale sale: container → warehouse → design →
+  // bale cart → customer/salesperson/bank/date chips. Typed sale commands
+  // redirect here (owner mandate 14-Jul).
+  { code: 'sell_bale',             label: 'Sell Bale',                 icon: '💰', callback: 'act:sell_bale',          hub: 'inventory' },
   { code: 'check_stock',           label: 'Check Stock',               icon: '📦', callback: 'act:check_stock',        hub: 'inventory' },
   // EDB-1 — the bale card edited in place to match the physical goods;
   // dual-admin; the flow gates admin itself.
@@ -381,6 +409,15 @@ function getChildHubs(parentId) { return HUBS.filter((h) => h.parent === parentI
  * hop, since nesting is capped at two levels (module → sub-hub → activity).
  * Returns null for unknown hub ids (e.g. '_hidden').
  */
+/**
+ * NAV-3 — the activity a DOOR module opens (`opens` on the hub), or null when
+ * the hub is an ordinary screen (or unknown).
+ */
+function doorOf(hubId) {
+  const h = hubsById.get(hubId);
+  return (h && h.opens && byCode.get(h.opens)) || null;
+}
+
 function topHubIdOf(hubId) {
   const h = hubsById.get(hubId);
   if (!h) return null;
@@ -406,6 +443,9 @@ function groupByHub(activities) {
     if (!a.hub) { standalone.push(a); continue; }
     const top = topHubIdOf(a.hub);
     if (!top) continue; // unknown / '_hidden' — never surfaced
+    // NAV-3 — a door module surfaces its one activity and nothing else.
+    const door = hubsById.get(top).opens;
+    if (door && a.code !== door) continue;
     if (!map.has(top)) map.set(top, []);
     map.get(top).push(a);
   }
@@ -427,5 +467,6 @@ module.exports = {
   getTopHubs,
   getChildHubs,
   topHubIdOf,
+  doorOf,
   groupByHub,
 };

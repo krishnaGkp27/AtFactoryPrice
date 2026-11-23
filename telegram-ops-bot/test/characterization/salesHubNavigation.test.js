@@ -3,12 +3,20 @@
  * NAV-1 (owner, 03-Oct-2026: "check if there is a card with no back
  * navigation … make a complete analysis and fix the navigation").
  *
- * Drives EVERY tile under Sales & Marketing (Orders, Marketers, Designs)
- * through the real controller as an admin, follows every non-navigation
- * button three taps deep, and fails on any screen whose keyboard has no
- * Back / Close / Cancel / Menu button (or no keyboard at all). Destructive
- * taps (deactivate) are skipped so one path cannot blank the data for the
- * next. Seeded fake sheets give every list something to show.
+ * Drives EVERY tile that sat under Sales & Marketing on 03-Oct-2026 through
+ * the real controller as an admin, follows every non-navigation button three
+ * taps deep, and fails on any screen whose keyboard has no Back / Close /
+ * Cancel / Menu button (or no keyboard at all). Destructive taps (deactivate)
+ * are skipped so one path cannot blank the data for the next. Seeded fake
+ * sheets give every list something to show.
+ *
+ * NAV-3 (owner, 23-Nov-2026) moved those 20 tiles to new homes — 🛒 Sales &
+ * Marketing is now a door onto the Supply Request, the selling tiles and 🎨
+ * Designs sit in 📦 Inventory, 🧑‍💼 Marketers in 👥 CRM, 📝 Orders in 📋 Tasks &
+ * Planning. The tiles and their callbacks did not change, so this crawl still
+ * starts from each one and still guards every one of them against a dead end
+ * wherever it now lives; that each is reachable from the menu in exactly ONE
+ * place is pinned by salesDoorNavigation.test.js.
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -81,7 +89,18 @@ async function replay(path) {
   }
   return { screen: lastScreen(rec), raw: rec };
 }
-test('NAV-1: every Sales & Marketing screen has a way back', async () => {
+test('NAV-1/NAV-3: the 20 tiles that left Sales & Marketing still name a real tile each', () => {
+  const activityRegistry = require(SRC + '/services/activityRegistry');
+  const homes = TILES.map((t) => { const a = activityRegistry.getByCallback(`act:${t}`); return a && `${a.code}@${a.hub}`; });
+  assert.deepEqual(homes, ['supply_request@sales', 'create_order@orders', 'my_orders@orders', 'mark_order_delivered@orders',
+    'bundle_sale@inventory', 'sell_bale@inventory',
+    'register_marketer@marketers', 'supply_catalog@marketers', 'loan_catalog@marketers', 'return_catalog@marketers',
+    'catalog_tracker@marketers', 'manage_catalog_stock@marketers', 'allocate_marketer@marketers',
+    'upload_design_photo@designs', 'manage_design_photos@designs', 'shade_photos@designs', 'browse_catalog@designs',
+    'search_design_photo@designs', 'catalog_stats@designs', 'set_design_category@designs']);
+});
+
+test('NAV-1: every screen behind the former Sales & Marketing tiles has a way back', async () => {
   const findings = []; const seen = new Set(); let screens = 0;
   for (const tile of TILES) {
     const budget = { n: 0 };
