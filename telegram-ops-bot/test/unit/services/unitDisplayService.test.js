@@ -163,3 +163,35 @@ test('formatBalesThans: than-mode path from rows — 4 thans across 2 bales → 
   assert.equal(agg.thans, 4);
   assert.equal(unitDisplayService.formatBalesThans(agg), '4t');
 });
+
+/* ── TV-9b — a than-selling store's design / shade pair ─────────────── */
+
+test('TV-9b countQty received: a bale is 1B only when every than of its roster is in the rows, wherever they sit', () => {
+  const t = (pkg, n, warehouse, shade = 'BLACK') => ({ design: '9006', shade, packageNo: pkg, thanNo: n, warehouse, arrivalBatch: 'Jul26' });
+  const all = [
+    t('801', 1, 'Kano office'), t('801', 2, 'Kano office'),
+    t('802', 1, 'Lagos'), t('802', 2, 'IDUMOTA'), // moved after receipt, split
+    t('810', 1, 'Kano office', 'RED'), t('810', 2, 'Kano office', 'BLUE'), // multi-colour bale
+  ];
+  const roster = unitDisplayService.buildBaleRoster(all);
+  assert.deepEqual(unitDisplayService.countQty(all.slice(0, 4), { received: true, roster }), { bales: 2, thans: 0 });
+  assert.deepEqual(unitDisplayService.countQty([all[4]], { received: true, roster }), { bales: 0, thans: 1 });
+  // A than-store row is NOT forced to t, and a row with no bale number is 1t.
+  assert.deepEqual(unitDisplayService.countQty([{ design: '9006', packageNo: '', warehouse: 'Kano office' }],
+    { received: true, roster, thanWarehouses: new Set(['kano office']) }), { bales: 0, thans: 1 });
+});
+
+test('TV-9b formatHoldingPair: remaining in the holding grammar / opening as received, "0B" when nothing is left', () => {
+  const t = (pkg, n, status, shade = 'BLACK') => ({ design: '9006', shade, packageNo: pkg, thanNo: n, warehouse: 'Kano office', status, arrivalBatch: 'Jul26' });
+  const all = [
+    ...[1, 2, 3, 4, 5].map((n) => t('801', n, 'available')),
+    ...[1, 2, 3, 4, 5].map((n) => t('802', n, n <= 2 ? 'sold' : 'available')),
+    ...[1, 2, 3, 4, 5].map((n) => t('803', n, 'sold')),
+  ];
+  const roster = unitDisplayService.buildBaleRoster(all);
+  const avail = all.filter((r) => r.status === 'available');
+  assert.equal(unitDisplayService.formatHoldingPair(avail, all, roster), '1B + 3t / 3B');
+  assert.equal(unitDisplayService.formatHoldingPair(avail, null, roster), '1B + 3t');
+  assert.equal(unitDisplayService.formatHoldingPair([], all, roster), '0B / 3B');
+  assert.equal(unitDisplayService.formatHoldingPair([all[0]], [all[0]], roster), '1t / 1t');
+});

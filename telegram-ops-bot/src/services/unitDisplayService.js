@@ -11,7 +11,12 @@
  * set on three surfaces — the 📦 Supply Request store screen, Check Stock and
  * the 🎨 Stock-by-shade card's ✅ Available section pass `holding: true`
  * (see countQty): a closed bale is 1B, an opened bale's thans are t, in every
- * store. The set still decides every other label (goods sold, supplied or moved, and every stock screen not listed here).
+ * store. TV-9b: on the supply request's design and shade screens a store IN
+ * this set prints its remaining / opening pair the same way
+ * (formatHoldingPair: "1B + 3t / 3B"); a store outside it keeps its bales
+ * pair ("2B / 2B", formatRemainingOpeningBales). The set still decides every
+ * other label (goods sold, supplied or moved, the 🚚 in-transit figure, and
+ * every stock screen not listed here).
  *
  * DISPLAY-ONLY: quantity selection, the cart, and approvals stay in bales.
  * The list is cached for ~60s so pickers don't add a Settings read per tap;
@@ -270,12 +275,23 @@ function buildBaleRoster(allRows) {
  * `holding` nothing changes: a than-store row is +1t whatever its bale.
  * Without a roster every bale's rows count as the whole bale (B) — the
  * pre-TV-8 degradation, in both modes.
+ *
+ * TV-9b (owner, 23-Nov-2026) — `received: true` counts what a slice
+ * RECEIVED (the supply request's "opening" half): no than-store branch, a
+ * row with no bale number is 1t, and a bale is 1B only when every than of
+ * its roster is among `rows`, wherever those thans sit today (a bale moved
+ * to another store still counts as it was received; one shade of a
+ * multi-colour bale is its thans, never a bale).
  * @param {Array<object>} rows Inventory rows (one row = one than)
- * @param {{thanWarehouses?:Set<string>, roster?:Map<string,number>, holding?:boolean}} opts
+ * @param {{thanWarehouses?:Set<string>, roster?:Map<string,number>, holding?:boolean, received?:boolean}} opts
  * @returns {{bales:number, thans:number}}
  */
 function countQty(rows, opts = {}) {
-  const thanSet = opts.holding ? new Set() : (opts.thanWarehouses || new Set());
+  // TV-9b — `received` reads like `holding` (no than-store branch, a row
+  // with no bale number is 1t) but judges each bale against its WHOLE
+  // roster wherever its thans sit now: what a slice RECEIVED.
+  const byRoster = opts.holding || opts.received;
+  const thanSet = byRoster ? new Set() : (opts.thanWarehouses || new Set());
   const roster = opts.roster || null;
   let thans = 0;
   let bales = 0;
@@ -287,7 +303,7 @@ function countQty(rows, opts = {}) {
     // no bale number is a loose than (never a phantom bale), and a bale
     // whose thans sit in two stores is opened in each, however many rows
     // the caller passed.
-    if (opts.holding && !String((r && r.packageNo) || '').trim()) { thans += 1; continue; }
+    if (byRoster && !String((r && r.packageNo) || '').trim()) { thans += 1; continue; }
     const k = rosterKey(r);
     const g = opts.holding ? `${wh}\u0000${k}` : k;
     if (!byBale.has(g)) byBale.set(g, { k, taken: 0 });
@@ -331,6 +347,27 @@ function formatCounts({ bales, thans, empty = '' } = {}) {
 }
 
 /**
+ * TV-9b (owner, 23-Nov-2026) — the supply request's design / shade figure
+ * for a THAN-SELLING store: "<remaining> / <opening>" in the holding
+ * grammar, e.g. "1B + 3t / 3B". remaining = the rows the screen counts as
+ * still available (`holding`: closed bale B, opened bale's thans t);
+ * opening = the rows the slice received (`received`: a bale whose every
+ * than belongs to the slice is B, anything less its thans). With no
+ * opening for the slice (`openingRows` null) the remaining figure alone.
+ * Nothing left prints "0B". Bale stores keep formatRemainingOpeningBales.
+ * @param {Array<object>} remainingRows
+ * @param {Array<object>|null} openingRows
+ * @param {Map<string,number>} roster {@link buildBaleRoster} of every row
+ * @returns {string} "1B + 3t / 3B" · "1t / 1t" · "0B / 1t" · "1B + 3t"
+ */
+function formatHoldingPair(remainingRows, openingRows, roster) {
+  const rem = formatQty(remainingRows, { holding: true, roster });
+  if (!openingRows) return rem;
+  const open = formatCounts({ ...countQty(openingRows, { received: true, roster }), empty: '0B' });
+  return `${rem} / ${open}`;
+}
+
+/**
  * One-call helper for a render: resolves the than-visible set once and
  * (optionally) builds the roster, returning a SYNC labeller.
  * `label(rows, { holding: true })` is TV-9's store-stock reading;
@@ -363,6 +400,7 @@ module.exports = {
   formatQty,
   countQty,
   formatCounts,
+  formatHoldingPair,
   buildBaleRoster,
   createQtyLabeller,
   _internals: { rosterKey },

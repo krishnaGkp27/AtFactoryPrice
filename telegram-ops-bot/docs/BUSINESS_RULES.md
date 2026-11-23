@@ -291,6 +291,14 @@ section. A bale split between two stores is loose thans in each, and a than
 with no printed bale number is a loose than. What was sold, supplied, returned
 or moved, and carts and requests, are unchanged. The screens not yet switched are listed in
 `specs/TV-9_STORE_STOCK_BALES_AND_THANS.md` and wait for the owner's word.
+TV-9b (same day, owner: *"Go with all your recommendations"*): on the supply
+request's design and shade screens a than-selling store prints its remaining /
+opening pair in the same grammar — `📊 1B + 3t / 3B`, `9006 (1B + 3t / 3B)`,
+Take ALL `(1B + 4t)` — where the opening half counts a bale as `1B` only when
+every than of it was received for that design or shade (so one shade of a
+multi-colour bale is `1t`, never `1B`). Bale stores keep their bales pair
+(`2B / 2B`), and the 🚚 in-transit chip and the "How many bales?" card are
+unchanged.
 
 > "Only the customer taking the goods from an allowed store (Kano office,
 > Lagos office) will be showing thans. Remaining will be showing bales with
@@ -315,9 +323,11 @@ or moved, and carts and requests, are unchanged. The screens not yet switched ar
   is a bug.
 - Navigation tiles that describe a **stock position** rather than what a
   customer received (container and category filter chips, the design
-  supplied/total pair) stay as they are — owner's call, so the pairs stay
-  readable. A store's holding on the three TV-9 screens follows the
-  23-Nov-2026 amendment above.
+  remaining / opening pair) stay as they are — owner's call, so the pairs
+  stay readable. The pair is counted in **bales** in a bale store
+  (`2B / 2B`) and, in a than-selling store, as **closed bales + loose thans**
+  (`1B + 3t / 3B`, TV-9b). A store's holding on the three TV-9 screens
+  follows the 23-Nov-2026 amendment above.
 - **TRF-21 (owner default, 30-Sep-2026):** a transfer row part-way through
   its receipt prints `received/logged` bales — `6/10B` — on the 🛂 inbox,
   📋 list and My Tasks rows (the TRF-20 row shape; the legend explains it).

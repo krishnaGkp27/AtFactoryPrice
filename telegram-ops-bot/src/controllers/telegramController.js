@@ -6020,12 +6020,16 @@ async function getAdjustedAvailability(warehouse, cart, arrivalBatch = null, cat
   const designMap = new Map();
   for (const r of available) {
     const key = `${r.design}||${r.shade || 'DEFAULT'}`;
-    if (!designMap.has(key)) designMap.set(key, { design: r.design, shade: r.shade || 'DEFAULT', pkgs: new Set(), pkgThans: new Map(), pkgValues: new Map(), productType: r.productType || 'fabric' });
+    if (!designMap.has(key)) designMap.set(key, { design: r.design, shade: r.shade || 'DEFAULT', pkgs: new Set(), pkgThans: new Map(), pkgValues: new Map(), pkgRows: new Map(), productType: r.productType || 'fabric' });
     const entry = designMap.get(key);
     entry.pkgs.add(r.packageNo);
     // TV-1 — each Inventory row is one than; track per-bale than counts so
     // than-visibility warehouses can list subunit availability.
     entry.pkgThans.set(r.packageNo, (entry.pkgThans.get(r.packageNo) || 0) + 1);
+    // TV-9b — the rows themselves, so a than-selling store can count them
+    // closed-bale B / opened-bale t (same sheet order as pkgThans).
+    if (!entry.pkgRows.has(r.packageNo)) entry.pkgRows.set(r.packageNo, []);
+    entry.pkgRows.get(r.packageNo).push(r);
     // WH-SUM — per-bale stock value (yards × price) for the admin-only
     // warehouse header summary.
     entry.pkgValues.set(r.packageNo, (entry.pkgValues.get(r.packageNo) || 0) + (r.yards || 0) * (r.pricePerYard || 0));
@@ -6041,7 +6045,8 @@ async function getAdjustedAvailability(warehouse, cart, arrivalBatch = null, cat
       const skip = inCart > 0 ? inCart : 0;
       const availThans = sizes.slice(skip).reduce((a, b) => a + b, 0);
       const availValue = Array.from(entry.pkgValues.values()).slice(skip).reduce((a, b) => a + b, 0);
-      result.push({ design: entry.design, shade: entry.shade, availPkgs: remaining, availThans, availValue, productType: entry.productType });
+      const availRows = Array.from(entry.pkgRows.values()).slice(skip).flat();
+      result.push({ design: entry.design, shade: entry.shade, availPkgs: remaining, availThans, availRows, availValue, productType: entry.productType });
     }
   }
   return result;
@@ -6348,9 +6353,10 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   const designAgg = new Map();
   let detectedType = 'fabric';
   for (const a of avail) {
-    if (!designAgg.has(a.design)) designAgg.set(a.design, { design: a.design, totalPkgs: 0, totalThans: 0 });
+    if (!designAgg.has(a.design)) designAgg.set(a.design, { design: a.design, totalPkgs: 0, totalThans: 0, rows: [] });
     designAgg.get(a.design).totalPkgs += a.availPkgs;
     designAgg.get(a.design).totalThans += a.availThans || 0;
+    designAgg.get(a.design).rows.push(...(a.availRows || []));
     if (a.productType) detectedType = a.productType;
   }
   const designs = Array.from(designAgg.values()).sort((a, b) => b.totalPkgs - a.totalPkgs);
@@ -6382,20 +6388,25 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   // everywhere but surface as the DESTINATION's 🚚 incoming bucket. Designs
   // with 0 remaining but opening history stay TAPPABLE, appended after the
   // in-stock designs (numeric-aware order — TV-4/5 behavior).
-  const model = aggregateStockModel(await inventoryRepository.getAll(), {
+  const allRows = await inventoryRepository.getAll();
+  const model = aggregateStockModel(allRows, {
     warehouse,
     arrivalBatch: session && session.arrivalBatch,
     unlabelledBatch: inventoryRepository.UNLABELLED_BATCH,
     designMatch: (d) => matchesSupplyCategory(d, session && session.category),
     grnWarehouseById: await loadGrnWarehouseMap(),
+    keepRows: useThans,
   });
+  // TV-9b — a than-selling store counts closed bales B, opened bales t
+  // (remaining) and whole received bales B (opening); one roster per render.
+  const roster = useThans ? unitDisplayService.buildBaleRoster(allRows) : null;
   const opening = model.opening;
   {
     const inStock = new Set(designs.map((d) => String(d.design)));
     const soldOut = Array.from(opening.designs.keys())
       .filter((d) => !inStock.has(d))
       .sort(cmpNumericAware)
-      .map((d) => ({ design: d, totalPkgs: 0, totalThans: 0 }));
+      .map((d) => ({ design: d, totalPkgs: 0, totalThans: 0, rows: [] }));
     designs.push(...soldOut);
   }
   // TV-6 — the "remaining / opening" pair renders ONLY where intake exists
@@ -6405,10 +6416,9 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   const designTag = (d) => {
     const rem = { bales: d.totalPkgs, thans: d.totalThans };
     const open = opening.designs.get(String(d.design));
-    if (!open) return useThans ? unitDisplayService.formatBalesThans(rem) : `${rem.bales}B`;
-    return useThans
-      ? unitDisplayService.formatRemainingOpening(rem, open)
-      : unitDisplayService.formatRemainingOpeningBales(rem, open);
+    if (useThans) return unitDisplayService.formatHoldingPair(d.rows, open ? open.rows : null, roster);
+    if (!open) return `${rem.bales}B`;
+    return unitDisplayService.formatRemainingOpeningBales(rem, open);
   };
   const MAX_VISIBLE = 8;
   const page = (session && session.designPage) || 0;
@@ -6489,15 +6499,17 @@ async function showDesignsForWarehouse(bot, chatId, userId, warehouse, messageId
   // (TV-4/TV-5, only where a pair shows), the value sits on its own line
   // and only when there is one (a bare "💰 0" said nothing).
   let summaryNote;
-  if (model.hasOpening) {
-    summaryNote = useThans
-      ? `\n📊 ${unitDisplayService.formatRemainingOpening(remTotals, opening.totals)}`
-      : `\n📊 ${unitDisplayService.formatRemainingOpeningBales(remTotals, opening.totals)}`;
+  if (useThans) {
+    // TV-9b — closed bales B + opened bales' thans t, over every row the
+    // design chips count (so the header and the chips agree).
+    const remRows = avail.flatMap((a) => a.availRows || []);
+    summaryNote = `\n📊 ${unitDisplayService.formatHoldingPair(remRows, model.hasOpening ? opening.totals.rows : null, roster)}`;
+    if (model.hasOpening) summaryNote += ' _(remaining / opening)_';
+  } else if (model.hasOpening) {
+    summaryNote = `\n📊 ${unitDisplayService.formatRemainingOpeningBales(remTotals, opening.totals)}`;
     summaryNote += ' _(remaining / opening)_';
   } else {
-    summaryNote = useThans
-      ? `\n📊 ${unitDisplayService.formatBalesThans(remTotals)}`
-      : `\n📊 ${remTotals.bales}B`;
+    summaryNote = `\n📊 ${remTotals.bales}B`;
   }
   if (config.access.adminIds.includes(String(userId))) {
     const totalValue = avail.reduce((s, a) => s + (a.availValue || 0), 0);
@@ -6584,20 +6596,24 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   // of dead-ending. Display-only: callback payloads, quantity picking and
   // the cart stay in bales.
   const useThans = await unitDisplayService.isThanVisibilityWarehouse(warehouse);
-  const model = aggregateStockModel(await inventoryRepository.getAll(), {
+  const allRows = await inventoryRepository.getAll();
+  const model = aggregateStockModel(allRows, {
     warehouse,
     arrivalBatch: session && session.arrivalBatch,
     unlabelledBatch: inventoryRepository.UNLABELLED_BATCH,
     designMatch: (d) => matchesSupplyCategory(d, session && session.category),
     grnWarehouseById: await loadGrnWarehouseMap(),
+    keepRows: useThans,
   });
+  // TV-9b — one roster per render for a than-selling store's chips.
+  const roster = useThans ? unitDisplayService.buildBaleRoster(allRows) : null;
   // Map<shadeKey, {bales, thans}> for this design
   const openShades = model.opening.shades.get(String(design)) || new Map();
   const inStock = new Set(shades.map((s) => String(s.shade)));
   const soldOutShades = Array.from(openShades.keys())
     .filter((sh) => !inStock.has(sh))
     .sort(cmpNumericAware)
-    .map((sh) => ({ design, shade: sh, availPkgs: 0, availThans: 0 }));
+    .map((sh) => ({ design, shade: sh, availPkgs: 0, availThans: 0, availRows: [] }));
 
   if (!shades.length && !soldOutShades.length) {
     await editOrSendAnchored(bot, chatId, userId, `⚠️ No remaining stock for ${design} in ${warehouse}.`, {});
@@ -6653,11 +6669,12 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   const shadeTag = (s) => {
     const rem = { bales: s.availPkgs, thans: s.availThans || 0 };
     const open = openShades.get(String(s.shade));
+    // TV-9b — a than-selling store: closed bale B, opened bale t; one shade
+    // of a multi-colour bale received is its thans ("1t / 1t").
+    if (useThans) return unitDisplayService.formatHoldingPair(s.availRows || [], open ? open.rows : null, roster);
     // TV-6 — no opening attribution here → remaining-only (no pair).
-    if (!open) return useThans ? unitDisplayService.formatBalesThans(rem) : `${rem.bales}B`;
-    return useThans
-      ? unitDisplayService.formatRemainingOpening(rem, open)
-      : unitDisplayService.formatRemainingOpeningBales(rem, open);
+    if (!open) return `${rem.bales}B`;
+    return unitDisplayService.formatRemainingOpeningBales(rem, open);
   };
   // TV-4b/TV-5 — pair-carrying shade buttons render ONE per row (full
   // width) so the "remaining / opening" pair never clips. A composed label
@@ -6677,9 +6694,8 @@ async function showShadesForDesign(bot, chatId, userId, design, warehouse) {
   // quantity in one tap (cart-adjusted), instead of picking shade-by-shade.
   const totalBales = shades.reduce((sum, s) => sum + (s.availPkgs > 0 ? s.availPkgs : 0), 0);
   if (totalBales > 0) {
-    const totalThans = shades.reduce((sum, s) => sum + (s.availPkgs > 0 ? (s.availThans || 0) : 0), 0);
     const qtyLabel = useThans
-      ? unitDisplayService.formatBalesThans({ bales: totalBales, thans: totalThans })
+      ? unitDisplayService.formatHoldingPair(shades.flatMap((s) => (s.availPkgs > 0 ? (s.availRows || []) : [])), null, roster)
       : `${totalBales} ${totalBales === 1 ? unit.singular : unit.plural}`;
     rows.push([{
       text: `✅ Take ALL ${shades.length} shades (${qtyLabel})`,

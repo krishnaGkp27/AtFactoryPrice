@@ -4,6 +4,11 @@
  * TV-1/TV-4/TV-5/TV-6/TV-7 — GRN-anchored "remaining / opening" browse
  * display (Supply Request).
  *
+ * TV-9b (owner, 23-Nov-2026): a than-selling store's pair now counts closed
+ * bales as B and opened bales' thans as t ("3B / 4B" on this fixture, whose
+ * Kano bales are all whole); supplyFlow.designShadeHolding.test.js pins the
+ * mixed cases. The TV-7 paragraph below still describes the 🚚 figure.
+ *
  * ONE unit per warehouse (TV-7, owner 25-Jul-2026). Warehouses listed in
  * Settings THAN_VISIBILITY_WAREHOUSES (default "Kano office") sell in thans,
  * so they show the "remaining / opening" pair in THANS ONLY — "<M>t / <M>t" —
@@ -127,9 +132,9 @@ test('Kano office: shade buttons show remaining / opening; Take ALL stays remain
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_dg:9043B'));
   const texts = lastKeyboardTexts(bot);
-  assert.ok(texts.some((t) => t.includes('cream (5t / 8t)')), `cream shows 5t / 8t, got: ${texts}`);
-  assert.ok(texts.some((t) => t.includes('ash (4t / 4t)')), `ash shows 4t / 4t, got: ${texts}`);
-  assert.ok(texts.some((t) => t.includes('Take ALL 2 shades (9t)')), `Take ALL keeps remaining-only 9t, got: ${texts}`);
+  assert.ok(texts.some((t) => t === 'cream (2B / 3B)'), `TV-9b: cream holds two closed bales of three received, got: ${texts}`);
+  assert.ok(texts.some((t) => t === 'ash (1B / 1B)'), `TV-9b: ash shows 1B / 1B, got: ${texts}`);
+  assert.ok(texts.some((t) => t === '✅ Take ALL 2 shades (3B)'), `TV-9b: Take ALL keeps remaining-only, in the holding grammar, got: ${texts}`);
   // Display-only: the shade callback payload still carries the BALE count.
   const cbs = lastKeyboardCallbacks(bot);
   assert.ok(cbs.includes('srf_sh:9043B|cream|2'), 'cream callback still carries 2 bales');
@@ -146,10 +151,10 @@ test('Kano office: design list shows remaining / opening, legend, 🚚 button, a
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_back:design'));
   const texts = lastKeyboardTexts(bot);
-  assert.ok(texts.some((t) => t.includes('9043B (9t / 12t)')), `design tile shows 9t / 12t, got: ${texts}`);
+  assert.ok(texts.some((t) => t === '9043B (3B / 4B)'), `TV-9b: design tile shows 3B / 4B, got: ${texts}`);
   // TV-6 — 9006's opening counts the sold bale only (3t); the
   // in_transit bale is excluded from opening.
-  assert.ok(texts.some((t) => t.includes('9006 (0t / 3t)')), `sold-out design listed as 0t / 3t (in_transit excluded), got: ${texts}`);
+  assert.ok(texts.some((t) => t === '9006 (0B / 1B)'), `sold-out design listed as 0B / 1B (in_transit excluded), got: ${texts}`);
   const cbs = lastKeyboardCallbacks(bot);
   assert.ok(cbs.includes('srf_dg:9006'), 'sold-out design button is TAPPABLE (srf_dg:9006)');
   // Sold-out designs sort AFTER in-stock designs.
@@ -166,7 +171,7 @@ test('Kano office: design list shows remaining / opening, legend, 🚚 button, a
   assert.equal(kbRows[0][0].text, '🚚 In transit (2t)', `than-visible transit label, got: ${kbRows[0][0].text}`);
   // Header + legend (opening excludes the in_transit bale: 15t).
   const text = lastText(bot);
-  assert.match(text, /📊 9t \/ 15t/, `header Total is remaining / opening minus transit, got: ${text}`);
+  assert.match(text, /\n📊 3B \/ 5B _\(remaining \/ opening\)_\n/, `TV-9b: header Total is remaining / opening minus transit, got: ${text}`);
   assert.match(text, /_\(remaining \/ opening\)_/, `legend on the 📊 line, got: ${text}`);
 });
 
@@ -190,8 +195,8 @@ test('Kano office: >34-char design label — bare button, pair moves to the body
   const LONG = '9043-VERY-LONG-DESIGN-NAME';
   inventoryRepository.getAll = async () => [
     ...fixtureRows('Kano office'),
-    // 1 bale / 3 thans, all available → pair "3t / 3t"; composed label
-    // is 42 chars (> 34) so the button carries the bare design name only.
+    // 1 bale / 3 thans, all available → pair "1B / 1B" (TV-9b); composed
+    // label is 36 chars (> 34) so the button carries the bare design name only.
     ...Array.from({ length: 3 }, () => ({
       design: LONG, shade: 'cream', warehouse: 'Kano office', status: 'available', packageNo: 'PL1', productType: 'fabric',
     })),
@@ -205,9 +210,9 @@ test('Kano office: >34-char design label — bare button, pair moves to the body
   assert.equal(longBtn.text, LONG, `overflowing button shows the bare design name, got: ${longBtn.text}`);
   // The full pair line lands in the card body instead (wraps, never clips).
   const text = lastText(bot);
-  assert.ok(text.includes(`${LONG}: 3t / 3t`), `body carries the pair line, got: ${text}`);
+  assert.ok(text.includes(`${LONG}: 1B / 1B`), `body carries the pair line, got: ${text}`);
   // Short labels keep the pair ON the button.
-  assert.ok(buttons.some((b) => b.text === '9043B (9t / 12t)'), 'short design label keeps its inline pair');
+  assert.ok(buttons.some((b) => b.text === '9043B (3B / 4B)'), 'short design label keeps its inline pair');
 });
 
 test('Kano office: tapping the sold-out design renders an info shade screen, nothing addable', async () => {
@@ -216,7 +221,7 @@ test('Kano office: tapping the sold-out design renders an info shade screen, not
   const bot = createFakeBot();
   await controller.handleCallbackQuery(bot, cb('srf_dg:9006'));
   const texts = lastKeyboardTexts(bot);
-  assert.ok(texts.some((t) => t.includes('black (0t / 3t)')), `black shows 0t / 3t, got: ${texts}`);
+  assert.ok(texts.some((t) => t === 'black (0B / 1B)'), `TV-9b: black shows 0B / 1B, got: ${texts}`);
   // TV-6 — the in_transit gold bale is out of opening AND remaining: no
   // gold button at all (it lives in the 🚚 incoming card instead).
   assert.ok(!texts.some((t) => t.includes('gold')), `in_transit shade not listed, got: ${texts}`);
@@ -396,13 +401,14 @@ test('TV-6: intake warehouse keeps transferred-away bales in its opening (sold-o
     const bot = createFakeBot();
     await controller.handleCallbackQuery(bot, cb('srf_back:design'));
     const texts = lastKeyboardTexts(bot);
-    assert.ok(texts.some((t) => t.includes('7002 (2t / 2t)')), `GRN-received-here design pairs, got: ${texts}`);
+    assert.ok(texts.some((t) => t === '7002 (1B / 1B)'), `GRN-received-here design pairs, got: ${texts}`);
     // 7001 was received here, then fully transferred away: 0 remaining but
     // still in this warehouse's opening → tappable sold-out listing.
-    assert.ok(texts.some((t) => t.includes('7001 (0t / 5t)')), `transferred-away design stays in source opening, got: ${texts}`);
+    // TV-9b: the two bales moved to Lagos still count as received whole (2B).
+    assert.ok(texts.some((t) => t === '7001 (0B / 2B)'), `transferred-away design stays in source opening, got: ${texts}`);
     assert.ok(lastKeyboardCallbacks(bot).includes('srf_dg:7001'), 'transferred-away design stays tappable');
     const text = lastText(bot);
-    assert.match(text, /📊 2t \/ 7t/, `header opening counts intake incl. transferred-away bales, got: ${text}`);
+    assert.match(text, /\n📊 1B \/ 3B _\(remaining \/ opening\)_\n/, `header opening counts intake incl. transferred-away bales, got: ${text}`);
     assert.match(text, /_\(remaining \/ opening\)_/, `legend shown where the pair shows, got: ${text}`);
   } finally {
     goodsReceiptsRepository.getAll = async () => [];

@@ -105,6 +105,16 @@ test('aggregateStockModel()', async (t) => {
     row('OTHER', 'P99', 'x', 'available', { warehouse: 'Lagos' }), // other warehouse — excluded
   ];
 
+  await t.test('TV-9b keepRows: every bucket also carries its rows; off by default', () => {
+    const out = aggregateStockModel(rows, { warehouse: 'Kano office', keepRows: true });
+    assert.equal(out.opening.totals.rows.length, 15);
+    assert.equal(out.opening.designs.get('9043B').rows.length, 12);
+    assert.equal(out.opening.shades.get('9043B').get('cream').rows.length, 8);
+    assert.ok(out.opening.shades.get('9043B').get('cream').rows.every((r) => r.shade === 'cream'));
+    assert.equal(out.incoming.totals.rows.length, 2);
+    assert.equal('rows' in aggregateStockModel(rows, { warehouse: 'Kano office' }).opening.totals, false);
+  });
+
   await t.test('legacy rows (no grnId): opening at CURRENT warehouse, in_transit excluded, incoming counted', () => {
     const out = aggregateStockModel(rows, { warehouse: 'Kano office' });
     // P10 (in_transit) is NOT in opening — anywhere.

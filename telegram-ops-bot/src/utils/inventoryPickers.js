@@ -93,7 +93,9 @@ function aggregateDesigns(rows) {
  *          grnWarehouseById?:Map<string,string>|null}} opts
  *        grnWarehouseById maps GoodsReceipts.grn_id → receiving warehouse;
  *        null/absent degrades every row to the legacy (current-warehouse)
- *        attribution.
+ *        attribution. keepRows (TV-9b) adds each bucket's rows as `rows`, so
+ *        a caller can count them in the holding grammar
+ *        (unitDisplayService.formatHoldingPair); off = the shape below.
  * @returns {{opening:{totals:{bales:number,thans:number},
  *                     designs:Map<string,{bales:number,thans:number}>,
  *                     shades:Map<string,Map<string,{bales:number,thans:number}>>},
@@ -104,13 +106,14 @@ function aggregateDesigns(rows) {
  */
 function aggregateStockModel(rows, {
   warehouse, arrivalBatch = null, unlabelledBatch = '', designMatch = null, grnWarehouseById = null,
+  keepRows = false,
 } = {}) {
   const norm = (v) => String(v == null ? '' : v).trim().toLowerCase();
   const w = norm(warehouse);
   const ab = arrivalBatch ? String(arrivalBatch).toUpperCase() : null;
   const isUnlabelled = ab !== null && ab === String(unlabelledBatch).toUpperCase();
-  const bucket = () => ({ keys: new Set(), thans: 0 });
-  const add = (b, key) => { b.keys.add(key); b.thans += 1; };
+  const bucket = () => ({ keys: new Set(), thans: 0, rows: [] });
+  const add = (b, key, r) => { b.keys.add(key); b.thans += 1; if (keepRows) b.rows.push(r); };
   const openTotals = bucket();
   const designs = new Map(); // design → {keys:Set, thans}
   const shades = new Map(); // design → Map<shadeKey, {keys:Set, thans}>
@@ -129,25 +132,25 @@ function aggregateStockModel(rows, {
       // In-transit rows never count toward opening (or remaining) anywhere;
       // they ARE the destination's incoming bucket.
       if (norm(r.warehouse) !== w) continue;
-      add(inTotals, key);
+      add(inTotals, key, r);
       if (!inDesigns.has(design)) inDesigns.set(design, bucket());
-      add(inDesigns.get(design), key);
+      add(inDesigns.get(design), key, r);
       continue;
     }
     // Opening attribution: the GRN's receiving warehouse when the row's
     // grnId resolves; otherwise (legacy / unresolvable) its CURRENT one.
     const grnWh = r.grnId && grnWarehouseById ? grnWarehouseById.get(r.grnId) : null;
     if (norm(grnWh || r.warehouse) !== w) continue;
-    add(openTotals, key);
+    add(openTotals, key, r);
     if (!designs.has(design)) designs.set(design, bucket());
-    add(designs.get(design), key);
+    add(designs.get(design), key, r);
     if (!shades.has(design)) shades.set(design, new Map());
     const byShade = shades.get(design);
     const shadeKey = String(r.shade || 'DEFAULT');
     if (!byShade.has(shadeKey)) byShade.set(shadeKey, bucket());
-    add(byShade.get(shadeKey), key);
+    add(byShade.get(shadeKey), key, r);
   }
-  const fin = (e) => ({ bales: e.keys.size, thans: e.thans });
+  const fin = (e) => (keepRows ? { bales: e.keys.size, thans: e.thans, rows: e.rows } : { bales: e.keys.size, thans: e.thans });
   return {
     opening: {
       totals: fin(openTotals),
