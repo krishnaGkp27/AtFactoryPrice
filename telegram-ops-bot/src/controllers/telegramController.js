@@ -10263,6 +10263,8 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
       return;
     }
     { const act = activityRegistry.getActivity(actCode); if (act) navGuard.rememberHub(uid, act.hub); } // NAV-1
+    // NAV-3 review — a door tile is menu navigation too: end the live flow as the hub tap did (an old `__hub__:` button already has).
+    if (!data.startsWith('act:__hub__:')) { const a = activityRegistry.getActivity(actCode); const d = a && activityRegistry.doorOf(a.hub); if (d && d.code === actCode) await sessionJanitor.leaveFlow(bot, uid, messageId); }
 
     // MNU-1 / audit D-2 — More Options used to fall through to the keyboard
     // wipe below and then fresh-send the expanded grid, so ONE button in the

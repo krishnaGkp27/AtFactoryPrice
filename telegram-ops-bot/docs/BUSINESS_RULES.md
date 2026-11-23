@@ -952,7 +952,8 @@ chart: *"Go with all your recommendations"*.
   people who may open the Supply Request. Nothing offers "⬅ Back to Sales &
   Marketing" — that would restart the request; such a screen offers the menu.
 - **The rest moved, whole, to its second most relevant home:** 🧵 Sell
-  Bundles / Than · 💰 Sell Bale lead 📦 Inventory's own tiles; the 🎨 Designs
+  Bundles / Than · 💰 Sell Bale lead 📦 Inventory's own tiles (for an admin;
+  an employee's order follows their department list); the 🎨 Designs
   group (7) sits under 📦 Inventory, the 🧑‍💼 Marketers group (7) under 👥 CRM,
   the 📝 Orders group (Quick Order Entry · My Orders · Mark Order Delivered)
   under 📋 Tasks & Planning. 📸 Snap Sale and 🧵 My Collection stayed put.

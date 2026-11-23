@@ -128,6 +128,23 @@ test('admin: one tap on 🛒 Sales & Marketing turns the menu message itself int
   assert.equal(rowsOf(kbOf(m))[0], '🛒 Sales & Marketing <act:supply_request> | 📦 Inventory <act:__hub__:inventory>');
 });
 
+test('NAV-3 review: a door tap over a live request takes the old request\'s card down, as the hub tap did; its Cancel cannot touch the new request', async () => {
+  // An open supply request at the cart (its card is message 1002), then /menu (1003), then the door.
+  sessionStore.set('777', { type: 'supply_req_flow', step: 'cart', flowMessageId: 1002, previewMessageId: 1001, cart: [{ design: '9006', shade: '3', bales: 1 }] });
+  const bot = await tap('777', 'act:supply_request', 1003);
+  const deleted = bot.calls.filter((c) => c.method === 'deleteMessage').map((c) => Number(c.args.messageId ?? c.args.message_id ?? c.args[1]));
+  assert.ok(deleted.includes(1002), `the old cart card is deleted (deleted: ${JSON.stringify(deleted)})`);
+  assert.ok(deleted.includes(1001), 'and its photo bubble');
+  assert.ok(!deleted.includes(1003), 'the tapped menu message is kept: it becomes the store screen');
+  const s = sessionStore.get('777');
+  assert.equal(s.flowMessageId, 1003);
+  assert.deepEqual(s.cart, [], 'a fresh request');
+  // Same door on a fresh menu with no live flow deletes nothing.
+  sessionStore.clear('777');
+  const quiet = await tap('777', 'act:supply_request', 1004);
+  assert.equal(quiet.calls.filter((c) => c.method === 'deleteMessage').length, 0);
+});
+
 test('admin: Inventory, Designs, CRM, Marketers, Tasks & Planning and Orders as they read now', async () => {
   assert.deepEqual(await hubRows('777', 'inventory'), [
     '📥 Add Stock <act:__hub__:stock_add> | 🔁 Move Stock <act:__hub__:stock_move>',
@@ -188,7 +205,7 @@ test('old buttons in people\'s chats: act:__hub__:sales opens the Supply Request
   assert.deepEqual((await hubRows('777', 'designs')).pop(), '⬅ Inventory <act:__hub__:inventory> | 🏠 Menu <act:__back__>');
 });
 
-test('old act:__hub__:sales by someone without the Supply Request is refused as before', async () => {
+test('old act:__hub__:sales by someone without the Supply Request gets No actions available (their Orders tiles now sit under Tasks & Planning)', async () => {
   const bot = await tap('d1', 'act:__hub__:sales');
   const s = lastScreen(bot);
   assert.equal(s.args.text, '🛒 *Sales & Marketing*\n\n_No actions available in this section._');

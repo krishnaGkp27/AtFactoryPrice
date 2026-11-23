@@ -3,10 +3,6 @@
 **Shipped 23-Nov-2026.** Owner's go on the chart below: *"Go with all your
 recommendations."* Locked as BUSINESS_RULES §15 (amendment of 23-Nov-2026).
 
-> NAV-3 is this feature's name. An older smoke check, `S52.2`, also carries the
-> label "NAV-3" (every flow with Cancel/Close rows offers a way to the menu);
-> the two are unrelated.
-
 ## 1. The owner's words
 
 On a screenshot of the main menu (🛒 Sales & Marketing · 📦 Inventory · 👥 CRM ·
@@ -37,6 +33,24 @@ see it on the first screen.
 Each tile kept its code, name, icon and button, so department lists, old
 buttons in people's chats, audit history and usage counts all still work.
 Nobody gained or lost a feature; no Departments-sheet edit is needed.
+
+**Some people lose a one-tap tile on the main menu.** The menu shows a section
+that holds only ONE of a person's tiles as that tile itself. Moving the groups
+changed which section holds what, so for some people a tile that sat on the main
+menu now sits inside a section. Everything they could open they still can — it
+is only deeper:
+
+| Who (their department's tiles) | Before | Now |
+|---|---|---|
+| Only one Orders tile (My Orders, or Quick Order Entry, or Mark Order Delivered, alone) | the tile on the main menu (1 tap) | 📋 Tasks & Planning → 📝 Orders → a screen with that one tile (3 taps) — Tasks & Planning always also holds My Tasks and My Requests, so it is never shown as one tile |
+| Shade Photos + Check Stock | both on the main menu (1 tap each) | 📦 Inventory → 📦 Check Stock (2); 📦 Inventory → 🎨 Designs → a screen with 🎨 Shade Photos alone (3) |
+| Loan to Marketer + Customer Details | both on the main menu | 👥 CRM → 👤 Customer Details (2); 👥 CRM → 🧑‍💼 Marketers → a screen with 📋 Loan to Marketer alone (3) |
+| Check Stock + Sell Bale | both on the main menu | both inside 📦 Inventory (2 taps each) |
+
+A group screen that holds a single tile is the one-option step BUSINESS_RULES §2
+asks us to skip. Showing such a group as its one tile (as the main menu already
+does for a section) is a change to the menu rule itself — **your word needed**;
+nothing was changed for it.
 
 ## 3. The screens as they read now (admin, from a run through the bot)
 
@@ -126,14 +140,20 @@ Tiles follow each person's department list, exactly as before — only the place
 - **Dispatch** (Mark Order Delivered, My Orders — no Supply Request): no 🛒 Sales &
   Marketing on the menu any more (it held nothing else for them):
   `💳 Payments · 📍 Mark Attendance · 📋 Tasks & Planning`; both tiles are under
-  📋 Tasks & Planning › 📝 Orders.
+  📋 Tasks & Planning › 📝 Orders. An old 🛒 Sales & Marketing button still in
+  their chat now answers "No actions available in this section" with ⬅ Back
+  (before, it showed their 📝 Orders group).
 - **Operations** (Supply Request, Sell Bale, Check Stock, List Packages,
   Transfers): `🛒 Sales & Marketing · 📦 Inventory · …`; 📦 Inventory reads
-  `🔁 Move Stock · 💰 Sell Bale · 📦 Check Stock · 📋 List Packages`.
+  `🔁 Move Stock · 💰 Sell Bale · 📦 Check Stock · 📋 List Packages`. (Only an
+  admin is guaranteed the two selling tiles first; an employee's tiles come in
+  the order of their department list.)
 - **A seller with only Sell Bale:** `💰 Sell Bale` sits on the main menu under its
   own name, as any single tile does.
 - **Photo person** (Shade Photos, Upload Product Photo): 📦 Inventory → 🎨 Designs.
 - **Catalogue-book person** (Loan to Marketer, Return Catalog): 👥 CRM → 🧑‍💼 Marketers.
+- **People who had a single tile on the main menu** may now find it one or two
+  taps deeper — the table at the end of §2.
 - **Marketer / salesman:** unchanged, byte for byte (`🆕 Add Prospect · 💳 Payments ·
   📨 My Requests · 🧵 My Collection`).
 
@@ -143,14 +163,20 @@ Tiles follow each person's department list, exactly as before — only the place
   the Supply Request.
 - What the Supply Request does once open: the store screen, its chips, its
   `🏠 Back to menu`, the one-store and no-store answers, the photo bubbles, the
-  cart, ➕ Add More, the clean-up of an abandoned request.
-- Typed doors, the marketer / salesman menus, 📋 More Options and its count, a
-  module with a single tile being shown as that tile.
+  cart, ➕ Add More, the clean-up of an abandoned request. Tapping 🛒 while
+  another request (or any other flow) is still open closes it and takes its
+  cards down first, as tapping a section did before — so an old Cancel button
+  can never cancel the new request.
+- Typed doors, the marketer / salesman menus, 📋 More Options and its count, and
+  the rule that a section holding a single tile is shown as that tile — the
+  rule is the same, but the move changed what some sections hold (§2, last table).
 - **Old buttons in people's chats keep working:** an old `🛒 Sales & Marketing`
   button opens the Supply Request as the tile does; old `📝 Orders`,
   `🧑‍💼 Marketers`, `🎨 Designs` buttons open their group, whose ⬅ back now names
   the new parent. Someone not allowed the Supply Request who taps an old 🛒
-  button gets "No actions available in this section", as before.
+  button gets "No actions available in this section" with ⬅ Back — new for
+  anyone whose old 🛒 screen held other tiles (a dispatch person used to see
+  📝 Orders there; those tiles are now under 📋 Tasks & Planning).
 - **No screen offers "⬅ Back to Sales & Marketing"** — that would restart the
   request. A screen reached through 🛒 that needs a way out gets `🏠 Back to menu`.
 
@@ -183,8 +209,22 @@ Tiles follow each person's department list, exactly as before — only the place
   → 🚚 Mark Delivered`); `docs/COWORK_MYP_PTK_SETUP_TEST.md` (`Menu → Sales &
   Marketing → Marketers`); the live checks in `specs/SHP-1_SHADE_PHOTOS.md`
   (`Menu → Sales & Marketing → Designs`) and `specs/NAV-1_NAVIGATION_FOUNDATION.md`
-  (§5 steps 1 and 3). The PAY-6 / PRC-2 card guides picture the main menu with
+  (§5 steps 1 and 3); `specs/SHP-1_SHADE_PHOTOS.md` §1a heading and live-check
+  step 5 (`Orders → Supply request`, `Orders → IDUMOTA → 202/201`) and
+  `specs/SHP-2_ONE_PHOTO_BUBBLE.md` (the "Orders tile starts the same" note and
+  the owner live check `Orders → a design with a catalogue photo`) — the Supply
+  Request is now the 🛒 Sales & Marketing tile; the root CLAUDE.md SHP-1 row
+  (`Designs → 🎨 Shade Photos` and `Orders → 202/201 → tap a shade`). The PAY-6 / PRC-2 card guides picture the main menu with
   `🛒 Sales & Marketing` — still the right name, it now opens the Supply Request.
-- The menu-anchor switch (`MENU_ANCHOR_ENABLED`, still off) is not told that the
-  menu message became the store screen — the same as every other tile that opens
-  in place of the menu today.
+- A group screen holding one tile is not skipped (§2, your word needed).
+- An old 🛒 button tapped by someone without the Supply Request does not point
+  them to where their tiles went (wording is yours to choose).
+
+---
+
+*For the developer.* An older smoke check, `S52.2`, also carries the label
+"NAV-3" (every flow with Cancel/Close rows offers a way to the menu); it is
+unrelated to this feature. The menu-anchor switch (`MENU_ANCHOR_ENABLED`, still
+off) is not told that the menu message became the store screen — the same as
+every other tile that opens in place of the menu today. A door tile runs the
+same `sessionJanitor.leaveFlow` an `act:__hub__:` tap runs (review fix).
