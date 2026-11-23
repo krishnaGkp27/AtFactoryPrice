@@ -281,14 +281,15 @@ plus the bales which are closed, showing all the Thans available in that will
 be treated as bales with suffix B. So please make this correction for Kano
 office, showing both in B and T."* What a store **holds now** (its available
 stock) is counted the same way in every store, than-selling ones included: a
-**closed** bale — every than of the bale's roster still available in that
+**closed** bale — every than of the bale still available in that one
 store — is `1B`; an **opened** bale counts its remaining thans as `t`
 (`1B + 3t`). Reason (1)'s stock-listing preference no longer applies to a
 store's holding on the screens that obey TV-9: the supply request's store
 chips and its Total (the Total is the sum of the chips), 📦 Check Stock's
 `Available Σ` and By-shade lines, and the 🎨 Stock-by-shade card's ✅ Available
-section. What a CUSTOMER took (sold, supplied, returned, transferred, carts and
-requests) is unchanged. The screens not yet switched are listed in
+section. A bale split between two stores is loose thans in each, and a than
+with no printed bale number is a loose than. What was sold, supplied, returned
+or moved, and carts and requests, are unchanged. The screens not yet switched are listed in
 `specs/TV-9_STORE_STOCK_BALES_AND_THANS.md` and wait for the owner's word.
 
 > "Only the customer taking the goods from an allowed store (Kano office,
@@ -1403,6 +1404,6 @@ Spec: `specs/BKP-4_SWITCH_AND_CLEANUP.md`.
 | 19-Nov-2026 | The first nightly backup (02:20) put the whole workbook and the database records in every admin's chat: the job was ON by default and its default recipients were every admin. Owner: "I did not ask you to send the backup of the sheet like this so easily … Can you delete it all? … disable this function entirely for any other admin and give it a switch inside the sheet itself" | §22 tightened (BKP-4) |
 | 20-Nov-2026 | Abdul typed a return three ways (`Return 631/1+2+3+4+5,614/1 to Idumota`, then with `package`, then with `from soldier madam`) and got the generic chips card each time. A first fix that read the words around the numbers was taken out the same day: every wording a person can add is a new way for a count, a phone number or a date to be read as a bale. Owner: *"I want to close all other door of this script … a single window should be there for all this process so that they should not go and make any mistake for my employees."* **A return is typed ONE way: `Return` and numbers only — `Return 631/1+2+3, 614`.** No customer name, no store, no other word; the buyer and the store come from the sale record (R3). Every other message that opens with Return gets that one line back — no numbers are read out of words, no AI, no chips card — and the same rule holds on the open return card. What the one line cannot place is reported, never dropped | RET-7 (`specs/RET-5_TYPED_MULTI_RETURN.md` §RET-7) |
 | 20-Nov-2026 | A return whose sold rows carried no rate was approved with NO credit to the buyer; the only remedy was posting it by hand. Owner: *"Go with all your recommendations"* — the admin who approves enters the missing rate, and the credit posts with the return. An entered rate never replaces a rate on the sale record; no credit only as an admin's deliberate choice (`⏭ No credit for these`), never by default | RET-8 (`specs/RET-8_RETURN_RATE_AND_CARD.md`; `src/services/returnRate.js`, `src/flows/returnRateStep.js`; §6d RET-3 bullet) |
-| 23-Nov-2026 | The supply request's store screen read `🏭 Kano office · 273t` beside `🏭 IDUMOTA · 201B + 4t`: a than-selling store's stock printed every than as t, sealed bales included. Owner: *"Make sure the bales which are open will always show in Thans plus the bales which are closed … will be treated as bales with suffix B … for Kano office, showing both in B and T."* A store's AVAILABLE stock counts a closed bale (whole roster available there) as B and an opened bale's thans as t, in every store; the supply request store chips + Total, Check Stock and the Stock-by-shade ✅ Available section obey it; what a customer took is unchanged | §6c amendment (TV-9, `unitDisplayService.countQty` `holding: true`) |
+| 23-Nov-2026 | The supply request's store screen read `🏭 Kano office · 273t` beside `🏭 IDUMOTA · 201B + 4t`: a than-selling store's stock printed every than as t, sealed bales included. Owner: *"Make sure the bales which are open will always show in Thans plus the bales which are closed … will be treated as bales with suffix B … for Kano office, showing both in B and T."* A store's AVAILABLE stock counts a closed bale (every than of it available there) as B and an opened bale's thans as t, in every store; the supply request store chips + Total, Check Stock and the Stock-by-shade ✅ Available section obey it; what a customer took is unchanged | §6c amendment (TV-9, `unitDisplayService.countQty` `holding: true`) |
 
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

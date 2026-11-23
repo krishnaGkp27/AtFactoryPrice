@@ -13,7 +13,9 @@
  *  - every other place — INCLUDING one not in the register at all — keeps
  *    the bale-first card, because kindOf() defaults to warehouse and a
  *    place the owner has not marked must never switch units silently;
- *  - the word "left" is gone from the roster everywhere (`784 (3t)`);
+ *  - the word "left" is gone from the roster everywhere (since TV-9 the
+ *    fixture's 784 and 624 are closed bales and print as plain numbers; an
+ *    opened bale's `802 (3t)` is pinned in storeStockHolding.test.js);
  *  - a store's sold day-line carries the THAN total for that delivery, so
  *    the figure is read rather than summed from the tags beneath.
  */
@@ -41,7 +43,7 @@ const mk = (packageNo, thanNo, status, extra = {}) => ({
   soldDate: '', soldTo: '', ...extra,
 });
 
-/** The owner's own fixture: 784(3t) + 624(1t) live; 26 thans to Owaibula. */
+/** The owner's own fixture: 784 (3 thans) + 624 (1 than) live, no other than of either; 26 thans to Owaibula. */
 function fixtureRows() {
   const rows = [];
   for (let t = 1; t <= 3; t++) rows.push(mk('784', t, 'available'));

@@ -375,7 +375,7 @@ async function renderCard(bot, chatId, userId) {
   const qty = (rows) => (label ? label(rows) : `${rows.length}t`);
   // TV-9 — the ✅ Available section counts what the store HOLDS: closed
   // bale = B, opened bale = t, than-selling stores included. Sold and in
-  // transit keep `qty` (goods a customer took — TV-8).
+  // transit keep `qty` (goods sold or moving — TV-8).
   const heldQty = (rows) => (label ? label(rows, { holding: true }) : `${rows.length}t`);
 
   const { avail, sold, transit } = sliceRows(all, session, session.shade);

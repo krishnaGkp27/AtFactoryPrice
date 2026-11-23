@@ -22,8 +22,8 @@ included:
   counts as **1B**;
 - an **opened** bale counts the thans left in it as **t**.
 
-So `1B + 3t` = one sealed bale plus three loose thans. What a customer TOOK
-(sales, supplies, returns, transfers, carts, requests) is not touched.
+So `1B + 3t` = one sealed bale plus three loose thans. What was sold,
+supplied, returned or moved, and carts and requests, are not touched.
 
 ## What changed on the phone
 
@@ -45,14 +45,23 @@ On the same card, the 💰 Sold section still reads `10-Nov-26 — ABBA (7t)` /
 ## What "closed" means — the honest edge cases
 
 - **A bale split between two stores** (three thans in Lagos, two in IDUMOTA)
-  reads as loose thans in each store (`3t` and `2t`), never as a bale. The
-  supply request Total adds the chips, so it says `… + 5t`, not `1B`.
+  reads as loose thans in each store (`3t` and `2t`), never as a bale — on
+  every TV-9 screen. The supply request Total adds the chips, so it says
+  `… + 5t`, not `1B`; Check Stock, which shows every store at once, adds the
+  stores the same way, so its `Available Σ` equals that Total.
+- **A than with no printed bale number** counts as one loose than (`1t`),
+  never as a bale.
 - **A than sold and later returned** is available again — if it was the only
   missing than, the bale reads closed (`1B`) again.
 - **A than in transit or out as a sample** is not available, so the bale reads
   opened.
-- **Two bales sharing one printed number in one container** share one roster
-  (the sheet has no per-bale id), so they may read as opened. Rare.
+- **Two bales sharing one printed number in one container** are counted as
+  one bale (the sheet has no per-bale id): when every than of both is
+  available they read as ONE closed bale (`1B`, an undercount); when any than
+  is gone they read as loose thans. Rare; it stays until a per-bale id exists.
+- **A bale whose thans carry two container labels** (three under Mar26, two
+  under Jul26 — a data slip) is counted as two bales, each closed when all its
+  rows are available. Fixed by correcting the container on the sheet.
 
 ## What was NOT changed, and why
 
@@ -85,6 +94,8 @@ On the same card, the 💰 Sold section still reads `10-Nov-26 — ABBA (7t)` /
 2. Open a Kano design you know has a sealed bale → 📦 Check Stock: the
    `Available Σ` line counts it as `1B`.
 3. 📊 Supply Details → 🎨 Stock by shade → Kano office → a design → a shade:
-   the ✅ Available header reads `…B + …t`, a sealed bale is a plain number,
-   an opened one `802 (3t)`.
+   a sealed bale is a plain number, an opened one `802 (3t)`. The ✅ Available
+   header reads `…B + …t` only once the Locations sheet marks Kano office as a
+   **store** (`node scripts/seed-locations.js --commit`, still pending); until
+   then the header counts bales (`5 Bales`) as it always has for a warehouse.
 4. 🏬 Store Sales → Kano office: the totals are the same as yesterday.

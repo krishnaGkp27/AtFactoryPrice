@@ -11,7 +11,7 @@
  * set on three surfaces — the 📦 Supply Request store screen, Check Stock and
  * the 🎨 Stock-by-shade card's ✅ Available section pass `holding: true`
  * (see countQty): a closed bale is 1B, an opened bale's thans are t, in every
- * store. The set still decides every other label (goods a customer took).
+ * store. The set still decides every other label (goods sold, supplied or moved, and every stock screen not listed here).
  *
  * DISPLAY-ONLY: quantity selection, the cart, and approvals stay in bales.
  * The list is cached for ~60s so pickers don't add a Settings read per tap;
@@ -263,7 +263,10 @@ function buildBaleRoster(allRows) {
  * NOW: the than-store branch is skipped and the roster alone decides, in
  * every store, than-selling ones included — a CLOSED bale (every than of
  * its roster among `rows`) is 1B, an OPENED bale's thans are t. Pass the
- * available rows of ONE store to get that store's holding. Without
+ * available rows of one store or several: a bale is closed only when
+ * every than of it is among the rows of ONE store, so rows of several
+ * stores add up to the stores' own figures. A row with no printed bale
+ * number counts as 1t. Without
  * `holding` nothing changes: a than-store row is +1t whatever its bale.
  * Without a roster every bale's rows count as the whole bale (B) — the
  * pre-TV-8 degradation, in both modes.
@@ -280,11 +283,17 @@ function countQty(rows, opts = {}) {
   for (const r of rows || []) {
     const wh = String((r && r.warehouse) || '').trim().toLowerCase();
     if (thanSet.has(wh)) { thans += 1; continue; }   // than-visible store
+    // TV-9 review — a holding is per store and per printed bale: a row with
+    // no bale number is a loose than (never a phantom bale), and a bale
+    // whose thans sit in two stores is opened in each, however many rows
+    // the caller passed.
+    if (opts.holding && !String((r && r.packageNo) || '').trim()) { thans += 1; continue; }
     const k = rosterKey(r);
-    if (!byBale.has(k)) byBale.set(k, 0);
-    byBale.set(k, byBale.get(k) + 1);
+    const g = opts.holding ? `${wh}\u0000${k}` : k;
+    if (!byBale.has(g)) byBale.set(g, { k, taken: 0 });
+    byBale.get(g).taken += 1;
   }
-  for (const [k, taken] of byBale) {
+  for (const { k, taken } of byBale.values()) {
     const total = roster ? (roster.get(k) || taken) : taken;
     if (taken >= total) bales += 1;                  // the whole bale
     else thans += taken;                             // a broken bale

@@ -62,6 +62,25 @@ test('holding: a bale whose thans sit in two stores reads as loose thans in each
   assert.equal(uds.formatQty(rows.filter((x) => x.warehouse === 'IDUMOTA'), o), '2t');
 });
 
+test('TV-9 review: rows of SEVERAL stores add up to each store\'s own holding — a split bale is never 1B', () => {
+  const rows = [...bale('805', 'Kano office', 3), ...bale('805', 'IDUMOTA', 5).slice(3)];
+  const o = { thanWarehouses: KANO, roster: uds.buildBaleRoster(rows), holding: true };
+  assert.equal(uds.formatQty(rows, o), '5t', 'both stores at once: 3t + 2t, not 1B');
+  assert.equal(uds.formatQty(rows, { ...o, holding: false }), '5t', 'without holding: unchanged');
+  const held = (wh) => uds.countQty(rows.filter((r) => r.warehouse === wh), o);
+  assert.deepEqual(uds.countQty(rows, o), { bales: 0, thans: held('Kano office').thans + held('IDUMOTA').thans });
+});
+
+test('TV-9 review: a row with no printed bale number is a loose than in holding mode, never a bale', () => {
+  const noUid = [1, 2, 3].map((n) => ({ ...than('', n, 'Kano office'), baleUid: '' }));
+  const withUid = [1, 2].map((n) => ({ ...than('', n, 'Kano office'), baleUid: `U${n}` }));
+  const rows = [...noUid, ...withUid];
+  const o = { thanWarehouses: KANO, roster: uds.buildBaleRoster(rows), holding: true };
+  assert.equal(uds.formatQty(noUid, o), '3t');
+  assert.equal(uds.formatQty(withUid, o), '2t');
+  assert.equal(uds.formatQty(rows, { ...o, holding: false }), '5t', 'Kano without holding: unchanged');
+});
+
 test('holding: a one-than bale is 1B', () => {
   const rows = bale('700', 'Kano office', 1);
   const o = { thanWarehouses: KANO, roster: uds.buildBaleRoster(rows), holding: true };

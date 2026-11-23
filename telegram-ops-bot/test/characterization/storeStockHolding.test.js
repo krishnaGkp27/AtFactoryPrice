@@ -139,6 +139,18 @@ test('Check Stock: the Available Σ line and the By-shade line count closed bale
   assert.ok(text.includes('  • BLACK · 3B + 7t · 660 yds · Kano office, IDUMOTA, Lagos\n'), text);
 });
 
+test('Check Stock: a bale available in two stores reads as thans, so Σ equals the supply request\'s Total', async () => {
+  // TV-9 review — 951 split: thans 1-3 in Lagos, 4-5 in IDUMOTA.
+  const rows = fixture().map((r) => (r.packageNo === '951' && r.thanNo >= 4 ? { ...r, warehouse: 'IDUMOTA' } : r));
+  useRows(rows);
+  sessionStore.clear('777');
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('cks:9006', '777', 5));
+  const text = bot.allText();
+  assert.ok(text.includes('Available Σ 2B + 12t · 660 yds\n'), text);
+  assert.ok(/• BLACK · 2B \+ 12t · 660 yds · /.test(text), text);
+});
+
 test('Check Stock: the in-transit line is unchanged', async () => {
   const rows = [
     ...fixture(),
