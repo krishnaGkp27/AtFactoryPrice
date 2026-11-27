@@ -347,12 +347,14 @@ function requiredFor(row) {
   try {
     const risk = require('../risk/evaluate');
     const aj = (row && row.actionJSON) || {};
-    if (!risk.DUAL_ADMIN_ACTIONS.includes(aj.action)) return 1;
+    // ACA-1 — the fixed list, or a customer entry while the owner's switch
+    // says two admins (the same question the DUAL-1 gate asks).
+    if (!risk.needsTwoAdmins(aj)) return 1;
     const auth = require('../middlewares/auth');
     const requesterIsAdmin = auth.isAdmin(String(row.user));
     const pool = new Set(config.access.adminIds.map(String));
     if (requesterIsAdmin) pool.delete(String(row.user));
-    return risk.requiredAdminApprovals({ action: aj.action, requesterIsAdmin, adminCount: pool.size });
+    return risk.requiredAdminApprovals({ action: aj.action, requesterIsAdmin, adminCount: pool.size, dual: true });
   } catch (_) { return 1; }
 }
 

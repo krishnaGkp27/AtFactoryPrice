@@ -154,6 +154,14 @@ const DEFAULTS = {
   // 17-Nov-2026. Nothing is saved by the line either way: Submit and the
   // admin's approval are unchanged.
   TYPED_CUSTOMER_LINE: 1,
+  // ACA-1 (owner, 27-Nov-2026: "a toggle for admin to add customer through
+  // one admin approval or 2 admin … default to 1 admin for now") — how many
+  // admins stand behind a NEW CUSTOMER. 1 = one admin is enough (an
+  // employee's request: one admin approves; an admin's own entry: that
+  // admin approves it). 2 = two admins (an employee's request: two
+  // different admins; an admin's own entry: one other admin; the admin's
+  // ⚡ Quick Add is closed). Read by services/customerApprovals.js.
+  ADD_CUSTOMER_APPROVALS: 1,
   // TXT-1 (owner, 01-Nov-2026) — may the AI read a typed sentence for the
   // sheet? 0 = never: the three local script lines (sell / return /
   // transfer) or the chips card, OpenAI is not called; `reads` = the AI

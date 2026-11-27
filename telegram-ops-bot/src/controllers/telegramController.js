@@ -934,6 +934,14 @@ async function handleAddCustomerFlowText(bot, chatId, userId, text) {
       await bot.sendMessage(chatId, 'Quick Add is admin-only.');
       return true;
     }
+    // ACA-1 — the switch moved to two admins while this step was open:
+    // nothing is written; the full form takes the name from here.
+    if ((await require('../services/customerApprovals').count()) >= 2) {
+      session.step = 'name';
+      sessionStore.set(userId, session);
+      await bot.sendMessage(chatId, QUICK_ADD_CLOSED);
+      return true;
+    }
     const parsed = parseQuickAddCustomerLine(trimmed);
     if (!parsed.ok) {
       await bot.sendMessage(chatId, `⚠️ ${parsed.error}\nTry again or tap Cancel.`);
@@ -2112,7 +2120,11 @@ async function showAddPersonNameStep(bot, chatId, userId) {
     await _acRender(bot, chatId, userId, 'Enter the *name* of the shop or the person (reply in chat):', rows);
     return;
   }
-  if (isCust && config.access.adminIds.includes(userId)) {
+  // ACA-1 — Quick Add writes at once on one admin's word, so it is offered
+  // only while the owner's switch says one admin is enough for a customer.
+  const quickOk = isCust && config.access.adminIds.includes(userId)
+    && (await require('../services/customerApprovals').count()) < 2;
+  if (quickOk) {
     rows.push([{ text: '⚡ Quick Add (name+phone in one line)', callback_data: 'acquick:1' }]);
   }
   rows.push([
@@ -2120,7 +2132,7 @@ async function showAddPersonNameStep(bot, chatId, userId) {
     { text: '❌ Cancel', callback_data: 'accanc:0' },
   ]);
   await _acRender(bot, chatId, userId,
-    `Enter the *full name* (reply in chat)${isCust && config.access.adminIds.includes(userId) ? ', or tap Quick Add for a one-liner' : ''}:`,
+    `Enter the *full name* (reply in chat)${quickOk ? ', or tap Quick Add for a one-liner' : ''}:`,
     rows);
 }
 
@@ -2146,6 +2158,10 @@ async function showAddPersonAfterAddress(bot, chatId, userId) {
   await showAddCustomerNotesStep(bot, chatId, userId);
 }
 
+/** ACA-1 — what Quick Add answers while a new customer needs two admins. */
+const QUICK_ADD_CLOSED = '🔏 A new customer needs two admins now, so Quick Add is closed.\n'
+  + 'Type the name to use the full form — it goes to another admin for approval.';
+
 /**
  * P3 — admin Quick Add path. Switches the active add_customer session into
  * 'quick_add' mode and prompts for "Name, Phone, [Address]" in one line.
@@ -2155,6 +2171,11 @@ async function startAddCustomerQuickAdd(bot, chatId, userId) {
   const session = sessionStore.get(userId);
   if (!session || session.type !== 'add_customer_flow') return;
   if (!config.access.adminIds.includes(userId)) return;
+  // ACA-1 — closed while two admins stand behind a new customer.
+  if ((await require('../services/customerApprovals').count()) >= 2) {
+    await bot.sendMessage(chatId, QUICK_ADD_CLOSED);
+    return;
+  }
   session.step = 'quick_add';
   sessionStore.set(userId, session);
   await _acRender(bot, chatId, userId,
@@ -8657,9 +8678,17 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     await auditLogRepository.append('approval_queued',
       { requestId, reason: 'add_contact', type: session.personType || 'other' }, uid);
 
+    // ACA-1 (owner, 27-Nov-2026) — while one admin is enough for a new
+    // customer, an admin's own customer entry is approved by that admin, on
+    // the approval card every admin (the requester included) is sent below.
+    const ownApprove = isCust && config.access.adminIds.includes(uid)
+      && await require('../services/customerApprovals').ownApprovalAllowed({ action: 'add_contact', type: session.personType || 'other' });
+    const waitLine = ownApprove
+      ? '🔏 One admin is enough for a new customer — tap ✅ Approve on the card below to save it yourself, or leave it to another admin.'
+      : '⏳ Waiting for admin approval.';
     if (session.flowMessageId) {
       await bot.editMessageText(
-        `${session.prospect ? '🆕 *Add prospect — submitted*' : '👥 *Add contact — submitted*'}\n\n${_acHeader(session)}\n\n⏳ Waiting for admin approval.\nRequest: \`${requestId}\``,
+        `${session.prospect ? '🆕 *Add prospect — submitted*' : '👥 *Add contact — submitted*'}\n\n${_acHeader(session)}\n\n${waitLine}\nRequest: \`${requestId}\``,
         { chat_id: chatId, message_id: session.flowMessageId, parse_mode: 'Markdown' },
       ).catch(() => {});
     }

@@ -2203,7 +2203,18 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
       // but never silent — this is a security guard degrading.
       logger.warn(`self-approval guard could not enumerate admins: ${e.message}`);
     }
-    if (anotherAdminExists) {
+    // ACA-1 (owner, 27-Nov-2026: "add customer through one admin approval
+    // or 2 admin … default to 1 admin") — while the Settings switch says ONE
+    // admin stands behind a new customer, an admin's own customer entry is
+    // approved by that admin. Approve only, customer entries only, read
+    // fresh; anything that cannot be established keeps the guard closed.
+    let ownCustomerOk = false;
+    if (anotherAdminExists && action === 'approve') {
+      try {
+        ownCustomerOk = await require('../services/customerApprovals').ownApprovalAllowed(item.actionJSON);
+      } catch (_) { ownCustomerOk = false; }
+    }
+    if (anotherAdminExists && !ownCustomerOk) {
       try {
         await bot.answerCallbackQuery(callbackQuery.id, {
           text: '🔒 You cannot approve your own request — a second admin must review it.',
@@ -2295,7 +2306,10 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
     try {
       const riskMod = require('../risk/evaluate');
       const actName = item && item.actionJSON && item.actionJSON.action;
-      if (actName && riskMod.DUAL_ADMIN_ACTIONS.includes(actName)) {
+      // ACA-1 — the fixed list, or a request that creates a customer while
+      // the owner's switch says two admins. Read fresh: this is the decision.
+      await require('../services/customerApprovals').count();
+      if (actName && riskMod.needsTwoAdmins(item.actionJSON)) {
         const prior = Array.isArray(item.actionJSON.approvals)
           ? item.actionJSON.approvals.map(String) : [];
         if (prior.includes(adminId)) {
@@ -2325,7 +2339,7 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           adminCount = pool.size;
         } catch { /* keep default 2 — fail strict, not open */ }
         const required = riskMod.requiredAdminApprovals({
-          action: actName, requesterIsAdmin, adminCount,
+          action: actName, requesterIsAdmin, adminCount, dual: true,
         });
         if (prior.length + 1 < required) {
           // APR-1 / APG-1 — name the signature: the second admin sees whose

@@ -259,11 +259,28 @@ const DUAL_ADMIN_ACTIONS = [
  *   "Only 1 admin configured — auto-approved" precedent.
  * @returns {number} required approval taps (>= 1)
  */
-function requiredAdminApprovals({ action, requesterIsAdmin, adminCount }) {
-  if (!DUAL_ADMIN_ACTIONS.includes(action)) return 1;
+function requiredAdminApprovals({ action, requesterIsAdmin, adminCount, dual }) {
+  // ACA-1 — `dual: true`: the caller has established two admins through
+  // needsTwoAdmins() below (a request the fixed list does not name).
+  if (!dual && !DUAL_ADMIN_ACTIONS.includes(action)) return 1;
   if (requesterIsAdmin) return 1;
   const available = Number.isFinite(adminCount) ? adminCount : 2;
   return Math.max(1, Math.min(2, available));
+}
+
+/**
+ * ACA-1 (owner, 27-Nov-2026) — does THIS request need two admins? The fixed
+ * list above, or a request that creates a customer while the owner's
+ * Settings switch ADD_CUSTOMER_APPROVALS says 2 (services/customerApprovals).
+ * Takes the request's actionJSON, because for a contact request the answer
+ * depends on where it lands (customer / phonebook / network), not on the
+ * action code alone. The one question the DUAL-1 gate and the requester's
+ * cards ask; requiredAdminApprovals({ ..., dual: true }) then counts.
+ */
+function needsTwoAdmins(aj) {
+  const action = aj && aj.action;
+  if (DUAL_ADMIN_ACTIONS.includes(action)) return true;
+  return require('../services/customerApprovals').twoAdminsNow(aj);
 }
 
 /**
@@ -343,7 +360,7 @@ function formatAction(action) {
 }
 
 module.exports = {
-  evaluate, getThresholds, requiredAdminApprovals,
+  evaluate, getThresholds, requiredAdminApprovals, needsTwoAdmins,
   WRITE_ACTIONS, ALWAYS_APPROVAL_ACTIONS, SUPER_ADMIN_APPROVAL_ACTIONS,
   DUAL_ADMIN_ACTIONS,
 };

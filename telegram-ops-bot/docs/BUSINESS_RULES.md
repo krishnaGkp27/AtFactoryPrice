@@ -871,6 +871,32 @@ of a flow they opened from one of their own tiles: the prospect door, and
 the typed steps of 💳 Payments (which the view-only guard had swallowed
 since PAY-1 — fixed the same day). Spec: `specs/PRS-1_ADD_PROSPECT.md`.
 
+**Amended 27-Nov-2026 (ACA-1, owner: "I want to make a toggle for admin to
+add customer through one admin approval or 2 admin. I need it on urgent
+basis and make it default to 1 admin for now."):** how many admins stand
+behind a NEW CUSTOMER is the owner's switch — Settings
+`ADD_CUSTOMER_APPROVALS`, **1** (default) or **2**.
+
+- **1 — one admin is enough.** An employee's request is approved by one
+  admin. An admin's own customer entry is approved by that admin: the
+  self-approval guard steps aside for a customer entry, and for nothing
+  else (an admin's own Worker / Agent / Supplier / Other entry, and every
+  other kind of request, still needs another admin).
+- **2 — two admins.** An employee's request needs two different admins; an
+  admin's own entry needs one other admin (the requester counts as the
+  first — the DUAL-1 matrix, so a one-admin set-up still works); the admin's
+  ⚡ Quick Add, which writes at once on one admin's word, is closed.
+- **It follows what the request CREATES, not the button.** A request raised
+  as a Customer, or routed to 🛒 Customer by the approving admin, is a
+  customer; one routed to 📒 Contact or 🕸 Network is not and keeps its one
+  admin. Every way in is covered — ➕ Add Contact, 🆕 Add Prospect, the typed
+  customer line, the held doors of CON-2.
+- The fixed two-admin list (`DUAL_ADMIN_ACTIONS`) is unchanged: the switch
+  is read beside it by one question, `risk/evaluate.needsTwoAdmins`.
+- A Settings read that fails keeps the last value read.
+
+Spec: `specs/ACA-1_ADD_CUSTOMER_APPROVALS.md`.
+
 ## 14 · Removing a person is a status flip, never a deletion
 
 **Locked 16-Aug-2026** (owner, after the removal impact analysis): *"I can
@@ -1438,6 +1464,7 @@ Spec: `specs/BKP-4_SWITCH_AND_CLEANUP.md`.
 | 20-Nov-2026 | Abdul typed a return three ways (`Return 631/1+2+3+4+5,614/1 to Idumota`, then with `package`, then with `from soldier madam`) and got the generic chips card each time. A first fix that read the words around the numbers was taken out the same day: every wording a person can add is a new way for a count, a phone number or a date to be read as a bale. Owner: *"I want to close all other door of this script … a single window should be there for all this process so that they should not go and make any mistake for my employees."* **A return is typed ONE way: `Return` and numbers only — `Return 631/1+2+3, 614`.** No customer name, no store, no other word; the buyer and the store come from the sale record (R3). Every other message that opens with Return gets that one line back — no numbers are read out of words, no AI, no chips card — and the same rule holds on the open return card. What the one line cannot place is reported, never dropped | RET-7 (`specs/RET-5_TYPED_MULTI_RETURN.md` §RET-7) |
 | 20-Nov-2026 | A return whose sold rows carried no rate was approved with NO credit to the buyer; the only remedy was posting it by hand. Owner: *"Go with all your recommendations"* — the admin who approves enters the missing rate, and the credit posts with the return. An entered rate never replaces a rate on the sale record; no credit only as an admin's deliberate choice (`⏭ No credit for these`), never by default | RET-8 (`specs/RET-8_RETURN_RATE_AND_CARD.md`; `src/services/returnRate.js`, `src/flows/returnRateStep.js`; §6d RET-3 bullet) |
 | 23-Nov-2026 | The supply request's store screen read `🏭 Kano office · 273t` beside `🏭 IDUMOTA · 201B + 4t`: a than-selling store's stock printed every than as t, sealed bales included. Owner: *"Make sure the bales which are open will always show in Thans plus the bales which are closed … will be treated as bales with suffix B … for Kano office, showing both in B and T."* A store's AVAILABLE stock counts a closed bale (every than of it available there) as B and an opened bale's thans as t, in every store; the supply request store chips + Total, Check Stock and the Stock-by-shade ✅ Available section obey it; what a customer took is unchanged | §6c amendment (TV-9, `unitDisplayService.countQty` `holding: true`) |
+| 27-Nov-2026 | An admin who added a customer was sent the approval card and refused on it (`You cannot approve your own request — a second admin must review it`); an employee's customer took one admin. Owner: *"I want to make a toggle for admin to add customer through one admin approval or 2 admin. I need it on urgent basis and make it default to 1 admin for now."* Settings `ADD_CUSTOMER_APPROVALS`: 1 = one admin is enough (an admin approves their own customer entry); 2 = two admins (employee: two different admins; admin: one other; Quick Add closed) | §12b amendment (ACA-1, `services/customerApprovals.js`) |
 | 23-Nov-2026 | The main menu's 🛒 Sales & Marketing opened a screen of three groups (Orders · Marketers · Designs, 20 tiles) and the Supply Request sat two taps further in (📝 Orders → 🏭 Supply Request). Owner: *"I want to change the navigation if the user taps on sales and marketing, goes to the second image … distribute among other tiles in any other second most relevant place"*; on the chart: *"Go with all your recommendations"* | §15 amendment (NAV-3) |
 
 When an incident spawns a new rule: fix, spec, then add the rule HERE.

@@ -67,6 +67,7 @@ const IN_DEFAULTS = {
   APPROVAL_TWIN_GUARD: 'number',
   APPROVAL_DOUBLE_TAP_SECONDS: 'number',
   TYPED_CUSTOMER_LINE: 'number',           // CUS-4 — default 1 (on); an empty cell is still on
+  ADD_CUSTOMER_APPROVALS: 'number',        // ACA-1 — default 1 (one admin); an empty cell is one admin, never 0
   OFFSITE_BACKUP_ENABLED: 'number',        // BKP-4 — default 0 (OFF); an empty cell is off too
   OFFSITE_BACKUP_HOUR: 'number',           // BKP-2 — default 2 (02:00 Lagos); an empty cell is not midnight
   OFFSITE_BACKUP_IDS: 'text',              // BKP-4 — blank = NOBODY holds a backup

@@ -132,6 +132,17 @@ test('DUAL-1 — dual-admin policy tables', async (t) => {
   await t.test('requiredAdminApprovals matrix', () => {
     // Non-dual action → always a single approval tap.
     assert.equal(risk.requiredAdminApprovals({ action: 'add_contact', requesterIsAdmin: false, adminCount: 5 }), 1);
+    // ACA-1 — `dual: true` runs the SAME matrix for a request the fixed list
+    // does not name (a customer entry while the owner's switch says two).
+    assert.equal(risk.requiredAdminApprovals({ action: 'add_contact', requesterIsAdmin: false, adminCount: 5, dual: true }), 2);
+    assert.equal(risk.requiredAdminApprovals({ action: 'add_contact', requesterIsAdmin: true, adminCount: 5, dual: true }), 1);
+    assert.equal(risk.requiredAdminApprovals({ action: 'add_contact', requesterIsAdmin: false, adminCount: 1, dual: true }), 1);
+    assert.equal(risk.requiredAdminApprovals({ action: 'add_contact', requesterIsAdmin: false, adminCount: 5, dual: false }), 1);
+    // …and add_contact is NOT on the fixed list: the switch decides, default one.
+    assert.equal(risk.DUAL_ADMIN_ACTIONS.includes('add_contact'), false);
+    assert.equal(risk.needsTwoAdmins({ action: 'receive_goods' }), true);
+    assert.equal(risk.needsTwoAdmins({ action: 'add_contact', type: 'customer' }), false, 'default: one admin');
+    assert.equal(risk.needsTwoAdmins({ action: 'sale_bundle' }), false);
     // Admin requester counts as the 1st admin → one other approver.
     assert.equal(risk.requiredAdminApprovals({ action: 'receive_goods', requesterIsAdmin: true, adminCount: 5 }), 1);
     // Employee requester → two distinct admin approvers.

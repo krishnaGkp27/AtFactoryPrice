@@ -562,6 +562,12 @@ const server = app.listen(PORT, async () => {
     // BKP-2 — the offsite backup: the workbook (.xlsx, built in-process)
     // and the database records, sent over Telegram once a day.
     try { require('./src/services/offsiteBackup').start(bot); } catch (e) { logger.warn(`offsiteBackup boot: ${e.message}`); }
+    // ACA-1 — the add-customer switch (one admin or two): its Settings row
+    // is made visible and read once, so the first card after boot is right.
+    try {
+      require('./src/services/customerApprovals').start()
+        .catch((e) => logger.warn(`customerApprovals boot: ${e.message}`));
+    } catch (e) { logger.warn(`customerApprovals boot: ${e.message}`); }
     // APR-1 — pending-approval reminder: re-sends admin cards for stale
     // pending ApprovalQueue rows, covering approvals queued outside this
     // process (Drive photo imports) and missed one-shot cards. First pass

@@ -488,6 +488,11 @@ function buildAddContactCard(aj) {
   if (aj.type === 'customer') {
     text += '\n\n_Approving without choosing registers them as a CUSTOMER, as requested._';
   }
+  // ACA-1 — while the owner's switch says two admins stand behind a new
+  // customer, the card says it before the first tap.
+  if (require('./customerApprovals').countNow() >= 2) {
+    text += '\n\n🔏 A customer needs two admins. Contact and Network need one.';
+  }
   return text;
 }
 
