@@ -1548,9 +1548,10 @@ async function buildCardFromActionJSON(aj, opts = {}) {
     if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj, opts);
     if (aj.action === 'supply_request') return buildSupplyRequestCard(aj, opts);
     if (aj.action === 'add_contact') {
-      // ACA-1 — the inbox and the reminder draw from a FRESH reading of the
-      // one-admin / two-admin switch (the builder below is synchronous).
-      if (!opts.decided) await require('./customerApprovals').count();
+      // ACA-1 — the inbox and the reminder draw from a reading of the
+      // one-admin / two-admin switch at most one window (30 s) old; the
+      // builder below is synchronous. One read attempt per window.
+      if (!opts.decided) await require('./customerApprovals').settled();
       return buildAddContactCard(aj, opts);
     }
     if (aj.action === 'remove_customer' || aj.action === 'restore_customer') return buildRemoveCustomerCard(aj);

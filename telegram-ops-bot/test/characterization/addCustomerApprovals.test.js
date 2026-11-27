@@ -575,12 +575,29 @@ test('a first signature that cannot be SAVED leaves no routing on the row', asyn
   } finally { approvalQueueRepository.updateActionJSON = realUpdate; }
 });
 
-test('the inbox / reminder card is drawn from a fresh reading of the switch', async () => {
+test('the inbox / reminder card is drawn from a reading at most one window old', async () => {
   reset(2);
   const aj = { action: 'add_contact', name: 'Amib', type: 'customer' };
   assert.match(await approvalCards.buildCardFromActionJSON(aj), /needs two admins/);
-  switchCell = 1; // the owner types 1 — nothing is reset, nobody has tapped
-  assert.doesNotMatch(await approvalCards.buildCardFromActionJSON(aj), /needs two admins/);
+  switchCell = 1;               // the owner types 1 — nobody has tapped since
+  customerApprovals._expire();  // …and the 30 s window has passed
+  assert.match(approvalCards.buildAddContactCard(aj), /needs two admins/, 'the synchronous builder alone would still say two');
+  customerApprovals._expire();
+  assert.doesNotMatch(await approvalCards.buildCardFromActionJSON(aj), /needs two admins/, 'the awaited card reads the cell');
+});
+
+test('twenty cards drawn while the sheet is unreadable ask it once', async () => {
+  reset(2);
+  const stub = settingsRepository.getAllStrict;
+  let reads = 0;
+  settingsRepository.getAllStrict = async () => { reads += 1; throw new Error('Sheets is down'); };
+  try {
+    const aj = { action: 'add_contact', name: 'Amib', type: 'customer' };
+    for (let i = 0; i < 20; i += 1) {
+      assert.match(await approvalCards.buildCardFromActionJSON(aj), /needs two admins/, 'unread = the strict reading');
+    }
+    assert.equal(reads, 1);
+  } finally { settingsRepository.getAllStrict = stub; }
 });
 
 test('Quick Add closed by an UNREAD switch says the sheet could not be read, not "two admins"', async () => {

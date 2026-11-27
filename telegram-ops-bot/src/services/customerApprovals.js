@@ -131,6 +131,16 @@ function countNow() {
 /** Has a Settings read ever succeeded? */
 function confirmed() { return _known !== null; }
 
+/**
+ * For a card that can wait: a reading at most one window old. One read
+ * ATTEMPT per window, a failed one included — twenty cards drawn while the
+ * sheet is unreadable ask it once, not twenty times. Decisions use count().
+ */
+async function settled() {
+  if (Date.now() - Math.max(_knownAt, _triedAt) > STALE_MS) await count();
+  return _known || UNCONFIRMED;
+}
+
 /** Synchronous: this request needs two admins because it creates a customer. */
 function twoAdminsNow(aj) {
   return createsCustomer(aj) && countNow() >= 2;
@@ -163,7 +173,10 @@ async function start() {
 
 /** Test seam: forget what was read. */
 function _reset() { _known = null; _knownAt = 0; _triedAt = 0; _inFlight = null; _lastOdd = null; }
+/** Test seam: the window has passed (the value read is kept). */
+function _expire() { _knownAt = 0; _triedAt = 0; }
 
 module.exports = {
-  KEY, parse, createsCustomer, count, countNow, confirmed, twoAdminsNow, ownApprovalAllowed, start, _reset,
+  KEY, parse, createsCustomer, count, countNow, settled, confirmed, twoAdminsNow, ownApprovalAllowed, start,
+  _reset, _expire,
 };
