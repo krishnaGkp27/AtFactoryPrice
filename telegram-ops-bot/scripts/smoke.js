@@ -7760,10 +7760,27 @@ function runS46() {
   } else fail('S46.4', 'approval matrix wrong');
 
   const evtSrc = fs.readFileSync(path.join(__dirname, '../src/events/approvalEvents.js'), 'utf8');
-  if (evtSrc.includes('DUAL_ADMIN_ACTIONS') && evtSrc.includes('approvals: [...prior, adminId]') &&
+  // ACA-1 (27-Nov-2026) — the gate asks risk.needsTwoAdmins(actionJSON): the
+  // fixed list, or a customer entry while the owner's switch says two.
+  if ((evtSrc.includes('DUAL_ADMIN_ACTIONS') || evtSrc.includes('riskMod.needsTwoAdmins(')) &&
+      evtSrc.includes('approvals: [...prior, adminId]') &&
       evtSrc.includes('approval_first_signoff')) {
     pass('S46.5 approvalEvents: dual gate wired (signoff persistence + audit)');
   } else fail('S46.5', 'dual gate not wired in handleApprovalCallback');
+
+  // ACA-1 — needsTwoAdmins can only ADD to the fixed list, never drop from it;
+  // and a customer entry takes one admin by default (the owner's default).
+  const everyListed = risk46.DUAL_ADMIN_ACTIONS.every((a) => risk46.needsTwoAdmins({ action: a }) === true);
+  // Read from source: an earlier section may have stubbed the module.
+  const settingsSrc46 = fs.readFileSync(path.join(__dirname, '../src/repositories/settingsRepository.js'), 'utf8');
+  if (typeof risk46.needsTwoAdmins === 'function' && everyListed &&
+      !risk46.DUAL_ADMIN_ACTIONS.includes('add_contact') &&
+      /\n {2}ADD_CUSTOMER_APPROVALS: 1,\n/.test(settingsSrc46) &&
+      risk46.needsTwoAdmins({ action: 'add_contact', type: 'customer' }) === false &&
+      m({ action: 'add_contact', requesterIsAdmin: false, adminCount: 3, dual: true }) === 2 &&
+      m({ action: 'add_contact', requesterIsAdmin: true, adminCount: 3, dual: true }) === 1) {
+    pass('S46.6 ACA-1: needsTwoAdmins keeps every listed action; a new customer defaults to one admin');
+  } else fail('S46.6', 'needsTwoAdmins / ADD_CUSTOMER_APPROVALS default wrong');
 }
 
 function runS47() {

@@ -55,7 +55,8 @@ function parse(value) {
 }
 
 function defaultCount() {
-  return parse(settingsRepository.DEFAULTS[KEY]);
+  // Tolerates a partial settings module (a test stub): the default is one.
+  return parse(((settingsRepository && settingsRepository.DEFAULTS) || {})[KEY]);
 }
 
 /**
@@ -75,7 +76,13 @@ async function count() {
   if (_inFlight) return _inFlight;
   _inFlight = (async () => {
     try {
-      const all = await settingsRepository.getAllStrict();
+      // getAllStrict throws on an unreadable sheet (getAll would answer the
+      // in-code defaults, which here would turn the owner's 2 into 1).
+      const read = typeof settingsRepository.getAllStrict === 'function'
+        ? settingsRepository.getAllStrict : null;
+      if (!read) throw new Error('no strict Settings read available');
+      const all = await read();
+      if (!all || typeof all !== 'object') throw new Error('Settings read returned nothing');
       _known = parse(all[KEY]);
       _knownAt = Date.now();
     } catch (e) {
@@ -88,7 +95,9 @@ async function count() {
 
 /** The last value read (synchronous). Refreshes in the background when stale. */
 function countNow() {
-  if (Date.now() - _knownAt > STALE_MS) count().catch(() => {});
+  try {
+    if (Date.now() - _knownAt > STALE_MS) count().catch(() => {});
+  } catch (_) { /* a card is never broken by a refresh */ }
   return _known || defaultCount();
 }
 
