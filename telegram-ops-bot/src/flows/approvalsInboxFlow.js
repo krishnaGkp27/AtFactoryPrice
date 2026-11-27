@@ -995,7 +995,11 @@ async function renderItem(bot, chatId, userId, idx) {
   // request stays pending until a DIFFERENT admin gives the second.
   const prior = Array.isArray(item.actionJSON && item.actionJSON.approvals)
     ? item.actionJSON.approvals : [];
-  const dualNote = prior.length
+  // ACA-1 — a customer entry signed while the owner's switch said two
+  // admins, and the switch now says one: the note would no longer be true.
+  const noLongerDual = require('../services/customerApprovals').createsCustomer(item.actionJSON)
+    && !require('../risk/evaluate').needsTwoAdmins(item.actionJSON);
+  const dualNote = prior.length && !noLongerDual
     ? `\n\n⚠️ _1 of 2 approvals already given — a different admin must give the second._`
     : '';
 

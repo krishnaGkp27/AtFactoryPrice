@@ -7771,12 +7771,16 @@ function runS46() {
   // ACA-1 — needsTwoAdmins can only ADD to the fixed list, never drop from it;
   // and a customer entry takes one admin by default (the owner's default).
   const everyListed = risk46.DUAL_ADMIN_ACTIONS.every((a) => risk46.needsTwoAdmins({ action: a }) === true);
+  const aca46 = require('../src/services/customerApprovals');
   // Read from source: an earlier section may have stubbed the module.
   const settingsSrc46 = fs.readFileSync(path.join(__dirname, '../src/repositories/settingsRepository.js'), 'utf8');
   if (typeof risk46.needsTwoAdmins === 'function' && everyListed &&
       !risk46.DUAL_ADMIN_ACTIONS.includes('add_contact') &&
       /\n {2}ADD_CUSTOMER_APPROVALS: 1,\n/.test(settingsSrc46) &&
-      risk46.needsTwoAdmins({ action: 'add_contact', type: 'customer' }) === false &&
+      // A person routed to the phonebook is never a two-admin request; the
+      // customer case depends on a Settings READ (unconfirmed = two admins).
+      risk46.needsTwoAdmins({ action: 'add_contact', type: 'customer', destination: 'contact' }) === false &&
+      aca46.parse(undefined) === 1 && aca46.parse('') === 1 && aca46.parse('2') === 2 &&
       m({ action: 'add_contact', requesterIsAdmin: false, adminCount: 3, dual: true }) === 2 &&
       m({ action: 'add_contact', requesterIsAdmin: true, adminCount: 3, dual: true }) === 1) {
     pass('S46.6 ACA-1: needsTwoAdmins keeps every listed action; a new customer defaults to one admin');

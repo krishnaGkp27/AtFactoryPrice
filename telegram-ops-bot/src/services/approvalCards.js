@@ -450,7 +450,7 @@ const HELD_FLOW_LINES = {
   receipt_flow: '🧾 Raised from a receipt upload',
 };
 
-function buildAddContactCard(aj) {
+function buildAddContactCard(aj, opts = {}) {
   let text = `📇 New contact — ${aj.name || '?'}`;
   const bits = [`🏷 typed as: ${aj.type || 'other'}`];
   if (aj.phone) bits.push(`📞 ${aj.phone}`);
@@ -490,7 +490,8 @@ function buildAddContactCard(aj) {
   }
   // ACA-1 — while the owner's switch says two admins stand behind a new
   // customer, the card says it before the first tap.
-  if (require('./customerApprovals').countNow() >= 2) {
+  // A decided record states no present-tense rule.
+  if (!opts.decided && require('./customerApprovals').countNow() >= 2) {
     text += '\n\n🔏 A customer needs two admins. Contact and Network need one.';
   }
   return text;
@@ -1546,7 +1547,7 @@ async function buildCardFromActionJSON(aj, opts = {}) {
     if (aj.action === 'return_bundle') return await buildReturnBundleCard(aj, opts); // RET-5 · CARD-8
     if (aj.action === 'sale_bundle') return await buildSaleBundleCard(aj, opts);
     if (aj.action === 'supply_request') return buildSupplyRequestCard(aj, opts);
-    if (aj.action === 'add_contact') return buildAddContactCard(aj);
+    if (aj.action === 'add_contact') return buildAddContactCard(aj, opts);
     if (aj.action === 'remove_customer' || aj.action === 'restore_customer') return buildRemoveCustomerCard(aj);
     if (aj.action === 'add_warehouse') return await buildAddWarehouseCard(aj);
     if (aj.action === 'design_asset_upload' && aj.kind === 'shade') return buildShadePhotoCard(aj);

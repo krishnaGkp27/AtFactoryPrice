@@ -8681,11 +8681,18 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
     // ACA-1 (owner, 27-Nov-2026) — while one admin is enough for a new
     // customer, an admin's own customer entry is approved by that admin, on
     // the approval card every admin (the requester included) is sent below.
-    const ownApprove = isCust && config.access.adminIds.includes(uid)
+    const isAdminAca = config.access.adminIds.includes(uid);
+    const needAca = isCust ? await require('../services/customerApprovals').count() : 1;
+    const ownApprove = isCust && isAdminAca
       && await require('../services/customerApprovals').ownApprovalAllowed({ action: 'add_contact', type: session.personType || 'other' });
-    const waitLine = ownApprove
-      ? '🔏 One admin is enough for a new customer — tap ✅ Approve on the card below to save it yourself, or leave it to another admin.'
-      : '⏳ Waiting for admin approval.';
+    let waitLine = '⏳ Waiting for admin approval.';
+    if (ownApprove) {
+      waitLine = '🔏 One admin is enough for a new customer — tap ✅ Approve on the card below to save it yourself, or leave it to another admin.';
+    } else if (needAca >= 2) {
+      waitLine = isAdminAca
+        ? '⏳ Waiting for one other admin — a new customer needs two admins.'
+        : '⏳ Waiting for admin approval — a new customer needs two admins.';
+    }
     if (session.flowMessageId) {
       await bot.editMessageText(
         `${session.prospect ? '🆕 *Add prospect — submitted*' : '👥 *Add contact — submitted*'}\n\n${_acHeader(session)}\n\n${waitLine}\nRequest: \`${requestId}\``,
@@ -8713,7 +8720,9 @@ async function handleCallbackQueryInner(bot, callbackQuery) {
         ? `\n${HELD_FLOWS[session.held.flow].icon} Raised from a ${HELD_FLOWS[session.held.flow].what} · on hold until approved`
         : '')
       + (session.prospect ? '\n🆕 Prospect · no sale yet' : '')
-      + (session.card && session.card.fileId ? '\n📇 Business card attached' : '');
+      + (session.card && session.card.fileId ? '\n📇 Business card attached' : '')
+      // ACA-1 — while the owner's switch says two, the card admins tap says so.
+      + (needAca >= 2 ? '\n🔏 A customer needs two admins' : '');
     await approvalEvents.notifyAdminsApprovalRequest(bot, requestId, userLabel, summary, 'New contact requires admin approval');
     // PRS-1 — the business card follows the card to every admin (as the
     // sale doors forward their bill); the inbox keeps it as a 📇 chip.

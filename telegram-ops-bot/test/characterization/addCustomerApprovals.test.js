@@ -176,9 +176,11 @@ test('the switch reads 1 by default, 2 only when the cell clearly says two', () 
   for (const one of [undefined, null, '', ' ', 0, 1, '1', 'one', 'yes', -3, 'x']) {
     assert.equal(customerApprovals.parse(one), 1, `${JSON.stringify(one)} → one admin`);
   }
-  for (const two of [2, '2', ' 2 ', 'two', 'TWO', 'dual', 3]) {
+  // Two is read generously: a cell the owner meant as two is never one.
+  for (const two of [2, '2', ' 2 ', 'two', 'TWO', 'dual', 3, '2 admins', 'Two admins', '２', '2.0']) {
     assert.equal(customerApprovals.parse(two), 2, `${JSON.stringify(two)} → two admins`);
   }
+  assert.equal(customerApprovals.parse('1 admin'), 1);
 });
 
 test('what counts as creating a customer follows the executor, not the button', () => {
@@ -203,6 +205,46 @@ test('a Settings read that fails keeps the last value read, never falls back to 
     assert.equal(await customerApprovals.count(), 2, 'the owner’s two survives an unreadable sheet');
     assert.equal(customerApprovals.countNow(), 2);
   } finally { settingsRepository.getAllStrict = stub; }
+
+  // …and a one that WAS read survives it too (no needless second admin).
+  reset(1);
+  assert.equal(await customerApprovals.count(), 1);
+  settingsRepository.getAllStrict = async () => { throw new Error('Sheets is down'); };
+  try {
+    assert.equal(await customerApprovals.count(), 1);
+    assert.equal(await customerApprovals.ownApprovalAllowed({ action: 'add_contact', type: 'customer' }), true);
+  } finally { settingsRepository.getAllStrict = stub; }
+});
+
+test('FAIL CLOSED: a switch never read (restart, sheet unreadable) is two admins and opens no self-approval', async () => {
+  reset(2); // the owner's cell says 2 — but no read has ever succeeded
+  const stub = settingsRepository.getAllStrict;
+  settingsRepository.getAllStrict = async () => { throw new Error('Sheets is down'); };
+  try {
+    assert.equal(customerApprovals.confirmed(), false);
+    assert.equal(await customerApprovals.count(), 2, 'unconfirmed reads as two');
+    assert.equal(await customerApprovals.ownApprovalAllowed({ action: 'add_contact', type: 'customer' }), false);
+
+    // An admin's own entry: their own tap is refused.
+    queuePerson('R-BOOT-OWN', KRISHNA);
+    const own = createFakeBot();
+    await controller.handleCallbackQuery(own, cb('approve:R-BOOT-OWN', KRISHNA));
+    assert.equal(customersAdded.length, 0);
+    assert.equal(rows['R-BOOT-OWN'].status, 'pending');
+    assert.ok(answers(own).some((t) => /cannot approve your own request/.test(t)));
+
+    // An employee's entry: one admin's tap is a first signature, no more.
+    queuePerson('R-BOOT-EMP', ABDUL);
+    const emp = createFakeBot();
+    await controller.handleCallbackQuery(emp, cb('approve:R-BOOT-EMP', KRISHNA));
+    assert.equal(customersAdded.length, 0, 'nothing created on one admin while the switch is unconfirmed');
+    assert.deepEqual(rows['R-BOOT-EMP'].actionJSON.approvals, [KRISHNA]);
+  } finally { settingsRepository.getAllStrict = stub; }
+
+  // The sheet comes back and says ONE: the same admin is not asked for more.
+  switchCell = 1; customerApprovals._reset();
+  await controller.handleCallbackQuery(createFakeBot(), cb('approve:R-BOOT-EMP', MUSA));
+  assert.equal(customersAdded.length, 1);
 });
 
 /* ── ONE admin (the default) ── */
@@ -247,6 +289,18 @@ test('ONE: an admin’s own customer entry is saved by that admin’s own ✅ Ap
   assert.equal(rows[row.requestId].status, 'approved');
   assert.ok(contactsAdded.some((c) => c.type === 'customer'), 'and its network node');
   assert.ok(!answers(bot2).some((t) => /cannot approve your own/.test(t)));
+  // One admin's word is never a silent one: the other admin is told.
+  assert.match(textsIn(bot2, MUSA),
+    /ℹ️ .* added the customer Amib International and approved it on their own \(one admin is enough for a new customer\)\. R-/);
+});
+
+test('ONE: an employee’s customer approved by an admin sends no "on their own" notice', async () => {
+  reset(1);
+  queuePerson('R-NOFYI', ABDUL);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('approve:R-NOFYI', KRISHNA));
+  assert.equal(customersAdded.length, 1);
+  assert.doesNotMatch(textsIn(bot, MUSA), /on their own/);
 });
 
 test('ONE: another admin may still approve an admin’s entry instead', async () => {
@@ -274,6 +328,21 @@ test('ONE: an admin’s own NON-customer entry still needs another admin', async
   assert.equal(contactsAdded.length, 0);
   assert.equal(rows['R-OWNCONTACT'].status, 'pending');
   assert.ok(answers(bot2).some((t) => /cannot approve your own request/.test(t)));
+  // The refused tap leaves no routing behind: the other admin's plain
+  // Approve still files the person as the CUSTOMER that was requested.
+  assert.ok(!rows['R-OWNCONTACT'].actionJSON.destination, 'no destination left on the row');
+  await controller.handleCallbackQuery(createFakeBot(), cb('approve:R-OWNCONTACT', MUSA));
+  assert.equal(customersAdded.length, 1, 'filed as a customer, as requested');
+});
+
+test('a routing chip that DOES decide keeps its routing (the undo is for refusals only)', async () => {
+  reset(2);
+  queuePerson('R-KEEP', ABDUL, { type: 'other' });
+  await controller.handleCallbackQuery(createFakeBot(), cb('ctg:R-KEEP:c', KRISHNA));
+  assert.equal(rows['R-KEEP'].actionJSON.destination, 'customer', 'a recorded first signature keeps its routing');
+  assert.deepEqual(rows['R-KEEP'].actionJSON.approvals, [KRISHNA]);
+  await controller.handleCallbackQuery(createFakeBot(), cb('approve:R-KEEP', MUSA));
+  assert.equal(customersAdded.length, 1);
 });
 
 test('ONE: the switch opens nothing but a customer entry — another kind of own request stays closed', async () => {
@@ -356,7 +425,7 @@ test('TWO: an admin’s own customer needs one OTHER admin, never their own', as
   const row = onlyRequest();
   assert.ok(row);
   assert.doesNotMatch(textsIn(bot, KRISHNA), /One admin is enough/, 'the submitted card promises no own approval');
-  assert.match(textsIn(bot, KRISHNA), /⏳ Waiting for admin approval\./);
+  assert.match(textsIn(bot, KRISHNA), /⏳ Waiting for one other admin — a new customer needs two admins\./);
   assert.ok(everyButton(bot, MUSA).some((b) => b.callback_data === `approve:${row.requestId}`),
     'the other admin gets the request');
 
@@ -407,8 +476,39 @@ test('TWO: a session already on the one-line step writes nothing when the switch
 test('TWO: the approval card says two admins are needed, before the first tap', async () => {
   reset(2);
   await customerApprovals.count();
-  const card = approvalCards.buildAddContactCard({ action: 'add_contact', name: 'Amib', type: 'customer' });
+  const aj = { action: 'add_contact', name: 'Amib', type: 'customer' };
+  const card = approvalCards.buildAddContactCard(aj);
   assert.match(card, /🔏 A customer needs two admins\. Contact and Network need one\./);
+  // A decided record states no present-tense rule.
+  assert.doesNotMatch(await approvalCards.buildCardFromActionJSON(aj, { decided: true }), /needs two admins/);
+});
+
+test('TWO: the message admins are SENT says so, and so does the employee’s submitted card', async () => {
+  reset(2);
+  const bot = createFakeBot();
+  await submitCustomerThroughTheDoor(bot, ABDUL);
+  const row = onlyRequest();
+  assert.ok(row);
+  for (const admin of [KRISHNA, MUSA]) {
+    assert.match(textsIn(bot, admin), /Approval required/);
+    assert.match(textsIn(bot, admin), /🔏 A customer needs two admins/, `${admin}'s card says two are needed`);
+  }
+  assert.match(textsIn(bot, ABDUL), /⏳ Waiting for admin approval — a new customer needs two admins\./);
+
+  // An admin's own entry on two: "one other admin".
+  reset(2);
+  const bot2 = createFakeBot();
+  await submitCustomerThroughTheDoor(bot2, KRISHNA);
+  assert.match(textsIn(bot2, KRISHNA), /⏳ Waiting for one other admin — a new customer needs two admins\./);
+});
+
+test('ONE: neither the admins’ message nor the submitted card mentions two admins', async () => {
+  reset(1);
+  const bot = createFakeBot();
+  await submitCustomerThroughTheDoor(bot, ABDUL);
+  assert.doesNotMatch(textsIn(bot, KRISHNA), /two admins/);
+  assert.match(textsIn(bot, ABDUL), /⏳ Waiting for admin approval\.\n/);
+  assert.doesNotMatch(textsIn(bot, ABDUL), /two admins/);
 });
 
 test('the switch is live: 2 → 1 lets the one signature already given finish it', async () => {

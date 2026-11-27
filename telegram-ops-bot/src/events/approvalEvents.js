@@ -2221,7 +2221,9 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           show_alert: true,
         });
       } catch (e) { logger.warn(`self-approval refusal toast failed: ${e.message}`); }
-      return;
+      // Named for the one caller that must undo something it wrote first
+      // (the contact triage chips save their routing before this guard).
+      return { refused: 'own_request' };
     }
   }
 
@@ -2639,6 +2641,21 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           try { await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatIdCb, message_id: cardMsg.message_id }); } catch (_) { /* stale card */ }
         }
         await bot.sendMessage(chatIdCb, approvedMsg + creditTail + rateTail + noteTail);
+        // ACA-1 — an admin's own customer entry, approved by that admin
+        // (the owner's switch says one admin is enough): every OTHER admin
+        // is told, so one admin's word is never a silent one.
+        if (String(requestingUser) === adminId && item && item.actionJSON
+          && require('../services/customerApprovals').createsCustomer(item.actionJSON)) {
+          const cardsAca = require('../services/approvalCards');
+          const whoAca = (result && result.approver) || await cardsAca.resolveUserLabel(adminId, bot).catch(() => adminId);
+          const lineAca = `ℹ️ ${whoAca} added the customer ${item.actionJSON.name || '?'} and approved it on their own `
+            + `(one admin is enough for a new customer). ${cardsAca.shortTransferRef(requestId)}`;
+          for (const otherId of config.access.adminIds.map(String)) {
+            if (otherId === adminId) continue;
+            try { await bot.sendMessage(otherId, lineAca); }
+            catch (e) { logger.warn(`ACA-1 own-approval notice failed for ${otherId}: ${e.message}`); }
+          }
+        }
         // APG-1 — the requester's closing card: every signer by name and
         // time, the count the request needed, then what the approval did.
         await notifyEmployee(bot, requestingUser, requestId,
@@ -3631,11 +3648,21 @@ async function handleContactTriageCallback(bot, callbackQuery) {
   }
   const key = `${adminId}|${requestId}`;
   const approve = async (patch) => {
+    // ACA-1 — what the row carried before this tap, for the keys it writes.
+    const before = {};
+    Object.keys(patch).forEach((k) => { before[k] = aj[k] === undefined || aj[k] === null ? '' : aj[k]; });
     await approvalQueueRepository.updateActionJSON(requestId, patch);
     pendingTriage.delete(key);
     // Delegate with a rewritten payload so the FULL approve path runs —
     // stale guard, self-approval, super-admin, dual-admin, executor, cards.
-    await handleApprovalCallback(bot, { ...callbackQuery, data: `approve:${requestId}` }, 'approve');
+    const out = await handleApprovalCallback(bot, { ...callbackQuery, data: `approve:${requestId}` }, 'approve');
+    // ACA-1 — a tap the self-approval guard REFUSED decided nothing, so the
+    // routing it saved comes off the row again: the next admin's plain
+    // Approve still files the person as they were requested.
+    if (out && out.refused) {
+      try { await approvalQueueRepository.updateActionJSON(requestId, before); }
+      catch (e) { logger.warn(`ctg: could not undo a refused routing on ${requestId}: ${e.message}`); }
+    }
   };
 
   if (op === 'c') { await approve({ destination: 'customer' }); return; }

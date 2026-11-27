@@ -141,7 +141,10 @@ test('DUAL-1 — dual-admin policy tables', async (t) => {
     // …and add_contact is NOT on the fixed list: the switch decides, default one.
     assert.equal(risk.DUAL_ADMIN_ACTIONS.includes('add_contact'), false);
     assert.equal(risk.needsTwoAdmins({ action: 'receive_goods' }), true);
-    assert.equal(risk.needsTwoAdmins({ action: 'add_contact', type: 'customer' }), false, 'default: one admin');
+    // A customer entry depends on the Settings switch as READ (characterization:
+    // addCustomerApprovals.test.js); a phonebook entry never needs two.
+    assert.equal(risk.needsTwoAdmins({ action: 'add_contact', type: 'worker' }), false);
+    assert.equal(risk.needsTwoAdmins({ action: 'add_contact', type: 'customer', destination: 'contact' }), false);
     assert.equal(risk.needsTwoAdmins({ action: 'sale_bundle' }), false);
     // Admin requester counts as the 1st admin → one other approver.
     assert.equal(risk.requiredAdminApprovals({ action: 'receive_goods', requesterIsAdmin: true, adminCount: 5 }), 1);

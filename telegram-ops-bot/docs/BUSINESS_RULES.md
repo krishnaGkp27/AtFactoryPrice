@@ -881,7 +881,9 @@ behind a NEW CUSTOMER is the owner's switch — Settings
   admin. An admin's own customer entry is approved by that admin: the
   self-approval guard steps aside for a customer entry, and for nothing
   else (an admin's own Worker / Agent / Supplier / Other entry, and every
-  other kind of request, still needs another admin).
+  other kind of request, still needs another admin). **One admin's word is
+  never a silent one:** every other admin is told when an admin approves
+  their own customer entry.
 - **2 — two admins.** An employee's request needs two different admins; an
   admin's own entry needs one other admin (the requester counts as the
   first — the DUAL-1 matrix, so a one-admin set-up still works); the admin's
@@ -893,7 +895,12 @@ behind a NEW CUSTOMER is the owner's switch — Settings
   customer line, the held doors of CON-2.
 - The fixed two-admin list (`DUAL_ADMIN_ACTIONS`) is unchanged: the switch
   is read beside it by one question, `risk/evaluate.needsTwoAdmins`.
-- A Settings read that fails keeps the last value read.
+- **Fail closed.** A Settings read that fails keeps the last value read.
+  While no read has succeeded since the bot started, the switch is treated
+  as 2 and opens no self-approval — the owner's 2 never becomes 1 because
+  Google refused a read. A cell that starts with 2 or says "two" is two.
+- A routing chip (📒 / 🕸 / 🛒) the self-approval guard refuses leaves no
+  routing on the request.
 
 Spec: `specs/ACA-1_ADD_CUSTOMER_APPROVALS.md`.
 
