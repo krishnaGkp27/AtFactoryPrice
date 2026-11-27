@@ -42,7 +42,8 @@ it.` Now that tap saves the customer. The submitted card says so:
     below to save it yourself, or leave it to another admin.
 
 The other admins still receive the card; whoever taps first decides. When an
-admin approves their own entry, every other admin is told at once:
+admin approves their own entry, every other admin (Railway `ADMIN_IDS` and
+the admins on the Users sheet) is told at once:
 
     ℹ️ Krishna added the customer Amib International and approved it on
     their own (one admin is enough for a new customer). R-0F36
@@ -68,8 +69,10 @@ refused as before and now leaves nothing behind: the next admin's plain
   admins. Contact and Network need one.`
 - The person who raised it reads `⏳ Waiting for admin approval — a new
   customer needs two admins.` (an admin: `⏳ Waiting for one other admin — …`).
-- If the second admin routes the person to 📒 Contact instead, it is saved as
-  a contact (not a customer).
+- Filing the person as a 📒 Contact or under 🕸 Network takes ONE admin, at
+  any point — also after a first approval was given for 🛒 Customer, and also
+  by the admin who gave it. No customer is created that way; the person who
+  asked is told where the entry went.
 - With only one admin set up, one approval is enough (as for every two-admin
   request).
 
@@ -97,7 +100,16 @@ value read. If no read has succeeded since the bot started (a restart while
 Google refuses the sheet), the switch is treated as **2** and no admin may
 approve their own entry, until the first read succeeds — your 2 never turns
 into 1 because of a failed read. "Default 1" means: the sheet was read, and
-it has no row or an empty cell.
+it has no row or an empty cell. In that state Quick Add answers `⚠️ The
+Settings sheet could not be read just now, so Quick Add is closed until it
+can be.` and comes back by itself.
+
+**What is decided and what is shown.** Every decision (an Approve tap, the
+door's Submit, Quick Add) reads the cell at that moment. Lists that count
+approvals — 📨 My Requests, the status card — show the last value read and
+refresh in the background, so after you change the cell they can show the
+old count for one screen. The approval card in 🛂 Approvals and the hourly
+reminder read the cell when they are drawn.
 
 ## Not changed
 

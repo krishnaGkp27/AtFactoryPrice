@@ -2309,8 +2309,10 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
       const riskMod = require('../risk/evaluate');
       const actName = item && item.actionJSON && item.actionJSON.action;
       // ACA-1 — the fixed list, or a request that creates a customer while
-      // the owner's switch says two admins. Read fresh: this is the decision.
-      await require('../services/customerApprovals').count();
+      // the owner's switch says two admins. Read fresh: this is the decision
+      // (only a customer entry asks the sheet — no other approval waits on it).
+      const acaMod = require('../services/customerApprovals');
+      if (acaMod.createsCustomer(item && item.actionJSON)) await acaMod.count();
       if (actName && riskMod.needsTwoAdmins(item.actionJSON)) {
         const prior = Array.isArray(item.actionJSON.approvals)
           ? item.actionJSON.approvals.map(String) : [];
@@ -2397,7 +2399,8 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
                 show_alert: true,
               });
             } catch (_) { /* stale query */ }
-            return;
+            // ACA-1 — nothing was decided: a routing chip undoes what it wrote.
+            return { refused: 'not_saved' };
           }
           try {
             const auditLogRepository = require('../repositories/auditLogRepository');
@@ -2650,7 +2653,14 @@ async function handleApprovalCallback(bot, callbackQuery, action, opts) {
           const whoAca = (result && result.approver) || await cardsAca.resolveUserLabel(adminId, bot).catch(() => adminId);
           const lineAca = `ℹ️ ${whoAca} added the customer ${item.actionJSON.name || '?'} and approved it on their own `
             + `(one admin is enough for a new customer). ${cardsAca.shortTransferRef(requestId)}`;
-          for (const otherId of config.access.adminIds.map(String)) {
+          // The same admins the self-approval guard counts: Railway ids and
+          // the Users-sheet admins.
+          let toldAca = config.access.adminIds.map(String);
+          try {
+            const sheetAca = (require('../middlewares/auth')._internals.snapshotAdmins() || []).map(String);
+            toldAca = [...new Set([...toldAca, ...sheetAca])];
+          } catch (_) { /* cache not ready — Railway ids only */ }
+          for (const otherId of toldAca) {
             if (otherId === adminId) continue;
             try { await bot.sendMessage(otherId, lineAca); }
             catch (e) { logger.warn(`ACA-1 own-approval notice failed for ${otherId}: ${e.message}`); }

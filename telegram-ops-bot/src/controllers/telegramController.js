@@ -939,7 +939,7 @@ async function handleAddCustomerFlowText(bot, chatId, userId, text) {
     if ((await require('../services/customerApprovals').count()) >= 2) {
       session.step = 'name';
       sessionStore.set(userId, session);
-      await bot.sendMessage(chatId, QUICK_ADD_CLOSED);
+      await bot.sendMessage(chatId, quickAddClosed());
       return true;
     }
     const parsed = parseQuickAddCustomerLine(trimmed);
@@ -2158,9 +2158,17 @@ async function showAddPersonAfterAddress(bot, chatId, userId) {
   await showAddCustomerNotesStep(bot, chatId, userId);
 }
 
-/** ACA-1 — what Quick Add answers while a new customer needs two admins. */
-const QUICK_ADD_CLOSED = '🔏 A new customer needs two admins now, so Quick Add is closed.\n'
-  + 'Type the name to use the full form — it goes to another admin for approval.';
+/**
+ * ACA-1 — what Quick Add answers while a new customer needs two admins, or
+ * while the switch could not be read yet (then it says so, not "two admins").
+ */
+function quickAddClosed() {
+  return require('../services/customerApprovals').confirmed()
+    ? '🔏 A new customer needs two admins now, so Quick Add is closed.\n'
+      + 'Type the name to use the full form — it goes to another admin for approval.'
+    : '⚠️ The Settings sheet could not be read just now, so Quick Add is closed until it can be.\n'
+      + 'Type the name to use the full form.';
+}
 
 /**
  * P3 — admin Quick Add path. Switches the active add_customer session into
@@ -2173,7 +2181,7 @@ async function startAddCustomerQuickAdd(bot, chatId, userId) {
   if (!config.access.adminIds.includes(userId)) return;
   // ACA-1 — closed while two admins stand behind a new customer.
   if ((await require('../services/customerApprovals').count()) >= 2) {
-    await bot.sendMessage(chatId, QUICK_ADD_CLOSED);
+    await bot.sendMessage(chatId, quickAddClosed());
     return;
   }
   session.step = 'quick_add';

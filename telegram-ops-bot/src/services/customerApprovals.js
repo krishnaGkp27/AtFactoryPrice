@@ -48,6 +48,7 @@ const STALE_MS = 30 * 1000;
 
 let _known = null; // 1 | 2 — the last value a Settings read gave; null = never read
 let _knownAt = 0;
+let _triedAt = 0;  // the last read ATTEMPT (a failed one included)
 let _inFlight = null;
 let _lastOdd = null; // the last unrecognised cell value warned about
 
@@ -91,6 +92,7 @@ function createsCustomer(aj) {
 async function count() {
   if (_inFlight) return _inFlight;
   _inFlight = (async () => {
+    _triedAt = Date.now();
     try {
       // getAllStrict throws on an unreadable sheet (getAll would answer the
       // in-code defaults, which here would turn the owner's 2 into 1). A
@@ -118,8 +120,10 @@ async function count() {
 
 /** The last value read (synchronous). Refreshes in the background when stale. */
 function countNow() {
+  // One background read per window, a FAILED one included: an unreadable
+  // sheet is not asked again by every row of a list.
   try {
-    if (Date.now() - _knownAt > STALE_MS) count().catch(() => {});
+    if (Date.now() - Math.max(_knownAt, _triedAt) > STALE_MS) count().catch(() => {});
   } catch (_) { /* a card is never broken by a refresh */ }
   return _known || UNCONFIRMED;
 }
@@ -158,7 +162,7 @@ async function start() {
 }
 
 /** Test seam: forget what was read. */
-function _reset() { _known = null; _knownAt = 0; _inFlight = null; _lastOdd = null; }
+function _reset() { _known = null; _knownAt = 0; _triedAt = 0; _inFlight = null; _lastOdd = null; }
 
 module.exports = {
   KEY, parse, createsCustomer, count, countNow, confirmed, twoAdminsNow, ownApprovalAllowed, start, _reset,

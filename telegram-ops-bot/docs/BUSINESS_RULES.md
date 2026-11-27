@@ -881,7 +881,9 @@ behind a NEW CUSTOMER is the owner's switch — Settings
   admin. An admin's own customer entry is approved by that admin: the
   self-approval guard steps aside for a customer entry, and for nothing
   else (an admin's own Worker / Agent / Supplier / Other entry, and every
-  other kind of request, still needs another admin). **One admin's word is
+  other kind of request, still needs another admin — unless that admin
+  routes their own entry to 🛒 Customer, which makes it a customer entry;
+  they could have raised it as one). **One admin's word is
   never a silent one:** every other admin is told when an admin approves
   their own customer entry.
 - **2 — two admins.** An employee's request needs two different admins; an
@@ -891,7 +893,8 @@ behind a NEW CUSTOMER is the owner's switch — Settings
 - **It follows what the request CREATES, not the button.** A request raised
   as a Customer, or routed to 🛒 Customer by the approving admin, is a
   customer; one routed to 📒 Contact or 🕸 Network is not and keeps its one
-  admin. Every way in is covered — ➕ Add Contact, 🆕 Add Prospect, the typed
+  admin — at any point, also after a first approval was given for 🛒
+  Customer (no customer is created that way). Every way in is covered — ➕ Add Contact, 🆕 Add Prospect, the typed
   customer line, the held doors of CON-2.
 - The fixed two-admin list (`DUAL_ADMIN_ACTIONS`) is unchanged: the switch
   is read beside it by one question, `risk/evaluate.needsTwoAdmins`.

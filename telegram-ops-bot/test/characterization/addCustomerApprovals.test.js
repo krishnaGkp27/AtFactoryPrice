@@ -522,3 +522,91 @@ test('the switch is live: 2 → 1 lets the one signature already given finish it
   assert.equal(customersAdded.length, 1);
   assert.equal(rows['R-FLIP'].status, 'approved');
 });
+
+/* ── second review ── */
+
+test('only a customer entry asks the Settings sheet at the gate — no other approval waits on it', async () => {
+  reset(1);
+  const real = customerApprovals.count;
+  let asked = 0;
+  customerApprovals.count = async (...a) => { asked += 1; return real(...a); };
+  try {
+    queuePerson('R-WORKER2', ABDUL, { type: 'worker' });
+    await controller.handleCallbackQuery(createFakeBot(), cb('approve:R-WORKER2', KRISHNA));
+    assert.equal(rows['R-WORKER2'].status, 'approved');
+    assert.equal(asked, 0, 'a phonebook entry is approved without reading the switch');
+
+    queuePerson('R-CUST2', ABDUL);
+    await controller.handleCallbackQuery(createFakeBot(), cb('approve:R-CUST2', KRISHNA));
+    assert.ok(asked >= 1, 'a customer entry reads it fresh');
+  } finally { customerApprovals.count = real; }
+});
+
+test('an unreadable sheet is asked once per window, not by every card', async () => {
+  reset(2);
+  const stub = settingsRepository.getAllStrict;
+  let reads = 0;
+  settingsRepository.getAllStrict = async () => { reads += 1; throw new Error('Sheets is down'); };
+  try {
+    for (let i = 0; i < 8; i += 1) customerApprovals.countNow();
+    await new Promise((r) => setImmediate(r));
+    for (let i = 0; i < 8; i += 1) customerApprovals.countNow();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(reads, 1, 'sixteen card renders, one read attempt');
+    assert.equal(customerApprovals.countNow(), 2, 'and still the strict reading');
+  } finally { settingsRepository.getAllStrict = stub; }
+});
+
+test('a first signature that cannot be SAVED leaves no routing on the row', async () => {
+  reset(2);
+  queuePerson('R-NOSAVE', ABDUL, { type: 'other' });
+  const realUpdate = approvalQueueRepository.updateActionJSON;
+  approvalQueueRepository.updateActionJSON = async (id, patch) => {
+    if (patch && Array.isArray(patch.approvals)) throw new Error('quota');
+    return realUpdate(id, patch);
+  };
+  try {
+    const bot = createFakeBot();
+    await controller.handleCallbackQuery(bot, cb('ctg:R-NOSAVE:c', KRISHNA));
+    assert.ok(answers(bot).some((t) => /Could not record your approval — nothing was approved/.test(t)));
+    assert.equal(rows['R-NOSAVE'].status, 'pending');
+    assert.ok(!rows['R-NOSAVE'].actionJSON.destination, 'the 🛒 routing nobody signed is gone');
+    assert.ok(!rows['R-NOSAVE'].actionJSON.approvals);
+  } finally { approvalQueueRepository.updateActionJSON = realUpdate; }
+});
+
+test('the inbox / reminder card is drawn from a fresh reading of the switch', async () => {
+  reset(2);
+  const aj = { action: 'add_contact', name: 'Amib', type: 'customer' };
+  assert.match(await approvalCards.buildCardFromActionJSON(aj), /needs two admins/);
+  switchCell = 1; // the owner types 1 — nothing is reset, nobody has tapped
+  assert.doesNotMatch(await approvalCards.buildCardFromActionJSON(aj), /needs two admins/);
+});
+
+test('Quick Add closed by an UNREAD switch says the sheet could not be read, not "two admins"', async () => {
+  reset(1);
+  const bot = createFakeBot();
+  await controller.handleCallbackQuery(bot, cb('act:add_customer', KRISHNA));
+  await controller.handleCallbackQuery(bot, cb('actype:customer', KRISHNA));
+  assert.ok(screen(bot).kb.some((b) => b.callback_data === 'acquick:1'));
+
+  customerApprovals._reset(); // a restart…
+  const stub = settingsRepository.getAllStrict;
+  settingsRepository.getAllStrict = async () => { throw new Error('Sheets is down'); }; // …with the sheet unreadable
+  try {
+    await controller.handleCallbackQuery(bot, cb('acquick:1', KRISHNA));
+    assert.match(screen(bot).text, /Settings sheet could not be read just now, so Quick Add is closed until it can be/);
+    assert.doesNotMatch(screen(bot).text, /two admins/);
+  } finally { settingsRepository.getAllStrict = stub; }
+});
+
+test('TWO: either admin may still file the person as a 📒 Contact — that takes one admin, and creates no customer', async () => {
+  reset(2);
+  queuePerson('R-REROUTE', ABDUL);
+  await controller.handleCallbackQuery(createFakeBot(), cb('ctg:R-REROUTE:c', KRISHNA));
+  assert.deepEqual(rows['R-REROUTE'].actionJSON.approvals, [KRISHNA]);
+  await controller.handleCallbackQuery(createFakeBot(), cb('ctg:R-REROUTE:p', KRISHNA));
+  assert.equal(rows['R-REROUTE'].status, 'approved');
+  assert.equal(customersAdded.length, 0, 'no customer was created on one admin');
+  assert.equal(contactsAdded.length, 1, 'a phonebook entry, which one admin may always file');
+});
